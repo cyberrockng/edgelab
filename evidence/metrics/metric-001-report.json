@@ -1,0 +1,27 @@
+{
+  "taskId": "METRIC-001",
+  "capturedAt": "2026-08-24T15:39:50.000Z",
+  "status": "PASSED",
+  "evidenceClass": "CAPTURED",
+  "scope": "deterministic forecast metrics, execution separation, PnL separation, and sufficiency verdicts",
+  "implementedControls": [
+    "Brier score and calibration bias are deterministic pure functions",
+    "neutral baseline delta is reported separately from verdict",
+    "voided, unresolved, and unavailable outcomes are excluded from binary forecast scoring",
+    "sample size and exclusion count are persisted",
+    "sufficiency runs before promotability",
+    "INSUFFICIENT_EVIDENCE is a first-class verdict",
+    "execution metrics default to NOT_EVALUATED and do not imply tradeability",
+    "realized PnL remains NOT_AVAILABLE without actual fill plus terminal settlement"
+  ],
+  "validation": {
+    "unitTest": "tests/unit/metrics.test.ts",
+    "integrationTest": "tests/integration/evaluate.test.ts",
+    "secretScan": "pnpm secret:scan passed for 76 files",
+    "lint": "pnpm lint passed",
+    "typecheck": "pnpm typecheck passed",
+    "test": "pnpm test passed: 9 files, 33 tests",
+    "build": "pnpm build passed",
+    "fullVerification": "passed"
+  }
+}

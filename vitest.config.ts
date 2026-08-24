@@ -11,6 +11,7 @@ export default defineConfig({
       "@edgelab/db": `${root}packages/db/src/index.ts`,
       "@edgelab/domain": `${root}packages/domain/src/index.ts`,
       "@edgelab/dreamdex": `${root}packages/dreamdex/src/index.ts`,
+      "@edgelab/evaluate": `${root}packages/evaluate/src/index.ts`,
       "@edgelab/metrics": `${root}packages/metrics/src/index.ts`,
       "@edgelab/observe": `${root}packages/observe/src/index.ts`,
       "@edgelab/policy-runtime": `${root}packages/policy-runtime/src/index.ts`,
