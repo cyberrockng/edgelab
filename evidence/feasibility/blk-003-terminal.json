@@ -1,0 +1,60 @@
+{
+  "evidenceId": "BLK-003-TERMINAL",
+  "task": "EXG-003",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-25T00:04:30.000+01:00",
+  "status": "PASS",
+  "evidenceClass": "LIVE_PUBLIC_CHAIN_WRITE",
+  "network": {
+    "name": "Somnia Shannon Testnet",
+    "chainId": 50312,
+    "rpcUrl": "https://api.infra.testnet.somnia.network/",
+    "explorerUrl": "https://shannon-explorer.somnia.network/"
+  },
+  "wallet": {
+    "address": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+    "sttAfterTerminal": "50.99327289",
+    "tUsdcAfterTerminal": "10"
+  },
+  "order": {
+    "marketId": "0x0000000000000000000000000000000000000000000000000000000000008a9d",
+    "pool": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "orderId": "110680464442257591736",
+    "side": "BUY_YES",
+    "priceRaw": "10000",
+    "quantityRaw": "1000000",
+    "filledQuantityRaw": "0",
+    "expireTimestampNs": "1787611721000000000"
+  },
+  "terminalTransaction": {
+    "txHash": "0x94057033d8cd59cd1c58a6efa21d25cc7dc00c4eb0a0a0eaa2cfefb860ab02fd",
+    "status": "success",
+    "blockNumber": "470395919",
+    "from": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+    "to": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "gasUsed": "122626",
+    "functionSelector": "0xdbc91396",
+    "functionName": "cancelOrder(uint128)",
+    "inputOrderId": "110680464442257591736"
+  },
+  "terminalEvent": {
+    "eventName": "OrderExpired",
+    "orderId": "110680464442257591736",
+    "logIndex": 1,
+    "interpretation": "The owner-approved cancelOrder call landed after the order expiry timestamp, so the pool terminal event was OrderExpired rather than OrderCancelled."
+  },
+  "postTerminalVerification": {
+    "orderPresentOnchain": false,
+    "ownOpenOrders": [],
+    "unexpectedOpenOrder": false,
+    "collateralReconciled": true,
+    "tUsdcBeforeOrder": "10",
+    "tUsdcAfterOrder": "9.99",
+    "tUsdcAfterTerminal": "10",
+    "fillRequired": false,
+    "fillObserved": false,
+    "selfTrade": false,
+    "fakeVolume": false
+  },
+  "redaction": "public chain, receipt, terminal event, and reconciliation evidence only; no sensitive wallet authorization material or signature"
+}
