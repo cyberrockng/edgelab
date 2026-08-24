@@ -9,6 +9,7 @@
     { "path": "./packages/metrics" },
     { "path": "./packages/dreamdex" },
     { "path": "./packages/auth" },
+    { "path": "./packages/observe" },
     { "path": "./apps/server" },
     { "path": "./apps/web" }
   ]

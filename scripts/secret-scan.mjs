@@ -38,6 +38,8 @@ const publicEvidenceKeys = [
   "txHash",
   "transactionHash",
   "blockHash",
+  "snapshotHash",
+  "snapshot_hash",
   "calldataHash",
   "intentHash",
   "receiptHash"

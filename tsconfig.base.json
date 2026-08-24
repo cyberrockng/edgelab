@@ -22,6 +22,7 @@
       "@edgelab/domain": ["packages/domain/src/index.ts"],
       "@edgelab/dreamdex": ["packages/dreamdex/src/index.ts"],
       "@edgelab/metrics": ["packages/metrics/src/index.ts"],
+      "@edgelab/observe": ["packages/observe/src/index.ts"],
       "@edgelab/policy-runtime": ["packages/policy-runtime/src/index.ts"]
     }
   }

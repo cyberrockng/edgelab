@@ -1,0 +1,79 @@
+{
+  "taskId": "OBSERVE-001",
+  "capturedAt": "2026-08-24T14:28:40.322Z",
+  "status": "PASSED",
+  "evidenceClass": "LIVE",
+  "scope": "pre-outcome idempotent observation pipeline",
+  "implementedControls": [
+    "leased observation cycle per experiment",
+    "DreamDEX successor discovery through the read adapter",
+    "one durable episode row per experiment and market",
+    "one durable pre-outcome snapshot reused across restarts",
+    "two immutable shadow decisions per episode for the experiment policy pair",
+    "late or already-expired markets are excluded before snapshot and decision writes",
+    "audit events record observation pass/failure outcomes without secrets"
+  ],
+  "validation": {
+    "integrationTest": "tests/integration/observe.test.ts",
+    "secretScan": "pnpm secret:scan passed for 65 files before live manifest update",
+    "lint": "pnpm lint passed",
+    "typecheck": "pnpm typecheck passed",
+    "test": "pnpm test passed: 6 files, 26 tests",
+    "build": "pnpm build passed",
+    "fullVerification": "passed"
+  },
+  "liveCapture": {
+    "status": "captured",
+    "captureMethod": "local read-only worker run using built dist packages against DreamDEX SDK 0.28.1 and Somnia Shannon chain 50312",
+    "transactionSubmitted": false,
+    "walletRequired": false,
+    "experimentId": "8dd0c27e-2837-4c69-963a-511fd485f387",
+    "note": "The SDK process left an open network handle after output was captured and was manually interrupted. The read-only DB writes below had completed before interruption.",
+    "markets": [
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085f1",
+        "asset": "BTC",
+        "intervalSeconds": 900,
+        "poolAddress": "0xc09e4a5bdee2899962727125fb5eaeb896798e46",
+        "marketNonce": "52",
+        "expiresAt": "2026-08-24T14:30:00.000Z",
+        "snapshotId": "7b772655-8f66-4e59-9f3a-a499fdca3498",
+        "snapshot_hash": "22cc949e233ded6d9bf0ce609b4ade4390422e6af7c1d4af13f98e0fc22dba46",
+        "decisionCount": 2
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085f2",
+        "asset": "ETH",
+        "intervalSeconds": 900,
+        "poolAddress": "0x31246c0deca791c051094801af218d5387dc24a2",
+        "marketNonce": "53",
+        "expiresAt": "2026-08-24T14:30:00.000Z",
+        "snapshotId": "949d49af-4cc5-40c7-bef1-ba2c52e183e0",
+        "snapshot_hash": "064893659624092e1447734b20ac4a0b0313c3ea028f066db37274ade6f1e894",
+        "decisionCount": 2
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085c9",
+        "asset": "BTC",
+        "intervalSeconds": 3600,
+        "poolAddress": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+        "marketNonce": "103",
+        "expiresAt": "2026-08-24T15:00:00.000Z",
+        "snapshotId": "8fbeead6-bb6e-457a-84dc-5363859e242f",
+        "snapshot_hash": "94661ea7b39a095d69139aa833301214e1dc1b9ae7f7283a9b15b2e472f8de9b",
+        "decisionCount": 2
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085ca",
+        "asset": "ETH",
+        "intervalSeconds": 3600,
+        "poolAddress": "0x4143f9c602547a3159bbae017395025f98752518",
+        "marketNonce": "90",
+        "expiresAt": "2026-08-24T15:00:00.000Z",
+        "snapshotId": "09bbc407-7825-49e0-b81e-f8f461bcb940",
+        "snapshot_hash": "15dcae4c7ff450ee1782940d0cea012174aa5cc5a78af8631c7e0570a3846e20",
+        "decisionCount": 2
+      }
+    ]
+  }
+}

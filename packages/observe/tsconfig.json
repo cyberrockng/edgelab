@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "references": [
+    { "path": "../db" },
+    { "path": "../domain" },
+    { "path": "../dreamdex" },
+    { "path": "../policy-runtime" }
+  ],
+  "include": ["src/**/*.ts"]
+}
