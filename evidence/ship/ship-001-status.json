@@ -1,0 +1,30 @@
+{
+  "evidenceId": "EVD-010",
+  "task": "SHIP-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:53:48Z",
+  "sourceCommit": "54caf9be858b15b98c3b76969793b3f4ba9b6789",
+  "acceptanceCriteria": ["AC-015", "AC-016", "AC-017", "AC-018"],
+  "repository": {
+    "url": "https://github.com/cyberrockng/edgelab",
+    "defaultBranch": "main",
+    "visibility": "PUBLIC",
+    "readmeUpdated": true
+  },
+  "completed": [
+    "public GitHub repository exists",
+    "README documents setup, architecture, state model, safety boundaries, test commands, evidence commands, deployment, rollback, limitations, and SDK feedback location",
+    "SDK feedback exists at docs/SDK_FEEDBACK.md",
+    "demo script exists at docs/DEMO_SCRIPT.md",
+    "local Docker deployment fallback passed",
+    "sanitized evidence manifest exists"
+  ],
+  "pendingOwnerControlled": [
+    "final license approval and license file if owner chooses an open-source grant",
+    "public HTTPS deployment target or explicit acceptance of local Docker fallback only",
+    "final narrated video capture",
+    "official submission form receipt"
+  ],
+  "result": "PARTIAL_OWNER_ACTION_REQUIRED",
+  "redaction": "Public repository metadata and sanitized shipment status only."
+}
