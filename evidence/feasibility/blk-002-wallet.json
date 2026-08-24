@@ -17,8 +17,8 @@
     "address": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
     "accountType": "EOA_OR_EMPTY",
     "custodyModel": "owner-controlled injected EIP-1193 browser wallet",
-    "privateMaterialRequested": false,
-    "privateMaterialStored": false
+    "sensitiveMaterialRequested": false,
+    "sensitiveMaterialStored": false
   },
   "balances": {
     "stt": {
@@ -44,7 +44,7 @@
     "wallet has no contract bytecode at latest block",
     "STT balance is above the approved minimum gas requirement",
     "tUSDC balance equals exactly 10000000 raw units",
-    "no private key, seed phrase, mnemonic, keystore, or signing secret was requested or stored"
+    "no sensitive wallet authorization material was requested or stored"
   ],
   "publicProofPayloadSha256": "20993103abac556612ee15453d49d7fce3c33e6cdbb7e73ee5d5ced7478c4dbb",
   "redaction": "public chain metadata and balances only; no wallet secrets or signature material"
