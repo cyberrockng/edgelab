@@ -1,0 +1,64 @@
+{
+  "evidenceId": "EVD-001",
+  "task": "DEX-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T14:16:02.150Z",
+  "status": "PASS",
+  "checks": [
+    "SDK version and Somnia chain config validation",
+    "stable marketId distinct from pool address",
+    "BTC/ETH successor filtering without hardcoded pool availability",
+    "empty book side preservation",
+    "malformed market degraded result"
+  ],
+  "sdkVersion": "0.28.1",
+  "chainId": 50312,
+  "evidenceClass": "LIVE",
+  "liveReadStatus": "PASS",
+  "liveRead": {
+    "command": "node --input-type=module DEX discovery using createDreamDexSdkClient + discoverSuccessorMarkets",
+    "resultCount": 4,
+    "markets": [
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085f1",
+        "asset": "BTC",
+        "intervalSeconds": 900,
+        "status": "Trading",
+        "poolAddress": "0xc09e4a5bdee2899962727125fb5eaeb896798e46",
+        "nonce": "52",
+        "expirySeconds": 1787581800
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085f2",
+        "asset": "ETH",
+        "intervalSeconds": 900,
+        "status": "Trading",
+        "poolAddress": "0x31246c0deca791c051094801af218d5387dc24a2",
+        "nonce": "53",
+        "expirySeconds": 1787581800
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085c9",
+        "asset": "BTC",
+        "intervalSeconds": 3600,
+        "status": "Trading",
+        "poolAddress": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+        "nonce": "103",
+        "expirySeconds": 1787583600
+      },
+      {
+        "stableMarketId": "0x00000000000000000000000000000000000000000000000000000000000085ca",
+        "asset": "ETH",
+        "intervalSeconds": 3600,
+        "status": "Trading",
+        "poolAddress": "0x4143f9c602547a3159bbae017395025f98752518",
+        "nonce": "90",
+        "expirySeconds": 1787583600
+      }
+    ],
+    "retrievedAt": "2026-08-24T14:16:02.150Z",
+    "rpcUrl": "https://api.infra.testnet.somnia.network/",
+    "indexerUrl": "https://dev.smk.somnia.host/v1/graphql"
+  },
+  "redaction": "no wallet, signature, order, or private credential material"
+}

@@ -18,19 +18,39 @@ const forbiddenNames = [
 ].map((parts) => parts.join("_"));
 
 const forbiddenPatterns = [
-  /0x[a-fA-F0-9]{64}/,
   /\b(?=[A-Za-z0-9+/]{40,}={0,2}\b)(?=[A-Za-z0-9+/]*[+/=])[A-Za-z0-9+/]+={0,2}\b/,
   new RegExp(
     [
       ["private", "[_-]?", "key"].join(""),
       ["seed", "[_-]?", "phrase"].join(""),
       ["mnem", "onic"].join(""),
-      ["key", "store"].join(""),
+      ["key", "[_-]?", "store"].join(""),
       ["wallet", "[_-]?", "password"].join("")
     ].join("|"),
     "i"
   )
 ];
+
+const chainSizedHex = /0x[a-fA-F0-9]{64}/;
+const publicEvidenceKeys = [
+  "stableMarketId",
+  "marketId",
+  "txHash",
+  "transactionHash",
+  "blockHash",
+  "calldataHash",
+  "intentHash",
+  "receiptHash"
+];
+
+/**
+ * @param {string} path
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isAllowedPublicEvidenceHex(path, line) {
+  return path.startsWith("evidence/") && publicEvidenceKeys.some((key) => line.includes(`"${key}"`));
+}
 
 let failed = false;
 for (const path of tracked) {
@@ -44,6 +64,12 @@ for (const path of tracked) {
   for (const pattern of forbiddenPatterns) {
     if (pattern.test(content)) {
       console.error(`Potential secret pattern found in ${path}: ${String(pattern)}`);
+      failed = true;
+    }
+  }
+  for (const line of content.split("\n")) {
+    if (chainSizedHex.test(line) && !isAllowedPublicEvidenceHex(path, line)) {
+      console.error(`Potential 32-byte private value found in ${path}`);
       failed = true;
     }
   }
