@@ -12,6 +12,7 @@ COPY packages/domain/package.json packages/domain/package.json
 COPY packages/dreamdex/package.json packages/dreamdex/package.json
 COPY packages/evaluate/package.json packages/evaluate/package.json
 COPY packages/auth/package.json packages/auth/package.json
+COPY packages/chain/package.json packages/chain/package.json
 COPY packages/metrics/package.json packages/metrics/package.json
 COPY packages/observe/package.json packages/observe/package.json
 COPY packages/policy-runtime/package.json packages/policy-runtime/package.json
