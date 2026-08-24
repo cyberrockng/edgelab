@@ -210,6 +210,25 @@ importers:
         specifier: workspace:*
         version: link:../domain
 
+  packages/settle:
+    dependencies:
+      '@edgelab/db':
+        specifier: workspace:*
+        version: link:../db
+      '@edgelab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@edgelab/dreamdex':
+        specifier: workspace:*
+        version: link:../dreamdex
+      pg:
+        specifier: ^8.16.3
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.15.5
+        version: 8.23.1
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':

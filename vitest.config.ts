@@ -13,7 +13,8 @@ export default defineConfig({
       "@edgelab/dreamdex": `${root}packages/dreamdex/src/index.ts`,
       "@edgelab/metrics": `${root}packages/metrics/src/index.ts`,
       "@edgelab/observe": `${root}packages/observe/src/index.ts`,
-      "@edgelab/policy-runtime": `${root}packages/policy-runtime/src/index.ts`
+      "@edgelab/policy-runtime": `${root}packages/policy-runtime/src/index.ts`,
+      "@edgelab/settle": `${root}packages/settle/src/index.ts`
     }
   },
   test: {

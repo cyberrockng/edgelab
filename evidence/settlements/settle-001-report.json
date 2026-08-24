@@ -1,0 +1,83 @@
+{
+  "taskId": "SETTLE-001",
+  "capturedAt": "2026-08-24T14:35:07.731Z",
+  "status": "PASSED",
+  "evidenceClass": "LIVE",
+  "scope": "outcome and void reconciliation for previously observed DreamDEX market episodes",
+  "implementedControls": [
+    "settlement worker is protected by a PostgreSQL lease",
+    "only expired observed episodes are eligible for settlement reconciliation",
+    "resolved YES, resolved NO, voided, pending, and unavailable are classified distinctly",
+    "terminal settlement hashes exclude observation time so repeated reconciliation is idempotent",
+    "voided markets are terminal and winnerless",
+    "pending post-expiry markets remain pending without fabricated outcome labels",
+    "settlement writes do not create fill records or realized PnL evidence"
+  ],
+  "validation": {
+    "integrationTest": "tests/integration/settle.test.ts",
+    "secretScan": "pnpm secret:scan passed for 70 files",
+    "lint": "pnpm lint passed",
+    "typecheck": "pnpm typecheck passed",
+    "test": "pnpm test passed: 7 files, 29 tests",
+    "build": "pnpm build passed",
+    "fullVerification": "passed"
+  },
+  "liveCapture": {
+    "status": "captured",
+    "captureMethod": "read-only DreamDEX SDK getBinaryMarket against market IDs captured in evidence/observations/manifest.json",
+    "transactionSubmitted": false,
+    "walletRequired": false,
+    "pnlClaimed": false,
+    "observedAt": "2026-08-24T14:35:07.731Z",
+    "markets": [
+      {
+        "marketId": "0x00000000000000000000000000000000000000000000000000000000000085f1",
+        "status": "Finalized",
+        "finalized": true,
+        "voided": false,
+        "winningOutcome": 0,
+        "resolvedAtBlock": "470089146",
+        "resolvedAtTimestamp": "1787581801",
+        "outcome": "RESOLVED_YES",
+        "terminal": true,
+        "settlementHash": "9fce05f3fcbfd8ef1d3a42a2078b28341b7c4ee4153607599b0601cff3903caa"
+      },
+      {
+        "marketId": "0x00000000000000000000000000000000000000000000000000000000000085f2",
+        "status": "Finalized",
+        "finalized": true,
+        "voided": false,
+        "winningOutcome": 0,
+        "resolvedAtBlock": "470089146",
+        "resolvedAtTimestamp": "1787581801",
+        "outcome": "RESOLVED_YES",
+        "terminal": true,
+        "settlementHash": "c7346e577db15239f0777614337107d679b00d1812aa6cb9a9891bb353c21112"
+      },
+      {
+        "marketId": "0x00000000000000000000000000000000000000000000000000000000000085c9",
+        "status": "Trading",
+        "finalized": false,
+        "voided": false,
+        "winningOutcome": null,
+        "resolvedAtBlock": null,
+        "resolvedAtTimestamp": null,
+        "outcome": "PENDING",
+        "terminal": false,
+        "settlementHash": null
+      },
+      {
+        "marketId": "0x00000000000000000000000000000000000000000000000000000000000085ca",
+        "status": "Trading",
+        "finalized": false,
+        "voided": false,
+        "winningOutcome": null,
+        "resolvedAtBlock": null,
+        "resolvedAtTimestamp": null,
+        "outcome": "PENDING",
+        "terminal": false,
+        "settlementHash": null
+      }
+    ]
+  }
+}

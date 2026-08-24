@@ -14,6 +14,7 @@ COPY packages/auth/package.json packages/auth/package.json
 COPY packages/metrics/package.json packages/metrics/package.json
 COPY packages/observe/package.json packages/observe/package.json
 COPY packages/policy-runtime/package.json packages/policy-runtime/package.json
+COPY packages/settle/package.json packages/settle/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build

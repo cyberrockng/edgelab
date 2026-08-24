@@ -37,6 +37,15 @@ export const ExecutionStateSchema = z.enum([
 ]);
 export type ExecutionState = z.infer<typeof ExecutionStateSchema>;
 
+export const SettlementOutcomeSchema = z.enum([
+  "PENDING",
+  "RESOLVED_YES",
+  "RESOLVED_NO",
+  "VOIDED",
+  "UNAVAILABLE"
+]);
+export type SettlementOutcome = z.infer<typeof SettlementOutcomeSchema>;
+
 export const PolicyDecisionSchema = z.object({
   policyId: z.string().min(1),
   policyVersion: z.string().min(1),
