@@ -1,0 +1,50 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "QA-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:34:49Z",
+  "sourceCommit": "ca634ae0ddf72fa2fbde9b09fd560683b3f52705",
+  "acceptanceCriteria": ["AC-005", "AC-006", "AC-007", "AC-008", "AC-012"],
+  "tests": [
+    "TEST-002",
+    "TEST-003",
+    "TEST-005",
+    "TEST-006",
+    "TEST-007",
+    "TEST-008",
+    "TEST-009",
+    "TEST-010",
+    "TEST-011",
+    "TEST-012",
+    "TEST-013",
+    "TEST-018",
+    "TEST-022"
+  ],
+  "commands": [
+    {
+      "command": "pnpm check",
+      "run": 1,
+      "result": "PASS",
+      "testFilesPassed": 11,
+      "testsPassed": 39
+    },
+    {
+      "command": "pnpm check",
+      "run": 2,
+      "result": "PASS",
+      "testFilesPassed": 11,
+      "testsPassed": 39
+    }
+  ],
+  "coverageScope": [
+    "policy registration and deterministic policy runtime",
+    "live-shadow pre-outcome observation boundaries",
+    "forecast, execution, sufficiency, and settlement metrics",
+    "wallet authorization boundary and replay rejection",
+    "DreamDEX read and chain lifecycle evidence import",
+    "API summary contracts"
+  ],
+  "completionContract": "Required unit and integration reports passed twice cleanly.",
+  "redaction": "Sanitized test evidence only; no credential material or hidden runtime configuration is included.",
+  "result": "PASS"
+}
