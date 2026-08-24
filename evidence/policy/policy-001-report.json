@@ -1,0 +1,20 @@
+{
+  "evidenceId": "EVD-007",
+  "task": "POLICY-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T14:12:00.000Z",
+  "status": "PASS",
+  "checks": [
+    "deterministic manifest hash",
+    "duplicate policy version rejection",
+    "outcome-free evaluation input",
+    "malformed output rejection",
+    "reason-coded policy exception handling"
+  ],
+  "referencePolicies": [
+    "reference-neutral@1.0.0",
+    "reference-book-tilt@1.0.0"
+  ],
+  "evidenceClass": "MOCK",
+  "redaction": "no secrets, wallet material, runtime code upload, or financial claims"
+}
