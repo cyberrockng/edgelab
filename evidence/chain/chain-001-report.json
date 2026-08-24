@@ -1,0 +1,44 @@
+{
+  "evidenceId": "EVD-005",
+  "task": "CHAIN-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:14:28Z",
+  "status": "PASS",
+  "evidenceClass": "CAPTURED",
+  "scope": [
+    "idempotent persistence for verified EXG-003 lifecycle evidence",
+    "separate chain transaction, order, fill, terminal, artifact, and audit records",
+    "no-fill order lifecycle remains valid tradeability evidence without realized PnL",
+    "summary API exposes tradeability counts separately from forecast metrics"
+  ],
+  "liveInputs": {
+    "walletEvidence": "evidence/feasibility/blk-002-wallet.json",
+    "approvalEvidence": "evidence/feasibility/blk-003-intent.json",
+    "orderEvidence": "evidence/feasibility/blk-003-order.json",
+    "terminalEvidence": "evidence/feasibility/blk-003-terminal.json"
+  },
+  "implementedControls": [
+    "Somnia Shannon chain id is fixed at 50312",
+    "execution intent import is idempotent by idempotency key",
+    "terminal states clear nonterminal intent uniqueness",
+    "fill evidence is optional and does not fabricate PnL",
+    "summary reports submitted, fill, terminal, and open-order counts independently",
+    "temporary wallet transaction pages were removed after human-signed use"
+  ],
+  "validation": {
+    "unitAndIntegrationCommand": "pnpm check",
+    "result": "passed",
+    "testFilesPassed": 11,
+    "testsPassed": 39,
+    "chainTests": "tests/integration/chain.test.ts passed: 2 tests",
+    "secretScan": "pnpm secret:scan passed for 81 files"
+  },
+  "security": {
+    "serverSigning": false,
+    "walletSecretsRequested": false,
+    "walletSecretsStored": false,
+    "rawCalldataInEvidence": false,
+    "publicHashesAndDecodedFieldsOnly": true
+  },
+  "redaction": "public lifecycle evidence references and validation results only; no sensitive wallet authorization material or signature"
+}

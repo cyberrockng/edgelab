@@ -10,6 +10,7 @@ import {
   type AuthChallenge,
   type SignatureVerifier
 } from "@edgelab/auth";
+import { summarizeChainEvidence } from "@edgelab/chain";
 import type { RuntimeConfig } from "@edgelab/config";
 import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
 import { discoverSuccessorMarkets, type DreamDexReadConfig, type DreamDexSdkClient } from "@edgelab/dreamdex";
@@ -202,6 +203,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         `
       );
       const row = result.rows[0];
+      const chain = await summarizeChainEvidence(pool);
       return {
         ok: true,
         counts: {
@@ -212,7 +214,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           settlements: Number(row?.settlements ?? 0),
           metricRuns: Number(row?.metric_runs ?? 0),
           assessments: Number(row?.assessments ?? 0)
-        }
+        },
+        chain
       };
     } catch (error) {
       return reply.code(503).send({

@@ -9,6 +9,7 @@
   },
   "references": [
     { "path": "../../packages/auth" },
+    { "path": "../../packages/chain" },
     { "path": "../../packages/config" },
     { "path": "../../packages/db" },
     { "path": "../../packages/domain" },

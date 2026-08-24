@@ -127,6 +127,14 @@ describe("API-001 server contracts", () => {
         episodes: 0,
         snapshots: 0,
         decisions: 0
+      },
+      chain: {
+        submittedOrderCount: 0,
+        fillCount: 0,
+        terminalOrderCount: 0,
+        openOrderCount: 0,
+        latestTerminalState: null,
+        tradeabilityStatus: "NOT_EVALUATED"
       }
     });
   });

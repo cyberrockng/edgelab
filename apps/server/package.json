@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@edgelab/auth": "workspace:*",
+    "@edgelab/chain": "workspace:*",
     "@edgelab/config": "workspace:*",
     "@edgelab/db": "workspace:*",
     "@edgelab/domain": "workspace:*",

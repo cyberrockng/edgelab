@@ -6,7 +6,7 @@ It compares two immutable reference policies using pre-outcome decisions, separa
 
 ## Current Status
 
-Implementation baseline in progress. Wallet funding and any DreamDEX write are intentionally blocked until the approved `EXG-002` and `EXG-003` human gates.
+Implementation in progress. `EXG-002` funding and `EXG-003` human-signed DreamDEX order/terminal lifecycle have passed on Somnia Shannon; deployment and final QA remain pending.
 
 ## Quick Start
 
