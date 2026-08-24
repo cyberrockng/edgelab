@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@edgelab/config": `${root}packages/config/src/index.ts`,
+      "@edgelab/db": `${root}packages/db/src/index.ts`,
       "@edgelab/domain": `${root}packages/domain/src/index.ts`,
       "@edgelab/dreamdex": `${root}packages/dreamdex/src/index.ts`,
       "@edgelab/metrics": `${root}packages/metrics/src/index.ts`,

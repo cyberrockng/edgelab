@@ -1,0 +1,36 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "DB-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T14:08:00.000Z",
+  "status": "PASS",
+  "environment": "local docker compose PostgreSQL 17",
+  "databaseUrl": "redacted-localhost-55432",
+  "checks": [
+    {
+      "command": "docker compose up -d postgres",
+      "status": "PASS",
+      "port": "55432:5432"
+    },
+    {
+      "command": "TEST_DATABASE_URL=postgres://...@localhost:55432/edgelab pnpm vitest run tests/integration/db.test.ts",
+      "status": "PASS",
+      "testsPassed": 6
+    },
+    {
+      "command": "docker build -t edgelab:db-foundation .",
+      "status": "PASS",
+      "imageId": "sha256:2460198c70ca7dddedeb7031aa5b8c184aaef08145595231539171a134928917"
+    }
+  ],
+  "coverage": [
+    "forward-only migration table and hash recording",
+    "chain=50312 and wallet address constraints",
+    "immutable unique pre-outcome shadow decision key",
+    "one nonterminal intent per wallet and market",
+    "worker lease exclusivity and renewal",
+    "append-only audit hash chaining"
+  ],
+  "evidenceClass": "LIVE",
+  "redaction": "database credentials are local placeholders; no wallet secrets, signatures, or private chain material"
+}

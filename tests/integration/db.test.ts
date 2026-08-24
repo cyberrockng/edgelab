@@ -1,0 +1,189 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { acquireLease, appendAuditEvent, createPool, runMigrations } from "@edgelab/db";
+
+const connectionString =
+  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
+
+const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
+
+async function resetPublicSchema(): Promise<void> {
+  await pool.query("DROP SCHEMA public CASCADE");
+  await pool.query("CREATE SCHEMA public");
+}
+
+async function seedExperiment(): Promise<{
+  experimentId: string;
+  episodeId: string;
+  snapshotId: string;
+  policyId: string;
+}> {
+  const owner = "0x0000000000000000000000000000000000000abc";
+  await pool.query("INSERT INTO wallet_identities(address) VALUES ($1)", [owner]);
+  const policyA = await pool.query<{ id: string }>(
+    `
+      INSERT INTO policy_versions(policy_id, version, label, adapter_name, source_hash, manifest)
+      VALUES ('a', '1.0.0', 'A', 'adapter-a', $1, '{}'::jsonb)
+      RETURNING id
+    `,
+    ["a".repeat(64)]
+  );
+  const policyB = await pool.query<{ id: string }>(
+    `
+      INSERT INTO policy_versions(policy_id, version, label, adapter_name, source_hash, manifest)
+      VALUES ('b', '1.0.0', 'B', 'adapter-b', $1, '{}'::jsonb)
+      RETURNING id
+    `,
+    ["b".repeat(64)]
+  );
+  const risk = await pool.query<{ id: string }>(
+    `
+      INSERT INTO risk_envelopes(version, max_order_raw, max_aggregate_raw, allowed_actions, allowed_intervals, envelope_hash)
+      VALUES ('1.0.0', 5000000, 10000000, ARRAY['WATCH_ONLY'], ARRAY[900, 3600], $1)
+      RETURNING id
+    `,
+    ["c".repeat(64)]
+  );
+  const experiment = await pool.query<{ id: string }>(
+    `
+      INSERT INTO experiments(owner_address, policy_a_id, policy_b_id, risk_envelope_id, rule_version, decision_offset_sec)
+      VALUES ($1, $2, $3, $4, 'rules-1', 0)
+      RETURNING id
+    `,
+    [owner, policyA.rows[0]?.id, policyB.rows[0]?.id, risk.rows[0]?.id]
+  );
+  const episode = await pool.query<{ id: string }>(
+    `
+      INSERT INTO market_episodes(
+        experiment_id, market_id, asset, interval_seconds, pool_address, market_nonce,
+        expires_at, source_observed_at
+      )
+      VALUES ($1, 'market-1', 'BTC', 900, '0x0000000000000000000000000000000000000def', 1, now() + interval '15 minutes', now())
+      RETURNING id
+    `,
+    [experiment.rows[0]?.id]
+  );
+  const snapshot = await pool.query<{ id: string }>(
+    `
+      INSERT INTO market_snapshots(episode_id, chain_id, captured_at, snapshot_hash, evidence_class, payload)
+      VALUES ($1, 50312, now(), $2, 'MOCK', '{}'::jsonb)
+      RETURNING id
+    `,
+    [episode.rows[0]?.id, "d".repeat(64)]
+  );
+
+  return {
+    experimentId: experiment.rows[0]?.id ?? "",
+    episodeId: episode.rows[0]?.id ?? "",
+    snapshotId: snapshot.rows[0]?.id ?? "",
+    policyId: policyA.rows[0]?.id ?? ""
+  };
+}
+
+describe("DB-001 schema and recovery controls", () => {
+  beforeAll(async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("runs migrations idempotently and records hashes", async () => {
+    const rerun = await runMigrations(pool);
+    expect(rerun).toHaveLength(1);
+    expect(rerun[0]?.applied).toBe(false);
+    expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("enforces chain and wallet identity constraints", async () => {
+    await expect(
+      pool.query("INSERT INTO wallet_identities(address, chain_id) VALUES ($1, $2)", [
+        "0x0000000000000000000000000000000000000001",
+        1
+      ])
+    ).rejects.toThrow();
+  });
+
+  it("enforces unique pre-outcome shadow decisions", async () => {
+    const seeded = await seedExperiment();
+    const decisionSql = `
+      INSERT INTO shadow_decisions(
+        experiment_id, episode_id, policy_version_id, snapshot_id, decision_offset_sec,
+        forecast_p_up, action, reason_codes, decided_at, policy_hash, risk_hash
+      )
+      VALUES ($1, $2, $3, $4, 0, 0.5, 'WATCH_ONLY', ARRAY['TEST'], now(), $5, $6)
+    `;
+    await pool.query(decisionSql, [
+      seeded.experimentId,
+      seeded.episodeId,
+      seeded.policyId,
+      seeded.snapshotId,
+      "e".repeat(64),
+      "f".repeat(64)
+    ]);
+    await expect(
+      pool.query(decisionSql, [
+        seeded.experimentId,
+        seeded.episodeId,
+        seeded.policyId,
+        seeded.snapshotId,
+        "e".repeat(64),
+        "f".repeat(64)
+      ])
+    ).rejects.toThrow();
+  });
+
+  it("prevents more than one nonterminal intent per wallet and market", async () => {
+    const owner = "0x0000000000000000000000000000000000000bed";
+    await pool.query("INSERT INTO wallet_identities(address) VALUES ($1)", [owner]);
+    const sql = `
+      INSERT INTO execution_intents(
+        owner_address, market_id, chain_id, intent_type, state, pool_address, side,
+        price_raw, quantity_raw, escrow_raw, expires_at, caps, idempotency_key, intent_hash
+      )
+      VALUES ($1, 'market-intent', 50312, 'INTEGRATION_PROBE', 'AWAITING_APPROVAL',
+        '0x0000000000000000000000000000000000000bee', 'BUY_YES',
+        1000, 1000, 1, now() + interval '5 minutes', '{}'::jsonb, $2, $3)
+    `;
+    await pool.query(sql, [owner, randomUUID(), "1".repeat(64)]);
+    await expect(pool.query(sql, [owner, randomUUID(), "2".repeat(64)])).rejects.toThrow();
+  });
+
+  it("uses leases to allow one active worker holder", async () => {
+    const first = await acquireLease(pool, "observe", "worker-a", 60_000);
+    const second = await acquireLease(pool, "observe", "worker-b", 60_000);
+    const renewal = await acquireLease(pool, "observe", "worker-a", 60_000);
+    expect(first.acquired).toBe(true);
+    expect(second.acquired).toBe(false);
+    expect(second.holderId).toBe("worker-a");
+    expect(renewal.acquired).toBe(true);
+  });
+
+  it("appends audit events with hash chaining", async () => {
+    const first = await appendAuditEvent(pool, {
+      actor: "system",
+      action: "MIGRATION_TEST",
+      targetType: "schema",
+      targetId: "public",
+      outcome: "PASS",
+      correlationId: randomUUID()
+    });
+    const second = await appendAuditEvent(pool, {
+      actor: "system",
+      action: "MIGRATION_TEST_2",
+      targetType: "schema",
+      targetId: "public",
+      outcome: "PASS",
+      correlationId: randomUUID()
+    });
+    const rows = await pool.query<{ previous_hash: string | null }>(
+      "SELECT previous_hash FROM audit_events WHERE event_hash = $1",
+      [second]
+    );
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(second).toMatch(/^[a-f0-9]{64}$/);
+    expect(rows.rows[0]?.previous_hash).toBe(first);
+  });
+});

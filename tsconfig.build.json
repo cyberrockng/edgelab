@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/domain" },
     { "path": "./packages/config" },
+    { "path": "./packages/db" },
     { "path": "./packages/policy-runtime" },
     { "path": "./packages/metrics" },
     { "path": "./packages/dreamdex" },

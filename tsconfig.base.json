@@ -17,6 +17,7 @@
     "baseUrl": ".",
     "paths": {
       "@edgelab/config": ["packages/config/src/index.ts"],
+      "@edgelab/db": ["packages/db/src/index.ts"],
       "@edgelab/domain": ["packages/domain/src/index.ts"],
       "@edgelab/dreamdex": ["packages/dreamdex/src/index.ts"],
       "@edgelab/metrics": ["packages/metrics/src/index.ts"],

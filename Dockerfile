@@ -7,6 +7,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/config/package.json packages/config/package.json
+COPY packages/db/package.json packages/db/package.json
 COPY packages/domain/package.json packages/domain/package.json
 COPY packages/dreamdex/package.json packages/dreamdex/package.json
 COPY packages/metrics/package.json packages/metrics/package.json
