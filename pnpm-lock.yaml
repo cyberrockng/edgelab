@@ -84,12 +84,33 @@ importers:
 
   apps/server:
     dependencies:
+      '@edgelab/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@edgelab/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@edgelab/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@edgelab/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@edgelab/dreamdex':
+        specifier: workspace:*
+        version: link:../../packages/dreamdex
+      '@edgelab/evaluate':
+        specifier: workspace:*
+        version: link:../../packages/evaluate
+      '@edgelab/observe':
+        specifier: workspace:*
+        version: link:../../packages/observe
+      '@edgelab/policy-runtime':
+        specifier: workspace:*
+        version: link:../../packages/policy-runtime
+      '@edgelab/settle':
+        specifier: workspace:*
+        version: link:../../packages/settle
       '@fastify/cookie':
         specifier: ^11.0.2
         version: 11.1.2

@@ -11,8 +11,15 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@edgelab/auth": "workspace:*",
     "@edgelab/config": "workspace:*",
+    "@edgelab/db": "workspace:*",
     "@edgelab/domain": "workspace:*",
+    "@edgelab/dreamdex": "workspace:*",
+    "@edgelab/evaluate": "workspace:*",
+    "@edgelab/observe": "workspace:*",
+    "@edgelab/policy-runtime": "workspace:*",
+    "@edgelab/settle": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.0.1",

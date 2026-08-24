@@ -1,0 +1,25 @@
+{
+  "taskId": "API-001",
+  "capturedAt": "2026-08-24T15:45:45.000Z",
+  "status": "PASSED",
+  "evidenceClass": "CAPTURED",
+  "scope": "Fastify API contracts for health, readiness, invariants, wallet auth boundaries, evidence summaries, and idempotent workflows",
+  "implementedControls": [
+    "health and readiness endpoints expose build, DB, chain, and SDK status",
+    "invariants endpoint exposes prohibited product drift and safety boundaries",
+    "wallet challenge endpoint creates login and exact-intent approval challenges without server signing",
+    "wallet verify endpoint rejects replayed nonces and invalid signatures",
+    "mutating workflow endpoints require Idempotency-Key headers",
+    "observation, settlement, and metric workflow endpoints use existing deterministic packages",
+    "evidence summary reports counts without secrets or unsupported profitability claims"
+  ],
+  "validation": {
+    "integrationTest": "tests/integration/api.test.ts",
+    "secretScan": "pnpm secret:scan passed for 78 files",
+    "lint": "pnpm lint passed",
+    "typecheck": "pnpm typecheck passed",
+    "test": "pnpm test passed: 10 files, 37 tests",
+    "build": "pnpm build passed",
+    "fullVerification": "passed"
+  }
+}

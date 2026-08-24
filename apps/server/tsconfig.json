@@ -8,8 +8,15 @@
     "rootDir": "src"
   },
   "references": [
+    { "path": "../../packages/auth" },
     { "path": "../../packages/config" },
-    { "path": "../../packages/domain" }
+    { "path": "../../packages/db" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/dreamdex" },
+    { "path": "../../packages/evaluate" },
+    { "path": "../../packages/observe" },
+    { "path": "../../packages/policy-runtime" },
+    { "path": "../../packages/settle" }
   ],
   "include": ["src/**/*.ts"]
 }
