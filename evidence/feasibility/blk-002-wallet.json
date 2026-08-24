@@ -1,0 +1,51 @@
+{
+  "evidenceId": "BLK-002",
+  "task": "EXG-002",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T22:18:57Z",
+  "status": "PASS",
+  "evidenceClass": "LIVE_PUBLIC_CHAIN_READ",
+  "network": {
+    "name": "Somnia Shannon Testnet",
+    "chainId": 50312,
+    "chainIdHex": "0xc488",
+    "rpcUrl": "https://api.infra.testnet.somnia.network/",
+    "explorerUrl": "https://shannon-explorer.somnia.network/",
+    "observedBlockNumber": 470370079
+  },
+  "wallet": {
+    "address": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+    "accountType": "EOA_OR_EMPTY",
+    "custodyModel": "owner-controlled injected EIP-1193 browser wallet",
+    "privateMaterialRequested": false,
+    "privateMaterialStored": false
+  },
+  "balances": {
+    "stt": {
+      "symbol": "STT",
+      "minimumRequired": "3",
+      "observed": "50.998481172",
+      "status": "PASS"
+    },
+    "tUsdc": {
+      "symbol": "tUSDC",
+      "contract": "0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E",
+      "decimals": 6,
+      "requiredRaw": "10000000",
+      "requiredDisplay": "10",
+      "observedRaw": "10000000",
+      "observedDisplay": "10",
+      "status": "PASS"
+    }
+  },
+  "acceptanceChecks": [
+    "public address is a valid EVM address",
+    "public chain id is 50312",
+    "wallet has no contract bytecode at latest block",
+    "STT balance is above the approved minimum gas requirement",
+    "tUSDC balance equals exactly 10000000 raw units",
+    "no private key, seed phrase, mnemonic, keystore, or signing secret was requested or stored"
+  ],
+  "publicProofPayloadSha256": "20993103abac556612ee15453d49d7fce3c33e6cdbb7e73ee5d5ced7478c4dbb",
+  "redaction": "public chain metadata and balances only; no wallet secrets or signature material"
+}
