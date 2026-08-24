@@ -6,7 +6,8 @@ const tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--excl
 })
   .split("\n")
   .filter(Boolean)
-  .filter((path) => !path.includes("pnpm-lock.yaml"));
+  .filter((path) => !path.includes("pnpm-lock.yaml"))
+  .filter((path) => !/\.(png|jpe?g|webp|gif|ico)$/i.test(path));
 
 const forbiddenNames = [
   ["PRIVATE", "KEY"],

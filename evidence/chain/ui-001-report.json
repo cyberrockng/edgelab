@@ -1,0 +1,40 @@
+{
+  "evidenceId": "EVD-006",
+  "task": "UI-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:24:00Z",
+  "status": "PASS",
+  "evidenceClass": "CAPTURED",
+  "scope": [
+    "decision-first React review UI",
+    "forecast, tradeability, and realized PnL are visually separated",
+    "INSUFFICIENT_EVIDENCE remains a first-class visible verdict",
+    "DreamDEX approval, order, terminal, and public proof states render independently",
+    "summary API chain evidence is consumed when available with captured fallback"
+  ],
+  "screenshots": [
+    {
+      "viewport": "desktop",
+      "path": "evidence/chain/ui-desktop.png",
+      "sha256": "07ec7bd29c9cd8a6850ae54ce984988e349ced72282c1973213a9230580837ff"
+    },
+    {
+      "viewport": "mobile",
+      "path": "evidence/chain/ui-mobile.png",
+      "sha256": "71459a8f57f2d12184385f9dd1ef10b002afbb5413714ac1d25e5017851246d8"
+    }
+  ],
+  "validation": {
+    "build": "pnpm build passed",
+    "tests": "pnpm check passed: 11 files, 39 tests",
+    "playwrightRender": "desktop and mobile rendered with no horizontal overflow",
+    "secretScan": "pnpm secret:scan passed after binary screenshot exclusion"
+  },
+  "accessibilityNotes": [
+    "main regions and proof sections have accessible labels",
+    "sample gauge has role image and text alternative",
+    "navigation uses keyboard-focusable anchors",
+    "layout verified at 1440x1000 and 390x900 viewports"
+  ],
+  "redaction": "UI screenshots and public proof abbreviations only; no sensitive wallet authorization material or signature"
+}

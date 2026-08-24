@@ -1,7 +1,11 @@
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
+import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type pg from "pg";
 import {
   createApprovalChallenge,
@@ -86,6 +90,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     origin: config.PUBLIC_APP_URL,
     credentials: true
   });
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const staticRoots = [
+    join(moduleDir, "..", "..", "web", "dist"),
+    join(moduleDir, "..", "..", "..", "apps", "web", "dist")
+  ];
+  const staticRoot = staticRoots.find((candidate) => existsSync(join(candidate, "index.html")));
+  if (staticRoot !== undefined) {
+    void app.register(fastifyStatic, {
+      root: staticRoot,
+      prefix: "/"
+    });
+  }
 
   app.get("/healthz", () => ({
     ok: true,
