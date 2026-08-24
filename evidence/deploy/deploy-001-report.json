@@ -1,0 +1,78 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "DEPLOY-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:50:42Z",
+  "sourceCommit": "d64f4516146daa350dd547f61e552058d091c789",
+  "acceptanceCriteria": ["AC-015", "AC-017", "AC-018"],
+  "tests": ["TEST-021", "TEST-023", "TEST-025"],
+  "image": {
+    "tag": "edgelab:deploy-qa",
+    "digest": "sha256:b2e84080a24295c775a8a3b04e86ef707e5877093c94dfbe9e246029abeecfbd",
+    "runtimeUser": "edgelab",
+    "buildCommand": "docker build -t edgelab:deploy-qa .",
+    "result": "PASS"
+  },
+  "deployment": {
+    "mode": "local Docker runtime smoke",
+    "hostPort": 3012,
+    "database": "edgelab_qa",
+    "network": "Somnia Shannon Testnet",
+    "chainId": 50312,
+    "result": "PASS"
+  },
+  "smokeChecks": {
+    "healthz": {
+      "ok": true,
+      "buildCommit": "d64f4516146daa350dd547f61e552058d091c789"
+    },
+    "readyz": {
+      "ok": true,
+      "database": "ok",
+      "workerEnabled": false,
+      "chainId": 50312,
+      "marketsSdkVersion": "0.28.1"
+    },
+    "spaRoot": {
+      "served": true,
+      "title": "EdgeLab",
+      "assetReferencesPresent": true
+    },
+    "evidenceSummary": {
+      "submittedOrderCount": 1,
+      "fillCount": 0,
+      "terminalOrderCount": 1,
+      "openOrderCount": 0,
+      "latestTerminalState": "EXPIRED",
+      "tradeabilityStatus": "EVALUATED"
+    }
+  },
+  "migration": {
+    "version": "0001_initial_schema",
+    "database": "edgelab_qa",
+    "status": "already applied and validated during QA-002"
+  },
+  "restoreCheck": {
+    "sourceDatabase": "edgelab_qa",
+    "restoredDatabase": "edgelab_restore_check",
+    "result": "PASS",
+    "summary": {
+      "submittedOrderCount": 1,
+      "fillCount": 0,
+      "terminalOrderCount": 1,
+      "openOrderCount": 0,
+      "latestTerminalState": "EXPIRED"
+    }
+  },
+  "rollbackCheck": {
+    "containerStoppedCleanly": true,
+    "rollbackMode": "stop local smoke container and retain prior committed source/image baseline",
+    "result": "PASS"
+  },
+  "buildIssuesFoundAndFixed": [
+    "Docker dependency layer was missing packages/chain/package.json",
+    "pnpm lockfile was stale for @fastify/static"
+  ],
+  "redaction": "Public build, health, chain summary, and sanitized deployment metadata only.",
+  "result": "PASS"
+}
