@@ -1,0 +1,31 @@
+{
+  "taskId": "AUTH-001",
+  "capturedAt": "2026-08-24T15:22:30.000Z",
+  "status": "PASSED",
+  "networkBoundary": {
+    "chainId": 50312,
+    "network": "Somnia Shannon Testnet",
+    "custodyModel": "browser-wallet-only",
+    "serverSigning": false
+  },
+  "implementedControls": [
+    "login challenges are domain, URI, chain, account, nonce, issue-time, and expiry bound",
+    "transaction approval challenges bind one exact intent hash",
+    "signature verification is injected for deterministic tests and defaults to viem verifyMessage",
+    "replay, expiry, account mismatch, chain mismatch, domain mismatch, URI mismatch, and invalid signatures return explicit reason codes",
+    "challenge text states that login does not authorize a transaction and approval does not grant reusable authority"
+  ],
+  "secretHandling": {
+    "walletSecretsRequested": false,
+    "walletSecretsStored": false,
+    "testSignaturesSynthetic": true
+  },
+  "validation": {
+    "unitTest": "tests/unit/auth.test.ts",
+    "secretScan": "pnpm secret:scan passed for 60 files",
+    "lint": "pnpm lint passed",
+    "typecheck": "pnpm typecheck passed",
+    "test": "pnpm test passed: 5 files, 24 tests",
+    "fullVerification": "passed"
+  }
+}

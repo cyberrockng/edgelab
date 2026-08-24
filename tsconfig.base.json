@@ -16,6 +16,7 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
+      "@edgelab/auth": ["packages/auth/src/index.ts"],
       "@edgelab/config": ["packages/config/src/index.ts"],
       "@edgelab/db": ["packages/db/src/index.ts"],
       "@edgelab/domain": ["packages/domain/src/index.ts"],

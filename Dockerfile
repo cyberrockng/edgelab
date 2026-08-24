@@ -10,6 +10,7 @@ COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/domain/package.json packages/domain/package.json
 COPY packages/dreamdex/package.json packages/dreamdex/package.json
+COPY packages/auth/package.json packages/auth/package.json
 COPY packages/metrics/package.json packages/metrics/package.json
 COPY packages/policy-runtime/package.json packages/policy-runtime/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts

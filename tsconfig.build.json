@@ -7,6 +7,7 @@
     { "path": "./packages/policy-runtime" },
     { "path": "./packages/metrics" },
     { "path": "./packages/dreamdex" },
+    { "path": "./packages/auth" },
     { "path": "./apps/server" },
     { "path": "./apps/web" }
   ]
