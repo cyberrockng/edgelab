@@ -1,0 +1,23 @@
+{
+  "evidenceId": "EVD-010",
+  "task": "GOV-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T13:20:00.000Z",
+  "status": "PASS_FOR_FOUNDATION",
+  "sources": [
+    "https://dorahacks.io/hackathon/event-contracts/detail",
+    "https://dorahacks.io/hackathon/event-contracts",
+    "https://dorahacks.io/hackathon/event-contracts/qa",
+    "https://dorahacks.io/legal/terms",
+    "https://docs.somnia.network/developer/network-info",
+    "https://docs.dreamdex.io/developers/event-contracts/contracts-and-addresses"
+  ],
+  "attestation": "ATT-ELIG-001 retained in upstream planning evidence",
+  "deadlineUtc": "2026-09-08T18:00:00.000Z",
+  "internalCutoffUtc": "2026-09-08T15:00:00.000Z",
+  "repoVisibilityControl": "fresh public GitHub repository from first product-code commit",
+  "licenseStatus": "OWNER_DECISION_REQUIRED_BEFORE_FINAL_SUBMISSION",
+  "aiToolingRestriction": "NO_CURRENT_OFFICIAL_APPROVAL_REQUIREMENT_FOUND",
+  "redaction": "no personal identity, credentials, signatures, or secrets recorded",
+  "evidenceClass": "LIVE"
+}

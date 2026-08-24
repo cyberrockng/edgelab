@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/domain" },
+    { "path": "./packages/config" },
+    { "path": "./packages/policy-runtime" },
+    { "path": "./packages/metrics" },
+    { "path": "./packages/dreamdex" },
+    { "path": "./apps/server" },
+    { "path": "./apps/web" }
+  ]
+}

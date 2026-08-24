@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: edgelab
+      POSTGRES_PASSWORD: edgelab
+      POSTGRES_DB: edgelab
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edgelab -d edgelab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - edgelab-postgres:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://edgelab:edgelab@postgres:5432/edgelab
+      PUBLIC_APP_URL: http://localhost:3000
+      SESSION_SECRET: local-compose-placeholder-change-before-hosting
+      SOMNIA_CHAIN_ID: 50312
+      SOMNIA_RPC_URL: https://api.infra.testnet.somnia.network/
+      SOMNIA_WS_RPC_URL: wss://api.infra.testnet.somnia.network/ws
+      DREAMDEX_INDEXER_URL: https://dev.smk.somnia.host/v1/graphql
+      MARKETS_SDK_VERSION: 0.28.1
+      WORKER_ENABLED: "false"
+      LOG_LEVEL: info
+      BUILD_COMMIT: local-compose
+    ports:
+      - "3000:3000"
+
+volumes:
+  edgelab-postgres:

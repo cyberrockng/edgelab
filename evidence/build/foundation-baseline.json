@@ -1,0 +1,41 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "FOUND-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T13:37:04.000Z",
+  "status": "PARTIAL_DOCKER_DAEMON_BLOCKED",
+  "checks": [
+    {
+      "command": "pnpm install --ignore-scripts --prefer-offline",
+      "status": "PASS"
+    },
+    {
+      "command": "pnpm secret:scan",
+      "status": "PASS"
+    },
+    {
+      "command": "pnpm lint",
+      "status": "PASS"
+    },
+    {
+      "command": "pnpm typecheck",
+      "status": "PASS"
+    },
+    {
+      "command": "pnpm test",
+      "status": "PASS",
+      "testsPassed": 4
+    },
+    {
+      "command": "pnpm build",
+      "status": "PASS"
+    },
+    {
+      "command": "docker build -t edgelab:foundation .",
+      "status": "BLOCKED_ENVIRONMENT",
+      "reason": "Docker client is installed, but no docker.service unit or reachable Docker daemon exists at unix:///var/run/docker.sock; no podman, nerdctl, or buildah fallback is installed."
+    }
+  ],
+  "evidenceClass": "LIVE",
+  "redaction": "no secrets or wallet material"
+}

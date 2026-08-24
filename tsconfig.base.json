@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@edgelab/config": ["packages/config/src/index.ts"],
+      "@edgelab/domain": ["packages/domain/src/index.ts"],
+      "@edgelab/dreamdex": ["packages/dreamdex/src/index.ts"],
+      "@edgelab/metrics": ["packages/metrics/src/index.ts"],
+      "@edgelab/policy-runtime": ["packages/policy-runtime/src/index.ts"]
+    }
+  }
+}
