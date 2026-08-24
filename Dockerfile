@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
 COPY . .
+RUN find apps packages -name "*.tsbuildinfo" -delete
 RUN pnpm build
 
 FROM node:24-alpine AS runtime

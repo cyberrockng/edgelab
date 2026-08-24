@@ -2,8 +2,8 @@
   "evidenceId": "EVD-008",
   "task": "FOUND-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-24T13:37:04.000Z",
-  "status": "PARTIAL_DOCKER_DAEMON_BLOCKED",
+  "producedAt": "2026-08-24T14:02:46.000Z",
+  "status": "PASS",
   "checks": [
     {
       "command": "pnpm install --ignore-scripts --prefer-offline",
@@ -32,8 +32,24 @@
     },
     {
       "command": "docker build -t edgelab:foundation .",
-      "status": "BLOCKED_ENVIRONMENT",
-      "reason": "Docker client is installed, but no docker.service unit or reachable Docker daemon exists at unix:///var/run/docker.sock; no podman, nerdctl, or buildah fallback is installed."
+      "status": "PASS",
+      "image": "edgelab:foundation",
+      "imageId": "sha256:a5b33c89a00ab2613144d00ef7dd8511afa51e778c7c7f345db7009a19cc3598"
+    },
+    {
+      "command": "docker run edgelab:foundation health smoke",
+      "status": "PASS",
+      "healthz": {
+        "ok": true,
+        "service": "edgelab",
+        "buildCommit": "2e42c22c3a39"
+      },
+      "readyz": {
+        "ok": true,
+        "workerEnabled": false,
+        "chainId": 50312,
+        "marketsSdkVersion": "0.28.1"
+      }
     }
   ],
   "evidenceClass": "LIVE",

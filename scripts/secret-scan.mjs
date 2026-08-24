@@ -19,7 +19,7 @@ const forbiddenNames = [
 
 const forbiddenPatterns = [
   /0x[a-fA-F0-9]{64}/,
-  /\b[A-Za-z0-9+/]{40,}={0,2}\b/,
+  /\b(?=[A-Za-z0-9+/]{40,}={0,2}\b)(?=[A-Za-z0-9+/]*[+/=])[A-Za-z0-9+/]+={0,2}\b/,
   new RegExp(
     [
       ["private", "[_-]?", "key"].join(""),
