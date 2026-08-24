@@ -18,6 +18,7 @@
     "evidence:manifest": "node scripts/evidence-manifest.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "typecheck": "tsc -b tsconfig.build.json"
   },
   "dependencies": {

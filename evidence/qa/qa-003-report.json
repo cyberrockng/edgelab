@@ -1,0 +1,41 @@
+{
+  "evidenceId": "EVD-006",
+  "task": "QA-003",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:41:11Z",
+  "sourceCommit": "3405274b7cca34571a551d94791645feae9c3d43",
+  "acceptanceCriteria": ["AC-009", "AC-013", "AC-014", "AC-016", "AC-018"],
+  "tests": ["TEST-019", "TEST-020", "TEST-021", "TEST-024", "TEST-026"],
+  "commands": [
+    {
+      "command": "pnpm build",
+      "result": "PASS"
+    },
+    {
+      "command": "E2E_BASE_URL=http://localhost:3011 pnpm test:e2e",
+      "result": "PASS",
+      "testsPassed": 4,
+      "durationSeconds": 2.7
+    }
+  ],
+  "viewportCoverage": ["chromium-desktop 1440x960", "chromium-mobile Pixel 5"],
+  "accessibilityChecks": [
+    "landmark and aria-label based selectors resolve",
+    "keyboard Tab reaches Decision navigation",
+    "Enter activates the decision anchor",
+    "decision, evidence, chain, and proof regions are addressable by accessible name"
+  ],
+  "performanceChecks": [
+    "navigation duration below 2500 ms in each Playwright project",
+    "production bundle built before E2E run"
+  ],
+  "layoutChecks": [
+    "document scrollWidth does not exceed clientWidth",
+    "first ten overflowing text candidates list is empty when asserting page width"
+  ],
+  "screenshots": ["evidence/chain/ui-desktop.png", "evidence/chain/ui-mobile.png"],
+  "demoRehearsal": "evidence/demo/qa-003-rehearsal.json",
+  "knownPendingShipEvidence": ["final narrated video capture", "submission-form receipt"],
+  "redaction": "Sanitized UI, timing, and public proof evidence only.",
+  "result": "PASS"
+}

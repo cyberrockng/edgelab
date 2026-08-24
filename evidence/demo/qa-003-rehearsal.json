@@ -1,0 +1,27 @@
+{
+  "evidenceId": "EVD-009",
+  "task": "QA-003",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:41:11Z",
+  "sourceCommit": "3405274b7cca34571a551d94791645feae9c3d43",
+  "script": "docs/DEMO_SCRIPT.md",
+  "targetDurationSeconds": 160,
+  "automatedWorkflow": {
+    "command": "E2E_BASE_URL=http://localhost:3011 pnpm test:e2e",
+    "result": "PASS",
+    "durationSeconds": 2.7,
+    "testsPassed": 4,
+    "projects": ["chromium-desktop", "chromium-mobile"]
+  },
+  "demoCriticalClaimsChecked": [
+    "INSUFFICIENT_EVIDENCE is visible before details",
+    "forecast, tradeability, and realized PnL are separate",
+    "DreamDEX terminal state is visible",
+    "public order ID is visible",
+    "keyboard navigation reaches the decision section",
+    "desktop and mobile layouts have no horizontal overflow"
+  ],
+  "videoCapture": "PENDING_SHIP_001",
+  "redaction": "Sanitized rehearsal metadata and public order identifier only.",
+  "result": "PASS"
+}
