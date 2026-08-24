@@ -1,0 +1,70 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "QA-002",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:37:56Z",
+  "sourceCommit": "04e18cfc0b4a07a1b82e71313f5465e433d32ab0",
+  "acceptanceCriteria": ["AC-010", "AC-011", "AC-012", "AC-017", "AC-018"],
+  "tests": ["TEST-014", "TEST-015", "TEST-016", "TEST-017", "TEST-018", "TEST-022", "TEST-023"],
+  "database": {
+    "name": "edgelab_qa",
+    "purpose": "isolated local QA database for imported EXG-003 evidence",
+    "migration": {
+      "version": "0001_initial_schema",
+      "applied": true,
+      "sha256": "b252b30e129b3c3082feb71508f2f8c01e6a12a9ab30503e9264e84cee435724"
+    }
+  },
+  "exgEvidenceImport": {
+    "command": "DATABASE_URL=postgres://.../edgelab_qa SOMNIA_RPC_URL=https://api.infra.testnet.somnia.network/ NODE_ENV=local pnpm evidence:import-exg003",
+    "result": "PASS",
+    "state": "EXPIRED",
+    "orderId": "110680464442257591736",
+    "orderTransaction": {
+      "txHash": "0x666d5d5a5dc95914ef6ae14684d964055f936bf52c19965850ed1c773b954196"
+    },
+    "terminalTransaction": {
+      "txHash": "0x94057033d8cd59cd1c58a6efa21d25cc7dc00c4eb0a0a0eaa2cfefb860ab02fd"
+    },
+    "fillCount": 0,
+    "terminalState": "EXPIRED",
+    "evidenceArtifacts": 2
+  },
+  "chainSummary": {
+    "submittedOrderCount": 1,
+    "fillCount": 0,
+    "terminalOrderCount": 1,
+    "openOrderCount": 0,
+    "latestTerminalState": "EXPIRED",
+    "tradeabilityStatus": "EVALUATED"
+  },
+  "securityBoundaryChecks": {
+    "forbiddenServerSignerEnvironmentRejected": true,
+    "serviceSignsTransactions": false,
+    "mainnetWrites": false,
+    "fabricatedFills": false,
+    "selfTrade": false,
+    "fakeVolume": false
+  },
+  "apiSmoke": {
+    "readyz": {
+      "ok": true,
+      "database": "ok",
+      "chainId": 50312,
+      "marketsSdkVersion": "0.28.1"
+    },
+    "invariants": {
+      "product": "forward-testing-live-shadow-recent-window-dreamdex-lab",
+      "insufficientEvidenceListed": true,
+      "boundariesPresent": true
+    },
+    "evidenceSummary": {
+      "openOrderCount": 0,
+      "fillCount": 0,
+      "latestTerminalState": "EXPIRED"
+    }
+  },
+  "completionContract": "AUTH, CHAIN, OBS, and EXG evidence checks passed with no critical finding and no unexpected open order.",
+  "redaction": "Public transaction hashes and sanitized command summaries only; no credential material or hidden runtime configuration is included.",
+  "result": "PASS"
+}
