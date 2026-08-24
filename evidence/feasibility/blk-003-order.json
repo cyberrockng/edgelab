@@ -1,0 +1,109 @@
+{
+  "evidenceId": "BLK-003-ORDER",
+  "task": "EXG-003",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T22:46:01.614Z",
+  "status": "ORDER_VERIFIED_AWAITING_CANCEL_APPROVAL",
+  "evidenceClass": "LIVE_PUBLIC_CHAIN_WRITE",
+  "network": {
+    "name": "Somnia Shannon Testnet",
+    "chainId": 50312,
+    "rpcUrl": "https://api.infra.testnet.somnia.network/",
+    "explorerUrl": "https://shannon-explorer.somnia.network/"
+  },
+  "wallet": {
+    "address": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+    "sttAfterOrder": "50.994008646",
+    "tUsdcAfterOrder": "9.99",
+    "allowanceRawAfterOrder": "0"
+  },
+  "market": {
+    "marketId": "0x0000000000000000000000000000000000000000000000000000000000008a9d",
+    "marketAddress": "0xc400d7a2f049120516e6daef1edaf2cda682f371",
+    "pool": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "nonce": "110",
+    "asset": "BTC",
+    "question": "BTC closes at or above its opening price",
+    "statusAtPreflight": "Trading",
+    "intervalSeconds": 3600,
+    "expirySeconds": 1787612400,
+    "headroomSecondsAtPreflight": 979,
+    "collateral": "0x70a86d8842fb63c4ad2b7cdddf530ebf1bb25d8e",
+    "quoteDecimals": 6
+  },
+  "orderIntent": {
+    "intentHash": "0x0cdf4c277145a0906cdfa3ed1e98445484e2fcd3075891529d82b4b53d96f271",
+    "to": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "valueWei": "0",
+    "side": "BUY_YES",
+    "kindCode": 0,
+    "priceRaw": "10000",
+    "priceDisplay": "0.01",
+    "quantityRaw": "1000000",
+    "quantityDisplay": "1",
+    "maxEscrowRaw": "10000",
+    "maxEscrowDisplay": "0.01",
+    "expireTimestampNs": "1787611721000000000",
+    "expireSeconds": 1787611721,
+    "orderType": "POST_ONLY",
+    "orderTypeCode": 3,
+    "selfMatchingOption": "CANCEL_TAKER",
+    "builder": "0x0000000000000000000000000000000000000000",
+    "builderFeeBpsTimes1k": "0",
+    "userData": "0",
+    "functionSelector": "0x718c2d4d",
+    "calldataHash": "15eda7d2017b6a5fc567e6b01c918cef91e0f2545549e1d96cd8aed9d796f0a7",
+    "ethCallStatus": "PASS",
+    "gasEstimate": "1738739"
+  },
+  "orderTransaction": {
+    "txHash": "0x666d5d5a5dc95914ef6ae14684d964055f936bf52c19965850ed1c773b954196",
+    "status": "success",
+    "blockNumber": "470386018",
+    "from": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+    "to": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "gasUsed": "485676",
+    "effectiveGasPrice": "6000000000"
+  },
+  "decodedEvents": {
+    "orderPlaced": {
+      "orderId": "110680464442257591736",
+      "isBid": true,
+      "owner": "0x6B3A87A4Bbf7d7D324DF227D640fc42EBF987971",
+      "userData": "0",
+      "price": "10000",
+      "fullQuantity": "1000000",
+      "quantityRemaining": "1000000",
+      "expireTimestampNs": "1787611721000000000"
+    },
+    "binaryOrderPlaced": {
+      "orderId": "110680464442257591736",
+      "kind": 0,
+      "side": "BUY_YES"
+    },
+    "fills": []
+  },
+  "onchainVerification": {
+    "orderId": "110680464442257591736",
+    "orderPresent": true,
+    "owner": "0x6B3A87A4Bbf7d7D324DF227D640fc42EBF987971",
+    "price": "10000",
+    "fullQuantity": "1000000",
+    "quantityRemaining": "1000000",
+    "ownOpenOrders": ["110680464442257591736"],
+    "fillStatus": "NO_FILL"
+  },
+  "cancelPreflight": {
+    "status": "AWAITING_HUMAN_SIGNATURE",
+    "intentHash": "0xd1e05ac4d6c55aab529fe3ac2ecf30b54ac7ec3bac6c2710e9664a585b3bf3ab",
+    "to": "0xc3f0bb8cd90d3ffa6a3e4982bcd6698f27af5cc8",
+    "orderId": "110680464442257591736",
+    "valueWei": "0",
+    "functionSelector": "0xdbc91396",
+    "calldataHash": "5e823765c6cbb8c7cff35342fb4457c92aff4afd9107c035485a88cd360d42dc",
+    "ethCallStatus": "PASS",
+    "gasEstimate": "3265357",
+    "cancelSubmitted": false
+  },
+  "redaction": "public chain, order, receipt, and cancellation intent evidence only; no sensitive wallet authorization material or signature"
+}
