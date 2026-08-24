@@ -15,6 +15,7 @@
     "dev": "pnpm --filter @edgelab/server dev",
     "lint": "eslint . --max-warnings=0",
     "evidence:import-exg003": "node scripts/import-exg003-evidence.mjs",
+    "evidence:manifest": "node scripts/evidence-manifest.mjs",
     "secret:scan": "node scripts/secret-scan.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b tsconfig.build.json"

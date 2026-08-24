@@ -1,0 +1,24 @@
+{
+  "evidenceId": "EVD-007",
+  "task": "OBS-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-24T23:30:47Z",
+  "acceptanceCriteria": ["AC-013", "AC-014"],
+  "tests": ["TEST-024", "TEST-028"],
+  "scope": "Sanitized reproducible evidence export and DreamDEX/Somnia SDK feedback.",
+  "artifacts": [
+    {
+      "path": "evidence/export/manifest.json",
+      "purpose": "Deterministic evidence artifact index with hashes, sizes, evidence classes, and redaction notes.",
+      "evidenceClass": "CAPTURED"
+    },
+    {
+      "path": "docs/SDK_FEEDBACK.md",
+      "purpose": "Implementation feedback from real DreamDEX/Somnia Shannon integration.",
+      "evidenceClass": "CAPTURED"
+    }
+  ],
+  "rerunMethod": "pnpm evidence:manifest",
+  "redaction": "No credential material, server secrets, API tokens, calldata payloads, signatures, or hidden credentials are included.",
+  "result": "PASS"
+}
