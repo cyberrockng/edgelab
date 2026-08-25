@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { MarketSnapshotSchema } from "@edgelab/domain";
 import {
+  createHistoricalPolicyManifest,
+  createHistoricalPolicyRegistry,
   PolicyRuntimeError,
   createPolicyManifest,
   createPolicyRegistry,
+  evaluateHistoricalPolicy,
   evaluatePolicy,
+  historicalPolicies,
   referencePolicies,
   type PolicyAdapter
 } from "@edgelab/policy-runtime";
+import { buildHistoricalDecisionFrame } from "@edgelab/replay";
+import type { HistoricalFillEvidence, HistoricalMarketEvidence } from "@edgelab/dreamdex";
 
 const snapshot = MarketSnapshotSchema.parse({
   marketId: "market-policy",
@@ -26,6 +32,59 @@ const snapshot = MarketSnapshotSchema.parse({
     asks: []
   }
 });
+
+const historicalSource = {
+  plane: "MAINNET_HISTORICAL",
+  chainId: 5031,
+  rpcUrl: "https://api.infra.mainnet.somnia.network",
+  indexerUrl: "https://prd.smk.somnia.host/v1/graphql",
+  sdkVersion: "0.28.1",
+  evidenceClass: "CAPTURED",
+  retrievedAt: "2026-08-25T11:20:00.000Z",
+  writePolicy: "read-only-no-mainnet-signer"
+} as const;
+
+const historicalMarket: HistoricalMarketEvidence = {
+  stableMarketId: `0x${"5".repeat(64)}`,
+  marketAddress: "0x0000000000000000000000000000000000000555",
+  poolAddress: "0x0000000000000000000000000000000000000666",
+  asset: "BTC",
+  question: "Will BTC close up?",
+  status: "Finalized",
+  finalized: true,
+  winningOutcome: "YES",
+  intervalSeconds: 3600,
+  tradingStartSeconds: 1787566000,
+  expirySeconds: 1787570000,
+  tradeCount: 1,
+  openingPriceRaw: "500000",
+  source: historicalSource
+};
+
+function historicalFill(overrides: Partial<HistoricalFillEvidence> = {}): HistoricalFillEvidence {
+  return {
+    id: "fill-policy",
+    marketId: historicalMarket.stableMarketId,
+    poolAddress: historicalMarket.poolAddress,
+    fillPriceRaw: "510000",
+    quantityRaw: "1000000",
+    quoteQuantityRaw: "510000",
+    kind: "DIRECT_YES",
+    makerOrderId: "maker",
+    makerRemainingQuantityRaw: "0",
+    makerSide: "SELL_YES",
+    takerOrderId: "taker",
+    takerRemainingQuantityRaw: "0",
+    takerSide: "BUY_YES",
+    takerIsBid: true,
+    timestampSeconds: 1787566500,
+    blockNumber: "46",
+    logIndex: "3",
+    txHash: "0xfill",
+    source: historicalSource,
+    ...overrides
+  };
+}
 
 describe("POLICY-001 immutable policy runtime", () => {
   it("creates deterministic immutable manifests for compile-time policies", () => {
@@ -91,5 +150,63 @@ describe("POLICY-001 immutable policy runtime", () => {
         snapshotHash: "3".repeat(64)
       })
     ).toThrow("boom");
+  });
+
+  it("publishes deterministic historical policy manifests", () => {
+    const manifest = createHistoricalPolicyManifest(historicalPolicies[0]);
+    expect(manifest).toEqual(createHistoricalPolicyManifest(historicalPolicies[0]));
+    expect(manifest).toMatchObject({
+      policyId: "historical-last-trade",
+      version: "1.0.0",
+      label: "Last-Trade Probability"
+    });
+    expect(manifest.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(createHistoricalPolicyRegistry(historicalPolicies).get("historical-last-trade@1.0.0")).toEqual(
+      manifest
+    );
+  });
+
+  it("evaluates Last-Trade Probability only from pre-cutoff historical fills", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [historicalFill(), historicalFill({ id: "future", blockNumber: "101", fillPriceRaw: "990000" })]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.policyId).toBe("historical-last-trade");
+    expect(decision.forecastPUp).toBe(0.51);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("PRE_CUTOFF_FILL");
+    expect(JSON.stringify(decision)).not.toContain("990000");
+  });
+
+  it("abstains when the historical frame has no qualifying pre-cutoff fill", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: []
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.5);
+    expect(decision.action).toBe("ABSTAIN");
+    expect(decision.reasonCodes).toContain("NO_PRE_CUTOFF_FILL");
   });
 });

@@ -433,6 +433,9 @@ describe("API-001 server contracts", () => {
     expect(policiesBody.data.policies).toContainEqual(
       expect.objectContaining({ policyId: "reference-neutral", version: "1.0.0" })
     );
+    expect(policiesBody.data.policies).toContainEqual(
+      expect.objectContaining({ policyId: "historical-last-trade", version: "1.0.0" })
+    );
   });
 
   it("serves bounded historical market pages and count envelopes", async () => {

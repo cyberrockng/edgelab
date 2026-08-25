@@ -274,6 +274,9 @@ importers:
       '@edgelab/domain':
         specifier: workspace:*
         version: link:../domain
+      '@edgelab/replay':
+        specifier: workspace:*
+        version: link:../replay
 
   packages/replay:
     dependencies:

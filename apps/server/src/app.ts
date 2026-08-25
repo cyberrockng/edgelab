@@ -55,7 +55,14 @@ import {
 } from "@edgelab/dreamdex";
 import { runMetricAssessment } from "@edgelab/evaluate";
 import { observeExperiment } from "@edgelab/observe";
-import { createPolicyManifest, referencePolicies, type PolicyAdapter } from "@edgelab/policy-runtime";
+import {
+  createHistoricalPolicyManifest,
+  createPolicyManifest,
+  historicalPolicies,
+  referencePolicies,
+  type HistoricalPolicyAdapter,
+  type PolicyAdapter
+} from "@edgelab/policy-runtime";
 import { reconcileSettlements } from "@edgelab/settle";
 import { z } from "zod";
 
@@ -263,8 +270,47 @@ function serializeExperiment(record: InteractiveExperimentDetailRecord) {
   };
 }
 
+function policySupportedPlanes(policyId: string): readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[] {
+  if (policyId === "reference-book-tilt") {
+    return ["SHANNON_FORWARD"];
+  }
+  if (policyId === "historical-last-trade") {
+    return ["MAINNET_HISTORICAL"];
+  }
+  return ["MAINNET_HISTORICAL", "SHANNON_FORWARD"];
+}
+
 function policySupportedInMode(policyId: string, mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW"): boolean {
-  return mode === "LIVE_SHADOW" || policyId !== "reference-book-tilt";
+  const requiredPlane = mode === "HISTORICAL_REPLAY" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD";
+  return policySupportedPlanes(policyId).includes(requiredPlane);
+}
+
+function policyCatalog(
+  adapters: readonly PolicyAdapter[]
+): readonly {
+  readonly policyId: string;
+  readonly version: string;
+  readonly label: string;
+  readonly adapterName: string;
+  readonly sourceHash: string;
+  readonly supportedPlanes: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  readonly description: string;
+}[] {
+  const livePolicies = adapters.map((adapter) => ({
+    ...createPolicyManifest(adapter),
+    supportedPlanes: policySupportedPlanes(adapter.policyId),
+    description:
+      adapter.policyId === "reference-book-tilt"
+        ? "Captured-book tilt baseline. Historical use remains disabled until book reconstruction is verified."
+        : "Neutral watch-only baseline for calibration and workflow validation."
+  }));
+  const replayPolicies = historicalPolicies.map((adapter: HistoricalPolicyAdapter) => ({
+    ...createHistoricalPolicyManifest(adapter),
+    supportedPlanes: policySupportedPlanes(adapter.policyId),
+    description:
+      "Uses only the latest verified pre-cutoff fill in the last 15 minutes; abstains when no qualifying fill exists."
+  }));
+  return [...livePolicies, ...replayPolicies];
 }
 
 function createDefaultHistoricalConfig(config: RuntimeConfig): MainnetHistoricalDreamDexConfig {
@@ -473,17 +519,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   app.get("/api/v2/policies", () =>
     v2Data(
       {
-        policies: policyAdapters.map((adapter) => ({
-          ...createPolicyManifest(adapter),
-          supportedPlanes:
-            adapter.policyId === "reference-book-tilt"
-              ? ["SHANNON_FORWARD"]
-              : ["MAINNET_HISTORICAL", "SHANNON_FORWARD"],
-          description:
-            adapter.policyId === "reference-book-tilt"
-              ? "Captured-book tilt baseline. Historical use remains disabled until book reconstruction is verified."
-              : "Neutral watch-only baseline for calibration and workflow validation."
-        }))
+        policies: policyCatalog(policyAdapters)
       },
       { immutableVersions: true }
     )
@@ -583,8 +619,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (!requireCsrf(request, session)) {
         return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
       }
-      const policy = policyAdapters.find(
-        (adapter) => adapter.policyId === parsed.data.policyId && adapter.version === parsed.data.policyVersion
+      const policy = policyCatalog(policyAdapters).find(
+        (entry) => entry.policyId === parsed.data.policyId && entry.version === parsed.data.policyVersion
       );
       if (policy === undefined) {
         return await v2Error(reply, 400, "POLICY_VERSION_UNSUPPORTED", "Selected policy version is not supported", false, request.id);
@@ -604,15 +640,19 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (windowFrom !== null && windowTo !== null && windowFrom >= windowTo) {
         return await v2Error(reply, 400, "EXPERIMENT_WINDOW_INVALID", "Historical window start must precede end", false, request.id);
       }
-      const policyManifest = createPolicyManifest(policy);
       const policyVersionId = await upsertPolicyVersion(pool, {
-        ...policyManifest,
+        policyId: policy.policyId,
+        version: policy.version,
+        label: policy.label,
+        adapterName: policy.adapterName,
+        sourceHash: policy.sourceHash,
         manifest: {
-          ...policyManifest,
-          supportedPlanes:
-            policy.policyId === "reference-book-tilt"
-              ? ["SHANNON_FORWARD"]
-              : ["MAINNET_HISTORICAL", "SHANNON_FORWARD"]
+          policyId: policy.policyId,
+          version: policy.version,
+          label: policy.label,
+          adapterName: policy.adapterName,
+          sourceHash: policy.sourceHash,
+          supportedPlanes: policy.supportedPlanes
         }
       });
       const configPayload = {
@@ -624,7 +664,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         policy: {
           policyId: policy.policyId,
           version: policy.version,
-          sourceHash: policyManifest.sourceHash
+          sourceHash: policy.sourceHash
         },
         historicalBookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
         pnlStatus: "NOT_AVAILABLE"

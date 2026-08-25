@@ -108,6 +108,7 @@ describe("REPLAY-001 anti-look-ahead frame boundary", () => {
       market,
       decisionAt: "2026-08-24T10:17:00.000Z",
       cutoffBlock: "100",
+      quoteDecimals: 6,
       openingPrice: { priceRaw: "100000", availableAtBlock: "40" },
       candles: [candle(1787566200, "105"), candle(1787566800, "999999")],
       orders: [
@@ -135,6 +136,7 @@ describe("REPLAY-001 anti-look-ahead frame boundary", () => {
       market: { ...market, winningOutcome: "NO", status: "Resolved" },
       decisionAt: "2026-08-24T10:17:00.000Z",
       cutoffBlock: "100",
+      quoteDecimals: 6,
       openingPrice: { priceRaw: "100000", availableAtBlock: "40" },
       candles: [candle(1787566200, "105"), candle(1787566800, "1")],
       orders: [
@@ -169,6 +171,7 @@ describe("REPLAY-001 anti-look-ahead frame boundary", () => {
       market,
       decisionAt: "2026-08-24T10:17:00.000Z",
       cutoffBlock: "100",
+      quoteDecimals: 6,
       openingPrice: { priceRaw: "100000", availableAtBlock: "101" },
       candles: [candle(1787566560, "105")],
       orders: [order({ id: "order-at-decision", placedAtTimestampSeconds: 1787566620 })],
@@ -192,6 +195,7 @@ describe("REPLAY-001 anti-look-ahead frame boundary", () => {
       market,
       decisionAt: "2026-08-24T10:17:00.000Z",
       cutoffBlock: "100",
+      quoteDecimals: 6,
       openingPrice: null,
       candles: [],
       orders: [],

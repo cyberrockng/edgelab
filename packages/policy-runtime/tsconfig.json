@@ -7,6 +7,6 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "references": [{ "path": "../domain" }],
+  "references": [{ "path": "../domain" }, { "path": "../replay" }],
   "include": ["src/**/*.ts"]
 }

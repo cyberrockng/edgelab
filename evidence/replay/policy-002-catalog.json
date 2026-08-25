@@ -1,0 +1,39 @@
+{
+  "task": "POLICY-002",
+  "title": "Deterministic strategy catalog with historical Last-Trade policy",
+  "capturedAt": "2026-08-25T11:23:59Z",
+  "policies": [
+    {
+      "id": "reference-neutral@1.0.0",
+      "label": "Educational neutral baseline",
+      "supportedPlanes": ["MAINNET_HISTORICAL", "SHANNON_FORWARD"],
+      "behavior": "forecastPUp=0.5, WATCH_ONLY"
+    },
+    {
+      "id": "historical-last-trade@1.0.0",
+      "label": "Last-Trade Probability",
+      "supportedPlanes": ["MAINNET_HISTORICAL"],
+      "behavior": "uses latest verified pre-cutoff fill in the previous 900 seconds; ABSTAIN when unavailable"
+    },
+    {
+      "id": "reference-book-tilt@1.0.0",
+      "label": "Educational captured-book tilt",
+      "supportedPlanes": ["SHANNON_FORWARD"],
+      "behavior": "historical use disabled while book reconstruction remains SOURCE_INCOMPLETE"
+    }
+  ],
+  "tests": {
+    "targeted": "PASS - pnpm --filter @edgelab/replay typecheck && pnpm --filter @edgelab/policy-runtime typecheck && pnpm vitest run tests/unit/replay.test.ts tests/unit/policy-runtime.test.ts tests/integration/api.test.ts",
+    "manifestStability": "PASS",
+    "lastTradeGolden": "PASS - fillPriceRaw 510000 with quoteDecimals 6 produces forecastPUp 0.51",
+    "noFillAbstain": "PASS",
+    "apiExposure": "PASS - /api/v2/policies includes historical-last-trade@1.0.0"
+  },
+  "boundaries": {
+    "freeFormStrategyCode": false,
+    "networkAccessInsidePolicy": false,
+    "walletAccessInsidePolicy": false,
+    "historicalBookPolicyEnabled": false,
+    "performanceClaimsInvented": false
+  }
+}

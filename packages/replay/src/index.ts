@@ -23,6 +23,7 @@ export const HistoricalFrameMarketSchema = z
     stableMarketId: z.string().regex(/^0x[a-f0-9]{64}$/),
     asset: z.enum(["BTC", "ETH"]),
     intervalSeconds: z.number().int().positive(),
+    quoteDecimals: z.number().int().min(0).max(18),
     tradingStartSeconds: z.number().int().nonnegative(),
     expirySeconds: z.number().int().nonnegative(),
     question: z.string()
@@ -127,6 +128,7 @@ export interface HistoricalDecisionFrameInput {
     readonly priceRaw: string;
     readonly availableAtBlock: string;
   } | null;
+  readonly quoteDecimals: number;
 }
 
 export interface HistoricalDecisionFrameBuildResult {
@@ -277,6 +279,7 @@ export function buildHistoricalDecisionFrame(
       stableMarketId: input.market.stableMarketId,
       asset: input.market.asset,
       intervalSeconds: input.market.intervalSeconds,
+      quoteDecimals: input.quoteDecimals,
       tradingStartSeconds: input.market.tradingStartSeconds,
       expirySeconds: input.market.expirySeconds,
       question: input.market.question

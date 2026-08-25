@@ -10,6 +10,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@edgelab/domain": "workspace:*"
+    "@edgelab/domain": "workspace:*",
+    "@edgelab/replay": "workspace:*"
   }
 }

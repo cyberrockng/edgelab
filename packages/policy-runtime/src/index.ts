@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { PolicyDecisionSchema, type MarketSnapshot, type PolicyDecision } from "@edgelab/domain";
+import {
+  HistoricalDecisionFrameSchema,
+  type HistoricalDecisionFrame
+} from "@edgelab/replay";
 
 export interface PolicyManifest {
   readonly policyId: string;
@@ -15,12 +19,28 @@ export interface PolicyEvaluationInput {
   readonly snapshotHash: string;
 }
 
+export interface HistoricalPolicyEvaluationInput {
+  readonly frame: HistoricalDecisionFrame;
+  readonly frameHash: string;
+}
+
 export interface PolicyAdapter {
   readonly policyId: string;
   readonly version: string;
   readonly label: string;
   readonly adapterName: string;
   evaluate(input: PolicyEvaluationInput): Omit<
+    PolicyDecision,
+    "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
+  >;
+}
+
+export interface HistoricalPolicyAdapter {
+  readonly policyId: string;
+  readonly version: string;
+  readonly label: string;
+  readonly adapterName: string;
+  evaluate(input: HistoricalPolicyEvaluationInput): Omit<
     PolicyDecision,
     "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
   >;
@@ -63,6 +83,16 @@ export function createPolicyManifest(adapter: PolicyAdapter): PolicyManifest {
   };
 }
 
+export function createHistoricalPolicyManifest(adapter: HistoricalPolicyAdapter): PolicyManifest {
+  return {
+    policyId: adapter.policyId,
+    version: adapter.version,
+    label: adapter.label,
+    adapterName: adapter.adapterName,
+    sourceHash: hashManifest(adapter)
+  };
+}
+
 export function evaluatePolicy(adapter: PolicyAdapter, input: PolicyEvaluationInput): PolicyDecision {
   let decision: ReturnType<PolicyAdapter["evaluate"]>;
   try {
@@ -87,6 +117,34 @@ export function evaluatePolicy(adapter: PolicyAdapter, input: PolicyEvaluationIn
   return parsed.data;
 }
 
+export function evaluateHistoricalPolicy(
+  adapter: HistoricalPolicyAdapter,
+  input: HistoricalPolicyEvaluationInput
+): PolicyDecision {
+  const frame = HistoricalDecisionFrameSchema.parse(input.frame);
+  let decision: ReturnType<HistoricalPolicyAdapter["evaluate"]>;
+  try {
+    decision = adapter.evaluate({ frame, frameHash: input.frameHash });
+  } catch (error) {
+    throw new PolicyRuntimeError(
+      error instanceof Error ? error.message : "Historical policy evaluation failed",
+      "POLICY_EXCEPTION"
+    );
+  }
+  const parsed = PolicyDecisionSchema.safeParse({
+    ...decision,
+    policyId: adapter.policyId,
+    policyVersion: adapter.version,
+    decidedAt: frame.clock.decisionAt,
+    snapshotHash: input.frameHash,
+    policyHash: hashManifest(adapter)
+  });
+  if (!parsed.success) {
+    throw new PolicyRuntimeError(parsed.error.message, "INVALID_POLICY_OUTPUT");
+  }
+  return parsed.data;
+}
+
 export function createPolicyRegistry(adapters: readonly PolicyAdapter[]): Map<string, PolicyManifest> {
   const registry = new Map<string, PolicyManifest>();
   for (const adapter of adapters) {
@@ -97,6 +155,48 @@ export function createPolicyRegistry(adapters: readonly PolicyAdapter[]): Map<st
     registry.set(key, createPolicyManifest(adapter));
   }
   return registry;
+}
+
+export function createHistoricalPolicyRegistry(
+  adapters: readonly HistoricalPolicyAdapter[]
+): Map<string, PolicyManifest> {
+  const registry = new Map<string, PolicyManifest>();
+  for (const adapter of adapters) {
+    const key = `${adapter.policyId}@${adapter.version}`;
+    if (registry.has(key)) {
+      throw new PolicyRuntimeError(`Duplicate historical policy version ${key}`, "DUPLICATE_POLICY_VERSION");
+    }
+    registry.set(key, createHistoricalPolicyManifest(adapter));
+  }
+  return registry;
+}
+
+function compareHistoricalFills(
+  left: HistoricalDecisionFrame["fills"][number],
+  right: HistoricalDecisionFrame["fills"][number]
+): number {
+  const timestampDelta = left.timestampSeconds - right.timestampSeconds;
+  if (timestampDelta !== 0) {
+    return timestampDelta;
+  }
+  const blockDelta = BigInt(left.blockNumber) - BigInt(right.blockNumber);
+  if (blockDelta !== 0n) {
+    return blockDelta > 0n ? 1 : -1;
+  }
+  const logDelta = BigInt(left.logIndex) - BigInt(right.logIndex);
+  if (logDelta !== 0n) {
+    return logDelta > 0n ? 1 : -1;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function scaledPriceToProbability(priceRaw: string, quoteDecimals: number): number {
+  const numerator = Number(priceRaw);
+  const denominator = 10 ** quoteDecimals;
+  if (!Number.isFinite(numerator) || numerator < 0 || !Number.isFinite(denominator) || denominator <= 0) {
+    throw new PolicyRuntimeError("Historical fill price is not a finite non-negative number", "INVALID_PRICE");
+  }
+  return Math.min(0.95, Math.max(0.05, numerator / denominator));
 }
 
 export const referencePolicies: readonly PolicyAdapter[] = [
@@ -126,6 +226,37 @@ export const referencePolicies: readonly PolicyAdapter[] = [
         forecastPUp: 0.5 + tilt,
         action: "WATCH_ONLY",
         reasonCodes: ["REFERENCE_POLICY", "CAPTURED_BOOK_ONLY"]
+      };
+    }
+  }
+];
+
+export const historicalPolicies: readonly HistoricalPolicyAdapter[] = [
+  {
+    policyId: "historical-last-trade",
+    version: "1.0.0",
+    label: "Last-Trade Probability",
+    adapterName: "historicalLastTradeProbabilityPolicy",
+    evaluate(input) {
+      const windowStartSeconds = Math.max(
+        input.frame.market.tradingStartSeconds,
+        input.frame.clock.decisionAtSeconds - 900
+      );
+      const latestFill = [...input.frame.fills]
+        .filter((fill) => fill.timestampSeconds >= windowStartSeconds)
+        .sort(compareHistoricalFills)
+        .at(-1);
+      if (latestFill === undefined) {
+        return {
+          forecastPUp: 0.5,
+          action: "ABSTAIN",
+          reasonCodes: ["HISTORICAL_LAST_TRADE", "NO_PRE_CUTOFF_FILL"]
+        };
+      }
+      return {
+        forecastPUp: scaledPriceToProbability(latestFill.fillPriceRaw, input.frame.market.quoteDecimals),
+        action: "WATCH_ONLY",
+        reasonCodes: ["HISTORICAL_LAST_TRADE", "PRE_CUTOFF_FILL"]
       };
     }
   }

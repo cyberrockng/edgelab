@@ -92,7 +92,7 @@ test("market filters update URL state and keep source provenance visible", async
 test("strategy lab creates a persisted research-session experiment", async ({ page }) => {
   await page.goto("/lab", { waitUntil: "networkidle" });
   await page.getByLabel("Experiment name").fill(`E2E replay ${String(Date.now())}`);
-  await page.getByLabel("Strategy").selectOption("reference-neutral@1.0.0");
+  await page.getByLabel("Strategy").selectOption("historical-last-trade@1.0.0");
   await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
   await page.getByLabel("Asset universe").selectOption("BTC");
   await page.getByLabel("Interval").selectOption("3600");
@@ -101,7 +101,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
   await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}$/);
   await expect(page.getByLabel("Experiment workspace state")).toContainText("Application state");
   await expect(page.getByLabel("Experiment workspace state")).toContainText("MAINNET_HISTORICAL");
-  await expect(page.getByLabel("Experiment workspace state")).toContainText("Educational neutral baseline");
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("Last-Trade Probability");
   await expect(page.getByLabel("Experiment workspace state")).toContainText("NOT_AVAILABLE");
 });
 

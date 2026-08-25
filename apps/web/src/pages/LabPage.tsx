@@ -12,6 +12,13 @@ const strategyOptions = [
     description: "Watch-only 50 percent forecast baseline. Valid for historical replay and live shadow."
   },
   {
+    key: "historical-last-trade@1.0.0",
+    policyId: "historical-last-trade",
+    policyVersion: "1.0.0",
+    label: "Last-Trade Probability",
+    description: "Historical-only strategy using the latest verified pre-cutoff fill; abstains when no qualifying fill exists."
+  },
+  {
     key: "reference-book-tilt@1.0.0",
     policyId: "reference-book-tilt",
     policyVersion: "1.0.0",
@@ -97,6 +104,9 @@ export default function LabPage() {
                 setStrategyKey(next);
                 if (next === "reference-book-tilt@1.0.0") {
                   setMode("LIVE_SHADOW");
+                }
+                if (next === "historical-last-trade@1.0.0") {
+                  setMode("HISTORICAL_REPLAY");
                 }
               }}
             >
