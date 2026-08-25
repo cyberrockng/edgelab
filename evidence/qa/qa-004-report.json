@@ -1,0 +1,59 @@
+{
+  "taskId": "QA-004",
+  "capturedAt": "2026-08-25T14:04:00+01:00",
+  "scope": "Interactive product QA before Railway deployment",
+  "baselineSha": "ac3f8586fc23862d74f3fac27bd0447f8752c221",
+  "validatedCapabilities": [
+    "homepage first impression and CTAs",
+    "historical market browsing and provenance",
+    "market detail route refresh",
+    "research-session experiment creation",
+    "historical replay and evaluation APIs",
+    "public Proven Experiment path",
+    "server-authored Evidence Gate",
+    "saved comparison APIs",
+    "verified Shannon execution proof",
+    "SPA fallback for direct routes",
+    "mobile and desktop no-horizontal-overflow checks",
+    "keyboard skip-link and active navigation"
+  ],
+  "testResults": {
+    "pnpmCheck": {
+      "status": "PASS",
+      "testFiles": 12,
+      "tests": 74
+    },
+    "pnpmBuild": "PASS",
+    "pnpmTestE2E": {
+      "status": "PASS",
+      "tests": 36,
+      "viewports": [
+        "desktop-1440",
+        "desktop-1366",
+        "desktop-1280",
+        "mobile-pixel-5"
+      ]
+    }
+  },
+  "securityChecks": {
+    "mainnetWritePath": false,
+    "browserWalletWriteDuringQa": false,
+    "proofEndpointBlockchainWrite": false,
+    "provenExperimentBlockchainWrite": false,
+    "bookReconstructionClaim": "SOURCE_INCOMPLETE / fail-closed"
+  },
+  "productTruthChecks": {
+    "insufficientEvidenceFirstClass": true,
+    "frontendVerdictDerivation": false,
+    "historicalReplayNotRealizedWalletPnl": true,
+    "orderExpiredNotCancelled": true,
+    "noFillRequiredForProof": true,
+    "fabricatedPerformance": false
+  },
+  "knownLimitations": [
+    "Public deployment verification remains pending in DEPLOY-002.",
+    "Historical reconstructed resting book remains unavailable until verified."
+  ],
+  "humanActionRequired": false,
+  "redaction": "Sanitized QA metadata and command results only"
+}

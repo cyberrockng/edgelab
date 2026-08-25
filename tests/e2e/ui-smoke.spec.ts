@@ -109,6 +109,19 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
   await expect(page.getByLabel("Experiment workspace state")).toContainText("NOT_AVAILABLE");
 });
 
+test("proven experiment path exposes captured replay without favorable-data claims", async ({ page }) => {
+  await page.goto("/lab/proven-experiment", { waitUntil: "networkidle" });
+  const workspace = page.getByRole("region", { name: "Proven experiment workspace" });
+  await expect(page.getByRole("heading", { name: "Inspect a captured real-evidence replay." })).toBeVisible();
+  await expect(workspace).toContainText("PUBLIC PROVEN");
+  await expect(workspace).toContainText("INSUFFICIENT EVIDENCE");
+  await expect(workspace).toContainText("NOT_AVAILABLE");
+  await expect(workspace).toContainText("reproducibility and completeness, not favorability");
+  await page.getByRole("link", { name: "View Evidence Gate" }).click();
+  await expect(page).toHaveURL("/evidence/proven-experiment");
+  await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("MIN SAMPLE NOT MET");
+});
+
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await page.goto("/evidence/proven-experiment", { waitUntil: "networkidle" });
   const gate = page.getByRole("region", { name: "Evidence gate" });
