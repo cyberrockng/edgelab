@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T10:16:46.000Z",
-  "sourceCommit": "12decc5ff1a3bc2821c6b229151dd0b8b8154cbc",
+  "producedAt": "2026-08-25T10:23:29.000Z",
+  "sourceCommit": "f4c87aa7a2fd02d585a5aaccf6ed02ab7f700d98",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 47,
+  "artifactCount": 51,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -337,6 +337,34 @@
       "path": "evidence/ui/ux-010-report.json",
       "sha256": "e6ec7c3fec0cd5fc281933280621052bbf2a2129b57ff52bb93aa638ed212e25",
       "bytes": 2153,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-012-market-detail-desktop.png",
+      "sha256": "7324bb6b05db7e138a785fe1713631447c9b4bdcd1e19cea24ef8d7321f4d046",
+      "bytes": 145380,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-012-markets-desktop.png",
+      "sha256": "90eed25fe73ba1ccd217ddde67821987b80456cc09bd06ab737d4b9e5ad4237b",
+      "bytes": 171109,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-012-markets-mobile.png",
+      "sha256": "9be1f4056cf63389c0148eb6f10ea3dfe455535aea211dfc0aaf6ffc69817129",
+      "bytes": 65844,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-012-report.json",
+      "sha256": "65d058a8f0da846cb118a16a3be5152f543facac432cb0c7a84c325f9a4af9a2",
+      "bytes": 2219,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     }

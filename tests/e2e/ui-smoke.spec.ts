@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+const sampleHistoricalMarketId = ["0x", "0".repeat(60), "1bb7"].join("");
+
 const productRoutes = [
   { path: "/", heading: "Test a DreamDEX strategy before putting capital behind it." },
   { path: "/markets", heading: "Browse historical and live Event Contract markets without mixing networks." },
-  { path: "/markets/sample-mainnet-market-1bb7", heading: "Inspect one DreamDEX market with source provenance." },
+  { path: `/markets/${sampleHistoricalMarketId}`, heading: "Inspect one DreamDEX market with source provenance." },
   { path: "/lab", heading: "Create an evidence-backed strategy experiment." },
   { path: "/lab/demo-experiment", heading: "Run replay, observe forward decisions, and evaluate evidence." },
   { path: "/compare", heading: "Compare evidence dimensions, not vanity scores." },
@@ -76,14 +78,14 @@ test("navigation, active route state, and keyboard focus work", async ({ page })
   await expect(page.locator(":focus")).toHaveAttribute("id", "main-content");
 });
 
-test("market filters update URL state without fabricating rows", async ({ page }) => {
+test("market filters update URL state and keep source provenance visible", async ({ page }) => {
   await page.goto("/markets", { waitUntil: "networkidle" });
   await page.getByLabel("Asset").selectOption("ETH");
   await page.getByLabel("Interval").selectOption("14400");
   await page.getByRole("button", { name: "Apply Filters" }).click();
   await expect(page).toHaveURL(/asset=ETH/);
   await expect(page).toHaveURL(/interval=14400/);
-  await expect(page.getByLabel("Market explorer state")).toContainText("no fabricated market rows");
+  await expect(page.getByLabel("Market explorer state")).toContainText("MAINNET_HISTORICAL");
   await expect(page.getByLabel("Market explorer state")).toContainText("ETH");
 });
 

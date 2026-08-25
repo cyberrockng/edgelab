@@ -1,0 +1,44 @@
+{
+  "task": "UX-012",
+  "title": "Interactive DreamDEX Market Explorer and Market Detail UI",
+  "capturedAt": "2026-08-25T10:39:45Z",
+  "sourceNetworkBoundaries": {
+    "historicalResearch": "Somnia MAINNET 5031 read-only via server API",
+    "forwardObservation": "Somnia SHANNON 50312 read-only market discovery",
+    "execution": "Somnia SHANNON 50312 human-authorized writes only"
+  },
+  "implementedCapabilities": [
+    "Judges can browse authentic historical DreamDEX markets through /markets.",
+    "Judges can switch between MAINNET historical research and SHANNON live discovery without wallet connection.",
+    "Historical market filters update URL state for asset, interval, status, and pagination.",
+    "Judges can open /markets/:marketId and inspect source-provenance-separated detail evidence.",
+    "Market detail exposes lifecycle, resolution, candles, bounded order samples, bounded fill samples, and source network labels.",
+    "Historical reconstructed-book UI fails closed and reports SOURCE_INCOMPLETE instead of implying stored snapshots."
+  ],
+  "dataIntegrity": {
+    "browserVerdictFabrication": "No verdict logic added to market routes.",
+    "mainnetWrites": "None.",
+    "bookReconstruction": "Unavailable until source completeness and lifecycle semantics are verified.",
+    "rawBrowserIndexerQueries": "None; market UI uses EdgeLab server APIs."
+  },
+  "screenshots": [
+    "evidence/ui/ux-012-markets-desktop.png",
+    "evidence/ui/ux-012-market-detail-desktop.png",
+    "evidence/ui/ux-012-markets-mobile.png"
+  ],
+  "tests": {
+    "pnpm check": "PASS - lint, typecheck, and 59 Vitest tests passed.",
+    "pnpm build": "PASS - all workspace packages and web production bundle built.",
+    "pnpm test:e2e": "PASS - 28 Playwright tests passed after starting the required local app server.",
+    "note": "An earlier e2e attempt failed because no app server was listening on port 3011; it was not an application assertion failure."
+  },
+  "acceptance": {
+    "routeMarkets": "PASS",
+    "routeMarketDetail": "PASS",
+    "historicalFilters": "PASS",
+    "pagination": "PASS",
+    "sourceProvenance": "PASS",
+    "mobileNoHorizontalOverflow": "PASS",
+    "directRouteFallback": "PASS"
+  }
+}

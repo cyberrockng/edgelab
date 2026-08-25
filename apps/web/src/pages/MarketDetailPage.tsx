@@ -1,7 +1,76 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
+import {
+  ApiError,
+  apiErrorMessage,
+  compactId,
+  fetchV2,
+  formatEpoch,
+  type HistoricalCandlesResponse,
+  type HistoricalDetailResponse,
+  type HistoricalFillsResponse,
+  type HistoricalOrdersResponse,
+  type HistoricalResolutionResponse,
+  type HistoricalStatusHistoryResponse
+} from "../data.js";
+
+function UnknownValue() {
+  return <span className="mutedCell">Not available</span>;
+}
 
 export default function MarketDetailPage() {
   const { marketId } = useParams();
+  const validMarketId = /^0x[a-fA-F0-9]{64}$/.test(marketId ?? "");
+
+  const detailQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-detail", marketId],
+    queryFn: () => fetchV2<HistoricalDetailResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}`)
+  });
+  const resolutionQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-resolution", marketId],
+    queryFn: () => fetchV2<HistoricalResolutionResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/resolution`)
+  });
+  const statusQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-status", marketId],
+    queryFn: () =>
+      fetchV2<HistoricalStatusHistoryResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/status-history`)
+  });
+  const candlesQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-candles", marketId],
+    queryFn: () =>
+      fetchV2<HistoricalCandlesResponse>(
+        `/api/v2/mainnet/history/markets/${marketId ?? ""}/candles?intervalSeconds=3600&limit=12`
+      )
+  });
+  const ordersQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-orders", marketId],
+    queryFn: () => fetchV2<HistoricalOrdersResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/orders?limit=12`)
+  });
+  const fillsQuery = useQuery({
+    enabled: validMarketId,
+    queryKey: ["historical-market-fills", marketId],
+    queryFn: () => fetchV2<HistoricalFillsResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/fills?limit=12`)
+  });
+  const bookQuery = useQuery({
+    enabled: validMarketId,
+    retry: false,
+    queryKey: ["historical-market-book", marketId],
+    queryFn: () => fetchV2<unknown>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/reconstructed-book?atBlock=latest`)
+  });
+
+  const market = detailQuery.data?.data.market;
+  const bookError = bookQuery.error instanceof ApiError ? bookQuery.error.body?.error : null;
+  const bookCapabilityMessage = bookQuery.isLoading
+    ? "Checking reconstruction capability..."
+    : bookError?.details !== undefined
+      ? "SOURCE_INCOMPLETE"
+      : apiErrorMessage(bookQuery.error);
+
   return (
     <div className="pageStack">
       <section className="routeHero">
@@ -9,23 +78,199 @@ export default function MarketDetailPage() {
         <h1>Inspect one DreamDEX market with source provenance.</h1>
         <p>Orders, fills, candles, lifecycle, and resolution remain separate evidence tabs.</p>
       </section>
-      <section className="routePanel" aria-label="Market detail state">
-        <span className="statusPill">Data connection pending HIST-003</span>
-        <h2>Selected market route</h2>
-        <p className="monoText">{marketId ?? "No market selected"}</p>
-        <p>
-          This route is intentionally empty until the bounded historical market detail API is wired.
-          No stored book snapshot or reconstructed book is claimed.
-        </p>
-        <div className="actionRow">
-          <Link className="primaryAction" to={`/lab?market=${encodeURIComponent(marketId ?? "")}`}>
-            Use in Strategy Lab
-          </Link>
+
+      {!validMarketId ? (
+        <section className="routePanel" aria-label="Market detail state">
+          <span className="statusPill">Invalid route</span>
+          <h2>Market ID is not a DreamDEX bytes32 identifier.</h2>
+          <p className="monoText">{marketId ?? "No market selected"}</p>
           <Link className="secondaryAction" to="/markets">
             Back to Markets
           </Link>
-        </div>
-      </section>
+        </section>
+      ) : null}
+
+      {validMarketId ? (
+        <>
+          <section className="routePanel" aria-label="Market detail state">
+            <div className="sourceBar">
+              <span className="statusPill">MAINNET_HISTORICAL</span>
+              <span className="statusPill">Read-only</span>
+              <span className="statusPill">{detailQuery.isFetching ? "Refreshing" : "Current response"}</span>
+            </div>
+            {detailQuery.isLoading ? (
+              <div className="stateBox" role="status">
+                Loading market detail...
+              </div>
+            ) : null}
+            {detailQuery.isError ? (
+              <div className="stateBox errorState" role="alert">
+                {apiErrorMessage(detailQuery.error)}
+              </div>
+            ) : null}
+            {market !== undefined ? (
+              <>
+                <h2>{market.question}</h2>
+                <p className="monoText">{market.stableMarketId}</p>
+                <dl className="factGrid">
+                  <div>
+                    <dt>Asset</dt>
+                    <dd>{market.asset}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{market.status}</dd>
+                  </div>
+                  <div>
+                    <dt>Winning outcome</dt>
+                    <dd>{market.winningOutcome ?? "Not resolved"}</dd>
+                  </div>
+                  <div>
+                    <dt>Window</dt>
+                    <dd>
+                      {formatEpoch(market.tradingStartSeconds)} to {formatEpoch(market.expirySeconds)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Trades</dt>
+                    <dd>{market.tradeCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Opening price</dt>
+                    <dd>{market.openingPriceRaw ?? "Not available"}</dd>
+                  </div>
+                </dl>
+                <div className="actionRow">
+                  <Link className="primaryAction" to={`/lab?market=${encodeURIComponent(market.stableMarketId)}`}>
+                    Use in Strategy Lab
+                  </Link>
+                  <Link className="secondaryAction" to="/markets?plane=historical">
+                    Back to Markets
+                  </Link>
+                </div>
+              </>
+            ) : null}
+          </section>
+
+          <section className="detailGrid" aria-label="Historical market evidence">
+            <article className="routePanel">
+              <span className="statusPill">Lifecycle</span>
+              <h2>Status history</h2>
+              {statusQuery.data?.data.statusHistory.length === 0 ? <p>No status transition rows returned.</p> : null}
+              {statusQuery.isError ? <p className="errorText">{apiErrorMessage(statusQuery.error)}</p> : null}
+              <div className="dataTable compactTable" role="table" aria-label="Status history">
+                {statusQuery.data?.data.statusHistory.map((row) => (
+                  <div role="row" key={`${row.blockNumber}-${row.newStatus}`}>
+                    <span role="cell">{row.oldStatus}</span>
+                    <span role="cell">{row.newStatus}</span>
+                    <span role="cell">Block {row.blockNumber}</span>
+                    <span role="cell">{formatEpoch(row.timestampSeconds)}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="routePanel">
+              <span className="statusPill">Resolution</span>
+              <h2>Outcome data</h2>
+              {resolutionQuery.isLoading ? <p>Loading resolution...</p> : null}
+              {resolutionQuery.isError ? <p className="errorText">{apiErrorMessage(resolutionQuery.error)}</p> : null}
+              <dl className="factGrid twoCol">
+                <div>
+                  <dt>Opening answer</dt>
+                  <dd>{resolutionQuery.data?.data.resolution.openingAnswer === null ? <UnknownValue /> : "Available"}</dd>
+                </div>
+                <div>
+                  <dt>Closing answer</dt>
+                  <dd>{resolutionQuery.data?.data.resolution.closingAnswer === null ? <UnknownValue /> : "Available"}</dd>
+                </div>
+              </dl>
+              <p>Resolution is displayed after the fact. It is never supplied to historical strategy decisions.</p>
+            </article>
+
+            <article className="routePanel">
+              <span className="statusPill">Candles</span>
+              <h2>OHLC evidence</h2>
+              {candlesQuery.isError ? <p className="errorText">{apiErrorMessage(candlesQuery.error)}</p> : null}
+              <div className="dataTable candleTable" role="table" aria-label="Historical candles">
+                <div role="row" className="tableHeader">
+                  <span role="columnheader">Bucket</span>
+                  <span role="columnheader">Open</span>
+                  <span role="columnheader">Close</span>
+                  <span role="columnheader">Trades</span>
+                </div>
+                {candlesQuery.data?.data.candles.map((row) => (
+                  <div role="row" key={row.bucketStartSeconds}>
+                    <span role="cell">{formatEpoch(row.bucketStartSeconds)}</span>
+                    <span role="cell">{row.openPriceRaw}</span>
+                    <span role="cell">{row.closePriceRaw}</span>
+                    <span role="cell">{row.tradeCount}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="routePanel">
+              <span className="statusPill">Orders</span>
+              <h2>Bounded order sample</h2>
+              {ordersQuery.isError ? <p className="errorText">{apiErrorMessage(ordersQuery.error)}</p> : null}
+              <div className="dataTable orderTable" role="table" aria-label="Historical orders">
+                <div role="row" className="tableHeader">
+                  <span role="columnheader">Order</span>
+                  <span role="columnheader">Side</span>
+                  <span role="columnheader">Status</span>
+                  <span role="columnheader">Remaining</span>
+                </div>
+                {ordersQuery.data?.data.orders.map((row) => (
+                  <div role="row" key={row.orderId}>
+                    <span role="cell">{compactId(row.orderId)}</span>
+                    <span role="cell">{row.side}</span>
+                    <span role="cell">{row.status}</span>
+                    <span role="cell">{row.remainingQuantityRaw}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="routePanel">
+              <span className="statusPill">Fills</span>
+              <h2>Bounded fill sample</h2>
+              {fillsQuery.isError ? <p className="errorText">{apiErrorMessage(fillsQuery.error)}</p> : null}
+              {fillsQuery.data?.data.fills.length === 0 ? <p>No fills returned for this bounded page.</p> : null}
+              <div className="dataTable fillTable" role="table" aria-label="Historical fills">
+                <div role="row" className="tableHeader">
+                  <span role="columnheader">Block</span>
+                  <span role="columnheader">Kind</span>
+                  <span role="columnheader">Price</span>
+                  <span role="columnheader">Quantity</span>
+                </div>
+                {fillsQuery.data?.data.fills.map((row) => (
+                  <div role="row" key={`${row.blockNumber}-${row.logIndex}`}>
+                    <span role="cell">
+                      {row.blockNumber}:{row.logIndex}
+                    </span>
+                    <span role="cell">{row.kind ?? "Unknown"}</span>
+                    <span role="cell">{row.fillPriceRaw}</span>
+                    <span role="cell">{row.quantityRaw}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="routePanel">
+              <span className="statusPill statusWarning">Source incomplete</span>
+              <h2>Reconstructed resting book</h2>
+              <p>
+                EdgeLab does not display a historical book until completeness, lifecycle semantics,
+                same-block ordering, and archive comparison are proven.
+              </p>
+              <div className="stateBox">
+                {bookCapabilityMessage}
+              </div>
+            </article>
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }
