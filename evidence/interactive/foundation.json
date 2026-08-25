@@ -1,0 +1,148 @@
+{
+  "artifact": "BASE-002",
+  "capturedAt": "2026-08-25T08:58:05Z",
+  "plan": {
+    "baseline": "2.0.0",
+    "handoff": "output/INTERACTIVE_PRODUCT_EXECUTION_HANDOFF.md",
+    "handoffStatus": "ACTIVE - EXECUTION READY",
+    "upstreamChange": "UCR-IPR-001 APPROVED / CLOSED",
+    "resolvedBlocker": "BLK-IPR-001 CLOSED / RESOLVED",
+    "firstExecutableTask": "BASE-002"
+  },
+  "repository": {
+    "url": "https://github.com/cyberrockng/edgelab",
+    "branch": "main",
+    "baselineSha": "3c87deedb7d8ce2937f759326466167568da73f6",
+    "originMainSha": "3c87deedb7d8ce2937f759326466167568da73f6",
+    "latestCommitSubject": "feat: redesign EdgeLab evidence gate UI",
+    "workingTreeCleanBeforeEvidence": true
+  },
+  "toolchain": {
+    "node": "v24.16.0",
+    "pnpm": "9.15.9",
+    "docker": "Docker version 27.5.1, build 9f9e405",
+    "git": "git version 2.43.0"
+  },
+  "lockedInputs": {
+    "packageJsonSha256": "30e3bd32ea034867da1ec4998e700662e606c0bca2483cc9306630717e4e8f80",
+    "pnpmLockSha256": "27f2e66d49c289d0e64c496b8a6294e9250b78eb0ac83c419a26633ef69133f0",
+    "initialMigrationSha256": "b252b30e129b3c3082feb71508f2f8c01e6a12a9ab30503e9264e84cee435724",
+    "preExistingEvidenceManifestSha256": "09b2e8bd56982a22d757d871f5923700fac27b29ea8df9770f7555a4dc851417"
+  },
+  "dependencies": {
+    "projectLicense": "MIT",
+    "packageDependencyCount": 24,
+    "dreamdexSdk": "0.28.1",
+    "react": "^19.1.1",
+    "fastify": "^5.5.0",
+    "pg": "^8.16.3",
+    "licenseInventoryNote": "pnpm licenses list --json --prod completed but returned zero workspace rows in this environment; existing license compatibility evidence remains evidence/ship/license-compatibility.json."
+  },
+  "localDatabase": {
+    "postgresContainer": "edgelab-postgres-1",
+    "status": "healthy",
+    "exposedPort": 55432,
+    "migrationCoverage": "Existing integration tests ran DB migrations idempotently in both pnpm check passes."
+  },
+  "validation": {
+    "frozenInstall": {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "PASS",
+      "lockfileChanged": false
+    },
+    "checkPass1": {
+      "command": "pnpm check",
+      "result": "PASS",
+      "testFiles": 11,
+      "tests": 39,
+      "durationSeconds": 9.07,
+      "apiTimeoutReproduced": false
+    },
+    "checkPass2": {
+      "command": "pnpm check",
+      "result": "PASS",
+      "testFiles": 11,
+      "tests": 39,
+      "durationSeconds": 8.39,
+      "apiTimeoutReproduced": false
+    },
+    "build": {
+      "command": "pnpm build",
+      "result": "PASS"
+    },
+    "e2e": {
+      "command": "E2E_BASE_URL=http://localhost:3011 pnpm test:e2e",
+      "result": "PASS",
+      "tests": 16,
+      "projects": ["desktop-1440", "desktop-1366", "desktop-1280", "mobile-pixel-5"]
+    },
+    "secretScan": {
+      "command": "pnpm secret:scan",
+      "result": "PASS",
+      "filesScanned": 107
+    }
+  },
+  "localProductionSmoke": {
+    "url": "http://localhost:3011",
+    "healthz": {
+      "ok": true,
+      "service": "edgelab",
+      "buildCommit": "3c87deedb7d8ce2937f759326466167568da73f6"
+    },
+    "readyz": {
+      "ok": true,
+      "database": "ok",
+      "workerEnabled": false,
+      "chainId": 50312,
+      "marketsSdkVersion": "0.28.1"
+    },
+    "serverStoppedAfterSmoke": true
+  },
+  "publicDeploymentBaseline": {
+    "url": "https://api-production-bd986.up.railway.app",
+    "healthz": {
+      "status": 200,
+      "buildCommit": "cd6b4fe68560d53d7a11e5313ad3e4202782a4c7"
+    },
+    "readyz": {
+      "status": 200,
+      "database": "ok",
+      "workerEnabled": false,
+      "chainId": 50312,
+      "marketsSdkVersion": "0.28.1"
+    },
+    "evidenceSummary": {
+      "status": 200,
+      "experiments": 0,
+      "episodes": 0,
+      "snapshots": 0,
+      "decisions": 0,
+      "settlements": 0,
+      "metricRuns": 0,
+      "assessments": 0,
+      "submittedOrderCount": 1,
+      "fillCount": 0,
+      "terminalOrderCount": 1,
+      "openOrderCount": 0,
+      "latestTerminalState": "EXPIRED"
+    },
+    "deepRouteBaseline": {
+      "/markets": 404,
+      "/lab": 404,
+      "/compare": 404,
+      "/proof": 404,
+      "/how-it-works": 404,
+      "/api/nope": 404
+    },
+    "baselineFinding": "The public service is healthy but is deployed at an older commit and does not yet support SPA deep links for the required interactive routes."
+  },
+  "scope": {
+    "productBehaviorChanged": false,
+    "applicationCodeChanged": false,
+    "bookReconstructionStatus": "UNVERIFIED / FAIL-CLOSED",
+    "mainnetWriteAuthority": "NONE",
+    "blockchainWritesPerformed": "NONE"
+  },
+  "result": "PASS",
+  "nextTasks": ["HIST-001", "DB-002", "UX-010"]
+}
