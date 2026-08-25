@@ -1,0 +1,105 @@
+{
+  "task": "HIST-002",
+  "title": "Read-only DreamDEX historical adapter implementation",
+  "capturedAt": "2026-08-25T10:06:33.557Z",
+  "producer": "Codex execution agent",
+  "redaction": "public DreamDEX market IDs, pool address, aggregate counts, query result shapes, and test outcomes only",
+  "implementation": {
+    "package": "@edgelab/dreamdex",
+    "sourceFile": "packages/dreamdex/src/index.ts",
+    "testFile": "tests/unit/dreamdex.test.ts",
+    "writePolicy": "read-only-no-mainnet-signer",
+    "networkPlane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "sdkVersion": "0.28.1"
+  },
+  "adapterCapabilities": {
+    "countHistoricalBinaryMarkets": "implemented with SDK countBinaryMarkets phase=past",
+    "listHistoricalBinaryMarkets": "implemented with SDK listPastBinaryMarkets, limit-plus-one pagination, opening price enrichment, provenance labels",
+    "getHistoricalBinaryMarket": "implemented with SDK getBinaryMarket and opening price enrichment",
+    "getHistoricalMarketResolution": "implemented with SDK getMarketResolution",
+    "getHistoricalMarketStatusHistory": "implemented with SDK getMarketStatusHistory",
+    "listHistoricalCandles": "implemented with SDK getCandles and supported interval validation",
+    "listHistoricalOrdersByMarket": "implemented with bounded raw GraphQL market_id query because SDK getOrders is owner-scoped",
+    "listHistoricalFillsByMarket": "implemented with bounded raw GraphQL market_id query",
+    "historicalBookReconstruction": "UNVERIFIED_FAIL_CLOSED"
+  },
+  "boundedLiveAdapterProbe": {
+    "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
+    "rpcUrl": "https://api.infra.mainnet.somnia.network",
+    "marketId": "0x0000000000000000000000000000000000000000000000000000000000001bb7",
+    "samplePoolAddress": "0xa475e7cff65bd47c3a0783d071e7075e035048a8",
+    "count": {
+      "ok": true,
+      "btcPastMarketCount": 3971,
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "marketPage": {
+      "ok": true,
+      "rows": 2,
+      "hasMore": true,
+      "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bc9",
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "marketDetail": {
+      "ok": true,
+      "found": true,
+      "tradeCount": 30,
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "resolution": {
+      "ok": true,
+      "events": 1,
+      "hasOpening": true,
+      "hasClosing": true,
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "lifecycle": {
+      "ok": true,
+      "rows": 1,
+      "firstStatus": "Resolved",
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "candles": {
+      "ok": true,
+      "rows": 2,
+      "intervalSeconds": 3600,
+      "firstCloseRaw": "721000000000000000",
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "orders": {
+      "ok": true,
+      "rows": 2,
+      "hasMore": true,
+      "firstStatus": "Cancelled",
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "fills": {
+      "ok": true,
+      "rows": 2,
+      "hasMore": true,
+      "firstKind": "DIRECT_YES",
+      "firstLogIndex": "9",
+      "plane": "MAINNET_HISTORICAL"
+    },
+    "book": {
+      "ok": false,
+      "reasonCode": "DREAMDEX_HISTORICAL_CAPABILITY_UNVERIFIED",
+      "status": "UNVERIFIED_FAIL_CLOSED"
+    }
+  },
+  "acceptanceChecks": {
+    "mainnetReadOnlyBoundary": "PASS",
+    "boundedPagination": "PASS",
+    "sourceProvenanceOnResults": "PASS",
+    "marketWideOrdersNoOwnerScopeConfusion": "PASS",
+    "marketWideFillsSchemaVerifiedAgainstIndexer": "PASS",
+    "bookReconstructionFailClosed": "PASS"
+  },
+  "tests": {
+    "pnpm check": "PASS - 54 tests",
+    "pnpm build": "PASS",
+    "pnpm secret:scan": "PASS",
+    "pnpm evidence:manifest": "PASS"
+  }
+}
