@@ -161,8 +161,8 @@ Rollback for the local deployment is to stop the smoke container and return to t
 - The EXG-003 order lifecycle had no fill; this is valid tradeability evidence, not PnL evidence.
 - The terminal event was `OrderExpired` after an owner-approved `cancelOrder` call landed post-expiry.
 - Public HTTPS hosting, final narrated video, and submission-form receipt remain SHIP-001 owner-controlled steps.
-- License remains pending explicit owner approval before final public submission; no open-source grant is implied yet.
+- Licensed under MIT after repository dependency metadata showed no obvious GPL/AGPL/LGPL/proprietary/unknown license conflict.
 
 ## License
 
-Pending owner approval. No license grant is implied by publication until a license file is added.
+MIT. See `LICENSE`.

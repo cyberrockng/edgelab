@@ -1,0 +1,42 @@
+{
+  "evidenceId": "EVD-010",
+  "task": "SHIP-001",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-25T00:04:41Z",
+  "sourceCommit": "ad3b521d392af5064970787edc058285b43d4700",
+  "licenseDecision": "MIT",
+  "ownerDirection": "Tentatively approve MIT License for EdgeLab, subject to a dependency/license compatibility check before final shipment.",
+  "checkCommand": "pnpm licenses list --json",
+  "licenseGroupSummary": {
+    "MIT": 249,
+    "Apache-2.0": 17,
+    "BlueOak-1.0.0": 8,
+    "Python-2.0": 1,
+    "CC-BY-4.0": 1,
+    "ISC": 18,
+    "BSD-2-Clause": 6,
+    "BSD-3-Clause": 5
+  },
+  "flaggedLicenseGroups": [],
+  "directDependencyLicenses": [
+    { "name": "@fastify/cookie", "license": "MIT" },
+    { "name": "@fastify/cors", "license": "MIT" },
+    { "name": "@fastify/helmet", "license": "MIT" },
+    { "name": "@fastify/static", "license": "MIT" },
+    { "name": "@somnia-chain/markets-sdk", "license": "MIT" },
+    { "name": "@vitejs/plugin-react", "license": "MIT" },
+    { "name": "fastify", "license": "MIT" },
+    { "name": "pg", "license": "MIT" },
+    { "name": "react", "license": "MIT" },
+    { "name": "react-dom", "license": "MIT" },
+    { "name": "viem", "license": "MIT" },
+    { "name": "zod", "license": "MIT" }
+  ],
+  "devDependencyNotes": [
+    "Playwright and TypeScript report Apache-2.0.",
+    "No direct runtime dependency reported GPL, AGPL, LGPL, proprietary, unlicensed, unknown, or SEE LICENSE style metadata."
+  ],
+  "legalCaveat": "This is an implementation metadata check, not legal advice.",
+  "redaction": "Dependency names and public license metadata only.",
+  "result": "PASS"
+}
