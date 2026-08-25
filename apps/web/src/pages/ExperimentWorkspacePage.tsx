@@ -6,7 +6,9 @@ import {
   evaluateExperiment,
   fetchExperimentDetail,
   fetchLatestEvaluation,
+  fetchLiveShadowState,
   fetchReplayRun,
+  observeLiveShadow,
   runHistoricalReplay
 } from "../data.js";
 
@@ -33,6 +35,11 @@ export default function ExperimentWorkspacePage() {
     queryKey: ["experiment", experimentId, "evaluation"],
     queryFn: () => fetchLatestEvaluation(experimentId ?? "")
   });
+  const liveShadowQuery = useQuery({
+    enabled: canLoad,
+    queryKey: ["experiment", experimentId, "live-shadow"],
+    queryFn: () => fetchLiveShadowState(experimentId ?? "")
+  });
   const replayMutation = useMutation({
     mutationFn: () => runHistoricalReplay(experimentId ?? ""),
     onSuccess: async () => {
@@ -48,11 +55,22 @@ export default function ExperimentWorkspacePage() {
       await queryClient.invalidateQueries({ queryKey: ["experiment", experimentId, "evaluation"] });
     }
   });
+  const liveShadowMutation = useMutation({
+    mutationFn: () => observeLiveShadow(experimentId ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["experiment", experimentId] });
+      await queryClient.invalidateQueries({ queryKey: ["experiment", experimentId, "live-shadow"] });
+    }
+  });
   const experiment = experimentQuery.data?.data.experiment;
   const replay = replayQuery.data?.data.replay ?? null;
+  const liveShadow =
+    liveShadowMutation.data?.data.liveShadow ?? liveShadowQuery.data?.data.liveShadow ?? null;
   const assessment =
     evaluationMutation.data?.data.assessment ?? evaluationQuery.data?.data.assessment ?? null;
   const replayReady = replay?.status === "SUCCEEDED";
+  const isHistoricalReplay = experiment?.configuration.mode === "HISTORICAL_REPLAY";
+  const isLiveShadow = experiment?.configuration.mode === "LIVE_SHADOW";
 
   return (
     <div className="pageStack">
@@ -129,12 +147,14 @@ export default function ExperimentWorkspacePage() {
                   </p>
                   <button
                     type="button"
-                    disabled={replayMutation.isPending || replay?.status === "RUNNING"}
+                    disabled={!isHistoricalReplay || replayMutation.isPending || replay?.status === "RUNNING"}
                     onClick={() => {
                       replayMutation.mutate();
                     }}
                   >
-                    {replayMutation.isPending || replay?.status === "RUNNING"
+                    {!isHistoricalReplay
+                      ? "Historical replay not selected"
+                      : replayMutation.isPending || replay?.status === "RUNNING"
                       ? "Running qualification..."
                       : replayReady
                         ? "Replay Already Completed"
@@ -186,6 +206,70 @@ export default function ExperimentWorkspacePage() {
                 </div>
               </div>
             </div>
+            {isLiveShadow ? (
+              <section className="resultPanel" aria-label="Live-shadow observation">
+                <div className="sectionHeader">
+                  <div>
+                    <p className="eyebrow">Forward Observation</p>
+                    <h2>Live Shadow</h2>
+                  </div>
+                  <span className="statusPill">SHANNON FORWARD / NO WALLET WRITE</span>
+                </div>
+                <p>
+                  Capture a current DreamDEX market snapshot and persist the strategy decision before
+                  the outcome is known. This is an application write only.
+                </p>
+                <button
+                  type="button"
+                  disabled={liveShadowMutation.isPending}
+                  onClick={() => {
+                    liveShadowMutation.mutate();
+                  }}
+                >
+                  {liveShadowMutation.isPending ? "Capturing live shadow..." : "Capture Live Shadow Observation"}
+                </button>
+                {liveShadowMutation.isError ? (
+                  <p className="inlineError" role="alert">
+                    {apiErrorMessage(liveShadowMutation.error)}
+                  </p>
+                ) : null}
+                {liveShadowQuery.isError ? (
+                  <div className="stateBox errorState" role="alert">
+                    {apiErrorMessage(liveShadowQuery.error)}
+                  </div>
+                ) : null}
+                <dl className="factGrid">
+                  <div>
+                    <dt>Episodes</dt>
+                    <dd>{liveShadow?.episodeCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Snapshots</dt>
+                    <dd>{liveShadow?.snapshotCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Decisions</dt>
+                    <dd>{liveShadow?.decisionCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Latest market</dt>
+                    <dd className="monoText">
+                      {liveShadow?.latestMarketId === null || liveShadow?.latestMarketId === undefined
+                        ? "Not captured"
+                        : compactId(liveShadow.latestMarketId)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Latest decision</dt>
+                    <dd>{liveShadow?.latestDecidedAt ?? "Not captured"}</dd>
+                  </div>
+                  <div>
+                    <dt>Blockchain writes</dt>
+                    <dd>NONE</dd>
+                  </div>
+                </dl>
+              </section>
+            ) : null}
             <section className="resultPanel" aria-label="Replay result">
               <div className="sectionHeader">
                 <div>

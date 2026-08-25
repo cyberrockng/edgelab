@@ -788,6 +788,43 @@ async function executeHistoricalReplay(input: {
   });
 }
 
+async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: string; readonly experimentId: string }) {
+  const result = await pool.query<{
+    episode_count: string;
+    snapshot_count: string;
+    decision_count: string;
+    latest_decided_at: Date | null;
+    latest_market_id: string | null;
+  }>(
+    `
+      SELECT
+        count(DISTINCT me.id) AS episode_count,
+        count(DISTINCT ms.id) AS snapshot_count,
+        count(DISTINCT sd.id) AS decision_count,
+        max(sd.decided_at) AS latest_decided_at,
+        (array_agg(me.market_id ORDER BY sd.decided_at DESC NULLS LAST))[1] AS latest_market_id
+      FROM experiments e
+      LEFT JOIN market_episodes me ON me.experiment_id = e.id
+      LEFT JOIN market_snapshots ms ON ms.episode_id = me.id
+      LEFT JOIN shadow_decisions sd ON sd.episode_id = me.id
+      WHERE e.id = $1
+        AND e.created_by_session_id = $2
+      GROUP BY e.id
+    `,
+    [input.experimentId, input.sessionId]
+  );
+  const row = result.rows[0];
+  return {
+    episodeCount: Number(row?.episode_count ?? 0),
+    snapshotCount: Number(row?.snapshot_count ?? 0),
+    decisionCount: Number(row?.decision_count ?? 0),
+    latestDecidedAt: row?.latest_decided_at?.toISOString() ?? null,
+    latestMarketId: row?.latest_market_id ?? null,
+    sourcePlane: "SHANNON_FORWARD",
+    blockchainWrite: false
+  };
+}
+
 export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   const app = Fastify({
     logger: {
@@ -1453,6 +1490,112 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "EVALUATION_FAILED",
         error instanceof Error ? error.message : "Evaluation failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/live-shadow", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      return v2Data(
+        {
+          liveShadow: await loadLiveShadowState(pool, {
+            sessionId: ensured.session.id,
+            experimentId: params.data.experimentId
+          }),
+          csrfToken: ensured.csrfToken
+        },
+        { sourcePlane: "SHANNON_FORWARD", ownership: "research-session", blockchainWrite: false }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "LIVE_SHADOW_STATE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Live-shadow state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/experiments/:experimentId/live-shadow/observe", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      if (experiment.configuration.mode !== "LIVE_SHADOW") {
+        return await v2Error(reply, 409, "LIVE_SHADOW_MODE_REQUIRED", "Only live-shadow experiments can capture forward observations", false, request.id);
+      }
+      const dreamDex = requireDreamDex(deps);
+      const assets = experiment.configuration.assets.filter((asset): asset is "BTC" | "ETH" => asset === "BTC" || asset === "ETH");
+      const result = await observeExperiment({
+        pool,
+        dreamDexClient: dreamDex.client,
+        dreamDexConfig: dreamDex.config,
+        experimentId: experiment.experimentId,
+        policyAdapters,
+        holderId: idempotencyKey,
+        assets,
+        intervals: experiment.configuration.intervals
+      });
+      return v2Data(
+        {
+          observation: result,
+          liveShadow: await loadLiveShadowState(pool, {
+            sessionId: session.id,
+            experimentId: experiment.experimentId
+          })
+        },
+        {
+          applicationWrite: true,
+          blockchainWrite: false,
+          sourcePlane: "SHANNON_FORWARD",
+          preOutcomeBoundary: "shadow decision insert guarded before market expiry"
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "LIVE_SHADOW_OBSERVE_FAILED",
+        error instanceof Error ? error.message : "Live-shadow observation failed",
         true,
         request.id
       );

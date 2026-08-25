@@ -157,6 +157,31 @@ const V2LatestAssessmentSchema = z.object({
     assessment: V2AssessmentSchema.shape.data.shape.assessment.nullable()
   })
 });
+const V2LiveShadowSchema = z.object({
+  data: z.object({
+    observation: z
+      .object({
+        leaseAcquired: z.boolean(),
+        discoveredMarketCount: z.number(),
+        observed: z.array(
+          z.object({
+            marketId: z.string(),
+            insertedDecisionCount: z.number(),
+            reusedDecisionCount: z.number(),
+            skipped: z.boolean()
+          })
+        )
+      })
+      .optional(),
+    liveShadow: z.object({
+      episodeCount: z.number(),
+      snapshotCount: z.number(),
+      decisionCount: z.number(),
+      sourcePlane: z.literal("SHANNON_FORWARD"),
+      blockchainWrite: z.literal(false)
+    })
+  })
+});
 const apiMarketId = `0x${"9".repeat(61)}abc`;
 
 const binaryMarket: BinaryMarket = {
@@ -272,6 +297,24 @@ function liveClient(): DreamDexSdkClient {
     },
     getBinaryMarket() {
       return Promise.resolve(binaryMarket);
+    }
+  };
+}
+
+function futureLiveClient(): DreamDexSdkClient {
+  const future = { ...binaryMarket, status: "Trading", finalized: false, winningOutcome: null, expiry: "4102444800" };
+  return {
+    listLiveBinaryMarkets() {
+      return Promise.resolve([future]);
+    },
+    getBinaryBookParams() {
+      return Promise.resolve({ tickSize: 1000n, lotSize: 1000n, minQuantity: 1000n });
+    },
+    getLiveBinaryOrderBookByMarket() {
+      return { yesBids: [{ price: 1000n, quantity: 2000n }], yesAsks: [], noBids: [], noAsks: [] };
+    },
+    getBinaryMarket() {
+      return Promise.resolve(future);
     }
   };
 }
@@ -735,6 +778,65 @@ describe("API-001 server contracts", () => {
     expect(assessmentBody.data.assessment.pnlStatus).toBe("NOT_AVAILABLE");
     expect(latest.statusCode).toBe(200);
     expect(V2LatestAssessmentSchema.parse(latest.json()).data.assessment?.verdict).toBe("INSUFFICIENT_EVIDENCE");
+  });
+
+  it("captures live-shadow observations for session-owned live experiments without wallet writes", async () => {
+    const app = buildApp(config, { ...v2Deps(), dreamDexClient: futureLiveClient(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-live-002"
+      },
+      payload: {
+        name: "Live 002 forward shadow",
+        mode: "LIVE_SHADOW",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "reference-neutral",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const observed = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/live-shadow/observe`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-live-observe-002"
+      }
+    });
+    const observedBody = V2LiveShadowSchema.parse(observed.json());
+    const reloaded = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/live-shadow`,
+      headers: { cookie: cookies }
+    });
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(observed.statusCode).toBe(200);
+    expect(observedBody.data.observation).toMatchObject({
+      leaseAcquired: true,
+      discoveredMarketCount: 1,
+      observed: [expect.objectContaining({ insertedDecisionCount: 1, skipped: false })]
+    });
+    expect(observedBody.data.liveShadow).toMatchObject({
+      episodeCount: 1,
+      snapshotCount: 1,
+      decisionCount: 1,
+      sourcePlane: "SHANNON_FORWARD",
+      blockchainWrite: false
+    });
+    expect(reloaded.statusCode).toBe(200);
+    expect(V2LiveShadowSchema.parse(reloaded.json()).data.liveShadow.decisionCount).toBe(1);
   });
 
   it("rejects experiment writes without the current research-session csrf token", async () => {

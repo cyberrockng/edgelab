@@ -1,0 +1,58 @@
+{
+  "evidenceId": "LIVE-002",
+  "capturedAt": "2026-08-25T12:05:46.545Z",
+  "producer": "EdgeLab local execution agent",
+  "task": "LIVE-002 live-shadow observation workflow",
+  "selectedMarket": {
+    "stableMarketId": "0x00000000...00009315",
+    "asset": "BTC",
+    "intervalSeconds": 900,
+    "status": "Trading",
+    "expirySeconds": 1787660100,
+    "source": {
+      "sdkVersion": "0.28.1",
+      "chainId": 50312,
+      "rpcUrl": "https://api.infra.testnet.somnia.network/",
+      "indexerUrl": "https://dev.smk.somnia.host/v1/graphql",
+      "evidenceClass": "LIVE",
+      "retrievedAt": "2026-08-25T12:05:44.468Z"
+    }
+  },
+  "experiment": {
+    "experimentId": "b22611fd-22e0-4d4c-b8f0-d954c4f41199",
+    "mode": "LIVE_SHADOW",
+    "policy": "reference-neutral@1.0.0",
+    "riskEnvelope": "WATCH_ONLY_BOUNDED"
+  },
+  "observation": {
+    "leaseAcquired": true,
+    "discoveredMarketCount": 1,
+    "observed": [
+      {
+        "marketId": "0x00000000...00009315",
+        "snapshotId": "c3e113b6-b04f-4168-b72d-0cd4728d092d",
+        "insertedDecisionCount": 1,
+        "reusedDecisionCount": 0,
+        "skipped": false
+      }
+    ]
+  },
+  "liveShadowState": {
+    "episodeCount": 1,
+    "snapshotCount": 1,
+    "decisionCount": 1,
+    "latestDecidedAt": "2026-08-25T12:05:44.801Z",
+    "latestMarketId": "0x00000000...00009315",
+    "sourcePlane": "SHANNON_FORWARD",
+    "blockchainWrite": false,
+    "walletRequired": false
+  },
+  "security": {
+    "applicationWrite": true,
+    "blockchainWrite": false,
+    "walletSignature": false,
+    "mainnetWrite": false,
+    "privateCredentialsCaptured": false
+  },
+  "redaction": "compact public market id and application UUIDs only; no cookies, CSRF tokens, private keys, or wallet secrets"
+}

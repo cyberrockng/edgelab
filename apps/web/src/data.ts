@@ -297,6 +297,38 @@ export interface EvaluationResponse {
   readonly csrfToken?: string;
 }
 
+export interface LiveShadowState {
+  readonly episodeCount: number;
+  readonly snapshotCount: number;
+  readonly decisionCount: number;
+  readonly latestDecidedAt: string | null;
+  readonly latestMarketId: string | null;
+  readonly sourcePlane: "SHANNON_FORWARD";
+  readonly blockchainWrite: false;
+}
+
+export interface LiveShadowResponse {
+  readonly liveShadow: LiveShadowState;
+  readonly csrfToken?: string;
+}
+
+export interface LiveShadowObserveResponse {
+  readonly observation: {
+    readonly leaseAcquired: boolean;
+    readonly holderId: string;
+    readonly discoveredMarketCount: number;
+    readonly observed: readonly {
+      readonly marketId: string;
+      readonly snapshotId: string | null;
+      readonly insertedDecisionCount: number;
+      readonly reusedDecisionCount: number;
+      readonly skipped: boolean;
+      readonly reasonCode?: string;
+    }[];
+  };
+  readonly liveShadow: LiveShadowState;
+}
+
 export interface ExperimentCreateInput {
   readonly name: string;
   readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
@@ -442,6 +474,28 @@ export async function evaluateExperiment(experimentId: string): Promise<V2Envelo
     }
   );
   return response;
+}
+
+export async function fetchLiveShadowState(experimentId: string): Promise<V2Envelope<LiveShadowResponse>> {
+  const response = await fetchV2Request<LiveShadowResponse>(`/api/v2/experiments/${experimentId}/live-shadow`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function observeLiveShadow(experimentId: string): Promise<V2Envelope<LiveShadowObserveResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request<LiveShadowObserveResponse>(`/api/v2/experiments/${experimentId}/live-shadow/observe`, {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `live-${globalThis.crypto.randomUUID()}`
+    }
+  });
 }
 
 export function apiErrorMessage(error: unknown): string {

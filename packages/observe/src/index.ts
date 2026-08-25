@@ -164,33 +164,66 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
     id: string;
     decision_offset_sec: number;
     risk_hash: string;
-    policy_a_version_id: string;
-    policy_a_id: string;
-    policy_a_version: string;
-    policy_a_hash: string;
-    policy_b_version_id: string;
-    policy_b_id: string;
-    policy_b_version: string;
-    policy_b_hash: string;
+    policies: unknown;
   }>(
     `
+      WITH base AS (
+        SELECT
+          e.id,
+          e.decision_offset_sec,
+          e.active_configuration_id,
+          COALESCE(
+            r.envelope_hash,
+            encode(digest(COALESCE(ecv.config->>'riskEnvelopeId', 'WATCH_ONLY_BOUNDED'), 'sha256'), 'hex')
+          ) AS risk_hash,
+          e.policy_a_id,
+          e.policy_b_id
+        FROM experiments e
+        LEFT JOIN risk_envelopes r ON r.id = e.risk_envelope_id
+        LEFT JOIN experiment_configuration_versions ecv ON ecv.id = e.active_configuration_id
+        WHERE e.id = $1
+      ),
+      interactive_policies AS (
+        SELECT
+          base.id,
+          jsonb_agg(
+            jsonb_build_object(
+              'id', pv.id,
+              'policyId', pv.policy_id,
+              'version', pv.version,
+              'sourceHash', pv.source_hash
+            )
+            ORDER BY epv.role
+          ) FILTER (WHERE pv.id IS NOT NULL) AS policies
+        FROM base
+        LEFT JOIN experiment_policy_versions epv ON epv.configuration_id = base.active_configuration_id
+        LEFT JOIN policy_versions pv ON pv.id = epv.policy_version_id
+        GROUP BY base.id
+      ),
+      legacy_policies AS (
+        SELECT
+          base.id,
+          jsonb_agg(
+            jsonb_build_object(
+              'id', pv.id,
+              'policyId', pv.policy_id,
+              'version', pv.version,
+              'sourceHash', pv.source_hash
+            )
+            ORDER BY pv.policy_id
+          ) FILTER (WHERE pv.id IS NOT NULL) AS policies
+        FROM base
+        LEFT JOIN policy_versions pv ON pv.id IN (base.policy_a_id, base.policy_b_id)
+        GROUP BY base.id
+      )
       SELECT
-        e.id,
-        e.decision_offset_sec,
-        r.envelope_hash AS risk_hash,
-        pa.id AS policy_a_version_id,
-        pa.policy_id AS policy_a_id,
-        pa.version AS policy_a_version,
-        pa.source_hash AS policy_a_hash,
-        pb.id AS policy_b_version_id,
-        pb.policy_id AS policy_b_id,
-        pb.version AS policy_b_version,
-        pb.source_hash AS policy_b_hash
-      FROM experiments e
-      JOIN risk_envelopes r ON r.id = e.risk_envelope_id
-      JOIN policy_versions pa ON pa.id = e.policy_a_id
-      JOIN policy_versions pb ON pb.id = e.policy_b_id
-      WHERE e.id = $1
+        base.id,
+        base.decision_offset_sec,
+        base.risk_hash,
+        COALESCE(interactive_policies.policies, legacy_policies.policies, '[]'::jsonb) AS policies
+      FROM base
+      LEFT JOIN interactive_policies ON interactive_policies.id = base.id
+      LEFT JOIN legacy_policies ON legacy_policies.id = base.id
     `,
     [experimentId]
   );
@@ -198,24 +231,28 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
   if (row === undefined) {
     throw new Error(`Experiment ${experimentId} not found`);
   }
+  const policies = Array.isArray(row.policies)
+    ? row.policies.filter((policy): policy is ExperimentRecord["policies"][number] => {
+        if (typeof policy !== "object" || policy === null) {
+          return false;
+        }
+        const maybe = policy as Record<string, unknown>;
+        return (
+          typeof maybe.id === "string" &&
+          typeof maybe.policyId === "string" &&
+          typeof maybe.version === "string" &&
+          typeof maybe.sourceHash === "string"
+        );
+      })
+    : [];
+  if (policies.length === 0) {
+    throw new Error(`Experiment ${experimentId} has no policy versions`);
+  }
   return {
     id: row.id,
     decision_offset_sec: row.decision_offset_sec,
     risk_hash: row.risk_hash,
-    policies: [
-      {
-        id: row.policy_a_version_id,
-        policyId: row.policy_a_id,
-        version: row.policy_a_version,
-        sourceHash: row.policy_a_hash
-      },
-      {
-        id: row.policy_b_version_id,
-        policyId: row.policy_b_id,
-        version: row.policy_b_version,
-        sourceHash: row.policy_b_hash
-      }
-    ]
+    policies
   };
 }
 
