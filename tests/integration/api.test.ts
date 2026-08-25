@@ -62,6 +62,35 @@ const V2PoliciesSchema = z.object({
     policies: z.array(z.object({ policyId: z.string(), version: z.string() }))
   })
 });
+const V2ProofSchema = z.object({
+  data: z.object({
+    proof: z.object({
+      evidenceId: z.literal("EXG-003"),
+      status: z.literal("VERIFIED"),
+      network: z.object({ chainId: z.literal(50312) }),
+      lifecycle: z.array(z.object({ state: z.string(), title: z.string(), detail: z.string() })),
+      order: z.object({
+        orderId: z.string(),
+        fillStatus: z.literal("NO_FILL"),
+        terminalEvent: z.literal("OrderExpired")
+      }),
+      reconciliation: z.object({
+        fillObserved: z.literal(false),
+        fillRequired: z.literal(false),
+        collateralReconciled: z.literal(true),
+        unexpectedOpenOrder: z.literal(false),
+        selfTrade: z.literal(false),
+        fakeVolume: z.literal(false),
+        pnlStatus: z.literal("NOT_AVAILABLE")
+      }),
+      technical: z.array(z.object({ label: z.string(), value: z.string(), href: z.string().nullable() }))
+    })
+  }),
+  meta: z.object({
+    sourcePlane: z.literal("SHANNON_EXECUTION"),
+    blockchainWrite: z.literal(false)
+  })
+});
 const V2HistoricalPageSchema = z.object({
   data: z.object({
     markets: z.array(z.object({ stableMarketId: z.string() }))
@@ -587,6 +616,24 @@ describe("API-001 server contracts", () => {
     );
     expect(policiesBody.data.policies).toContainEqual(
       expect.objectContaining({ policyId: "historical-last-trade", version: "1.0.0" })
+    );
+  });
+
+  it("serves EXG-003 proof as Shannon execution evidence without fill or cancelled/profit drift", async () => {
+    const app = buildApp(config, v2Deps());
+    const proof = await app.inject({ method: "GET", url: "/api/v2/proof/exg-003" });
+    const body = V2ProofSchema.parse(proof.json());
+    await app.close();
+
+    expect(proof.statusCode).toBe(200);
+    expect(body.data.proof.lifecycle.map((row) => row.state)).toEqual(
+      expect.arrayContaining(["VERIFIED", "SUBMITTED", "NO FILL", "EXPIRED", "RECONCILED"])
+    );
+    expect(JSON.stringify(body.data.proof)).toContain("OrderExpired");
+    expect(body.data.proof.order.terminalEvent).toBe("OrderExpired");
+    expect(body.data.proof.lifecycle.find((row) => row.state === "EXPIRED")?.detail).toContain("not OrderCancelled");
+    expect(body.data.proof.technical.map((row) => row.label)).toEqual(
+      expect.arrayContaining(["Approval", "Order", "Terminal", "Order ID"])
     );
   });
 

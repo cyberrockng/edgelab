@@ -25,6 +25,49 @@ export interface ProofRow {
   readonly href: string | null;
 }
 
+export interface ExecutionProofLifecycleStep {
+  readonly state: string;
+  readonly title: string;
+  readonly detail: string;
+  readonly txHash: string | null;
+  readonly href: string | null;
+}
+
+export interface ExecutionProofResponse {
+  readonly proof: {
+    readonly evidenceId: "EXG-003";
+    readonly status: "VERIFIED";
+    readonly network: {
+      readonly name: string;
+      readonly chainId: 50312;
+      readonly explorerUrl: string;
+    };
+    readonly lifecycle: readonly ExecutionProofLifecycleStep[];
+    readonly order: {
+      readonly orderId: string;
+      readonly marketId: string;
+      readonly side: string;
+      readonly priceRaw: string;
+      readonly quantityRaw: string;
+      readonly filledQuantityRaw: string;
+      readonly fillStatus: string;
+      readonly terminalEvent: "OrderExpired";
+      readonly cancelFunction: string;
+    };
+    readonly reconciliation: {
+      readonly fillObserved: boolean;
+      readonly fillRequired: boolean;
+      readonly collateralReconciled: boolean;
+      readonly unexpectedOpenOrder: boolean;
+      readonly selfTrade: boolean;
+      readonly fakeVolume: boolean;
+      readonly pnlStatus: "NOT_AVAILABLE";
+    };
+    readonly technical: readonly ProofRow[];
+    readonly sourceArtifacts: readonly string[];
+  };
+}
+
 export interface V2Envelope<TData, TMeta = Record<string, unknown>> {
   readonly data: TData;
   readonly meta: TMeta & { readonly apiVersion: "v2" };
@@ -559,6 +602,10 @@ export async function fetchAssessments(): Promise<V2Envelope<AssessmentListRespo
     storeCsrfToken(response.data.csrfToken);
   }
   return response;
+}
+
+export async function fetchExecutionProof(): Promise<V2Envelope<ExecutionProofResponse>> {
+  return await fetchV2Request<ExecutionProofResponse>("/api/v2/proof/exg-003");
 }
 
 export async function createComparison(input: {

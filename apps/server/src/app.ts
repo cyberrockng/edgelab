@@ -101,6 +101,7 @@ const IdempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-
 const ResearchSessionCookie = "edgelab_research_session";
 const CsrfHeader = "x-csrf-token";
 const SessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const ModuleDir = dirname(fileURLToPath(import.meta.url));
 const IntervalSecSchema = z.union([z.literal(900), z.literal(3600), z.literal(14400), z.literal(86400)]);
 const ExperimentCreateSchema = z.object({
   name: z.string().trim().min(3).max(80),
@@ -1005,6 +1006,175 @@ function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; re
   };
 }
 
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return input !== null && typeof input === "object" && !Array.isArray(input);
+}
+
+function readEvidenceRecord(relativePath: string): Record<string, unknown> {
+  const candidates = [
+    join(process.cwd(), relativePath),
+    join(ModuleDir, "..", "..", "..", relativePath)
+  ];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path === undefined) {
+    throw new Error(`Required proof artifact is missing: ${relativePath}`);
+  }
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`Required proof artifact is not an object: ${relativePath}`);
+  }
+  return parsed;
+}
+
+function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = record[key];
+  if (!isRecord(value)) {
+    throw new Error(`Proof artifact field is missing or malformed: ${key}`);
+  }
+  return value;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`Proof artifact string field is missing: ${key}`);
+  }
+  return value;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") {
+    throw new Error(`Proof artifact boolean field is missing: ${key}`);
+  }
+  return value;
+}
+
+function compactHash(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+}
+
+function explorerTx(explorerUrl: string, txHash: string): string {
+  return `${explorerUrl.replace(/\/$/, "")}/tx/${txHash}`;
+}
+
+function explorerAddress(explorerUrl: string, address: string): string {
+  return `${explorerUrl.replace(/\/$/, "")}/address/${address}`;
+}
+
+function buildExg003Proof() {
+  const intent = readEvidenceRecord("evidence/feasibility/blk-003-intent.json");
+  const order = readEvidenceRecord("evidence/feasibility/blk-003-order.json");
+  const terminal = readEvidenceRecord("evidence/feasibility/blk-003-terminal.json");
+  const network = recordField(terminal, "network");
+  const terminalEvent = recordField(terminal, "terminalEvent");
+  const postTerminal = recordField(terminal, "postTerminalVerification");
+  const terminalOrder = recordField(terminal, "order");
+  const approval = recordField(intent, "approval");
+  const wallet = recordField(intent, "wallet");
+  const orderTransaction = recordField(order, "orderTransaction");
+  const orderVerification = recordField(order, "onchainVerification");
+  const cancelPreflight = recordField(order, "cancelPreflight");
+  const terminalTransaction = recordField(terminal, "terminalTransaction");
+  const explorerUrl = stringField(network, "explorerUrl");
+  const terminalEventName = stringField(terminalEvent, "eventName");
+  const fillObserved = booleanField(postTerminal, "fillObserved");
+  const collateralReconciled = booleanField(postTerminal, "collateralReconciled");
+  const unexpectedOpenOrder = booleanField(postTerminal, "unexpectedOpenOrder");
+  const chainId = network.chainId;
+  if (typeof chainId !== "number" || chainId !== SOMNIA_SHANNON_CHAIN_ID) {
+    throw new Error("EXG-003 proof artifact is not on Somnia Shannon");
+  }
+  if (terminalEventName !== "OrderExpired" || fillObserved || !collateralReconciled || unexpectedOpenOrder) {
+    throw new Error("EXG-003 proof artifact does not match approved no-fill expired lifecycle");
+  }
+  const approvalTxHash = stringField(approval, "transactionHash");
+  const orderTxHash = stringField(orderTransaction, "txHash");
+  const terminalTxHash = stringField(terminalTransaction, "txHash");
+  const orderId = stringField(terminalOrder, "orderId");
+  const walletAddress = stringField(wallet, "address");
+  return {
+    proof: {
+      evidenceId: "EXG-003",
+      status: "VERIFIED",
+      network: {
+        name: stringField(network, "name"),
+        chainId,
+        explorerUrl
+      },
+      lifecycle: [
+        {
+          state: "VERIFIED",
+          title: "Exact approval",
+          detail: "0.01 tUSDC approved to the selected DreamDEX pool",
+          txHash: approvalTxHash,
+          href: explorerTx(explorerUrl, approvalTxHash)
+        },
+        {
+          state: "SUBMITTED",
+          title: "POST_ONLY BUY_YES order",
+          detail: "Price 0.01, quantity 1; order ID remains inspectable below",
+          txHash: orderTxHash,
+          href: explorerTx(explorerUrl, orderTxHash)
+        },
+        {
+          state: "NO FILL",
+          title: "Rested without execution",
+          detail: "No fill was observed; no PnL is inferred",
+          txHash: null,
+          href: null
+        },
+        {
+          state: "EXPIRED",
+          title: "Owner-approved cancel landed after expiry",
+          detail: "DreamDEX emitted OrderExpired, not OrderCancelled",
+          txHash: terminalTxHash,
+          href: explorerTx(explorerUrl, terminalTxHash)
+        },
+        {
+          state: "RECONCILED",
+          title: "Terminal state verified",
+          detail: "No open order remains and escrow returned",
+          txHash: null,
+          href: null
+        }
+      ],
+      order: {
+        orderId,
+        marketId: stringField(terminalOrder, "marketId"),
+        side: stringField(terminalOrder, "side"),
+        priceRaw: stringField(terminalOrder, "priceRaw"),
+        quantityRaw: stringField(terminalOrder, "quantityRaw"),
+        filledQuantityRaw: stringField(terminalOrder, "filledQuantityRaw"),
+        fillStatus: stringField(orderVerification, "fillStatus"),
+        terminalEvent: terminalEventName,
+        cancelFunction: stringField(cancelPreflight, "functionSelector")
+      },
+      reconciliation: {
+        fillObserved,
+        fillRequired: booleanField(postTerminal, "fillRequired"),
+        collateralReconciled,
+        unexpectedOpenOrder,
+        selfTrade: booleanField(postTerminal, "selfTrade"),
+        fakeVolume: booleanField(postTerminal, "fakeVolume"),
+        pnlStatus: "NOT_AVAILABLE"
+      },
+      technical: [
+        { label: "Wallet", value: compactHash(walletAddress), href: explorerAddress(explorerUrl, walletAddress) },
+        { label: "Approval", value: compactHash(approvalTxHash), href: explorerTx(explorerUrl, approvalTxHash) },
+        { label: "Order", value: compactHash(orderTxHash), href: explorerTx(explorerUrl, orderTxHash) },
+        { label: "Terminal", value: compactHash(terminalTxHash), href: explorerTx(explorerUrl, terminalTxHash) },
+        { label: "Order ID", value: orderId, href: null }
+      ],
+      sourceArtifacts: [
+        "evidence/feasibility/blk-003-intent.json",
+        "evidence/feasibility/blk-003-order.json",
+        "evidence/feasibility/blk-003-terminal.json"
+      ]
+    }
+  };
+}
+
 async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string; readonly comparisonId: string }) {
   const result = await pool.query<{
     comparison_id: string;
@@ -1086,10 +1256,9 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     origin: config.PUBLIC_APP_URL,
     credentials: true
   });
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
   const staticRoots = [
-    join(moduleDir, "..", "..", "web", "dist"),
-    join(moduleDir, "..", "..", "..", "apps", "web", "dist")
+    join(ModuleDir, "..", "..", "web", "dist"),
+    join(ModuleDir, "..", "..", "..", "apps", "web", "dist")
   ];
   const staticRoot = staticRoots.find((candidate) => existsSync(join(candidate, "index.html")));
   if (staticRoot !== undefined) {
@@ -1195,6 +1364,26 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       { immutableVersions: true }
     )
   );
+
+  app.get("/api/v2/proof/exg-003", (request, reply) => {
+    try {
+      return v2Data(buildExg003Proof(), {
+        sourcePlane: "SHANNON_EXECUTION",
+        chainId: SOMNIA_SHANNON_CHAIN_ID,
+        blockchainWrite: false,
+        proofAuthority: "sanitized-exg-003-artifacts"
+      });
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXG_003_PROOF_UNAVAILABLE",
+        error instanceof Error ? error.message : "EXG-003 proof unavailable",
+        false,
+        request.id
+      );
+    }
+  });
 
   app.post("/api/v2/research-session", async (request, reply) => {
     try {

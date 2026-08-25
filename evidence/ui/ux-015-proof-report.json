@@ -1,0 +1,39 @@
+{
+  "taskId": "UX-015",
+  "capturedAt": "2026-08-25T13:51:00+01:00",
+  "capability": "Verified EXG-003 execution proof is served through a typed backend DTO and rendered by /proof",
+  "route": "/proof",
+  "apiContract": "GET /api/v2/proof/exg-003",
+  "sourceArtifacts": [
+    "evidence/feasibility/blk-003-intent.json",
+    "evidence/feasibility/blk-003-order.json",
+    "evidence/feasibility/blk-003-terminal.json"
+  ],
+  "network": {
+    "plane": "SHANNON_EXECUTION",
+    "chainId": 50312,
+    "mainnetWrites": false
+  },
+  "lifecycleTruth": {
+    "approval": "VERIFIED",
+    "order": "SUBMITTED",
+    "fill": "NO_FILL",
+    "terminalEvent": "OrderExpired",
+    "terminalCopyClarifiesNotCancelled": true,
+    "reconciliation": "RECONCILED"
+  },
+  "boundaries": {
+    "fillRequired": false,
+    "fillObserved": false,
+    "pnlStatus": "NOT_AVAILABLE",
+    "selfTrade": false,
+    "fakeVolume": false,
+    "blockchainWriteDuringUx015": false
+  },
+  "testEvidence": {
+    "focusedServerTypecheck": "PASS",
+    "focusedWebTypecheck": "PASS",
+    "integrationApiProof": "PASS"
+  },
+  "sensitiveData": "Public chain references and sanitized proof metadata only"
+}

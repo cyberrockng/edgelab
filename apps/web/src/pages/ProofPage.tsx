@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { DREAMDEX_MARKETS_SDK_VERSION } from "@edgelab/domain";
-import { capturedSummary, proofRows } from "../data.js";
+import { apiErrorMessage, capturedSummary, fetchExecutionProof, proofRows } from "../data.js";
 
 const lifecycleRows = [
   {
@@ -30,16 +31,30 @@ const lifecycleRows = [
 ] as const;
 
 export default function ProofPage() {
+  const proofQuery = useQuery({
+    queryKey: ["proof", "exg-003"],
+    queryFn: fetchExecutionProof
+  });
+  const proof = proofQuery.data?.data.proof ?? null;
   const summary = capturedSummary;
+  const renderedLifecycle = proof?.lifecycle ?? lifecycleRows;
+  const renderedTechnical = proof?.technical ?? proofRows;
+  const terminalState = proof?.order.terminalEvent.toUpperCase().replace("ORDER", "") ?? summary.chain.latestTerminalState ?? "Terminal proof unavailable";
   return (
     <div className="pageStack">
       <section className="routeHero">
         <p className="eyebrow">Verified Shannon execution proof</p>
-        <h1>{summary.chain.latestTerminalState ?? "Terminal proof unavailable"}</h1>
+        <h1>{terminalState}</h1>
         <p>
           A capped human-approved testnet lifecycle proves EdgeLab can prepare, observe, and
           reconcile DreamDEX Event Contract execution without requiring a fill.
         </p>
+        {proofQuery.isLoading ? <div className="stateBox">Loading verified EXG-003 proof...</div> : null}
+        {proofQuery.isError ? (
+          <div className="stateBox errorState" role="alert">
+            {apiErrorMessage(proofQuery.error)}
+          </div>
+        ) : null}
       </section>
       <section className="chainProof" aria-label="DreamDEX lifecycle proof">
         <div className="sectionIntro compact">
@@ -48,7 +63,7 @@ export default function ProofPage() {
           <p>Mainnet research data is not mixed with Shannon execution evidence.</p>
         </div>
         <ol className="lifecycleRail">
-          {lifecycleRows.map((row) => (
+          {renderedLifecycle.map((row) => (
             <li key={row.title}>
               <span>{row.state}</span>
               <div>
@@ -65,8 +80,14 @@ export default function ProofPage() {
           <h2>Hashes stay secondary but inspectable.</h2>
           <p>Explorer links are safe public proof references. They do not imply a fill or PnL.</p>
         </div>
+        {proof === null ? null : (
+          <div className="stateBox">
+            Chain {String(proof.network.chainId)}; order {proof.order.orderId}; fill status {proof.order.fillStatus};
+            PnL {proof.reconciliation.pnlStatus}.
+          </div>
+        )}
         <div className="proofGrid">
-          {proofRows.map((row) =>
+          {renderedTechnical.map((row) =>
             row.href === null ? (
               <div key={row.label}>
                 <span>{row.label}</span>
