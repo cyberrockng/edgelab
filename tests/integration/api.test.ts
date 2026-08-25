@@ -157,6 +157,37 @@ const V2LatestAssessmentSchema = z.object({
     assessment: V2AssessmentSchema.shape.data.shape.assessment.nullable()
   })
 });
+const V2EvidenceGateSchema = z.object({
+  data: z.object({
+    evidence: z
+      .object({
+        experimentId: z.string().uuid(),
+        assessment: z.object({
+          assessmentId: z.string().uuid(),
+          verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+          sampleSize: z.number(),
+          evidencePlane: z.string(),
+          promotionScope: z.string(),
+          pnlStatus: z.string()
+        }),
+        gateRows: z.array(
+          z.object({
+            dimension: z.string(),
+            status: z.string(),
+            value: z.string(),
+            detail: z.string()
+          })
+        ),
+        missingEvidence: z.array(z.string()),
+        verdictReasons: z.array(z.string()),
+        nextPermittedAction: z.string(),
+        serverAuthored: z.literal(true)
+      })
+      .nullable(),
+    state: z.string(),
+    message: z.string()
+  })
+});
 const V2LiveShadowSchema = z.object({
   data: z.object({
     observation: z
@@ -783,6 +814,12 @@ describe("API-001 server contracts", () => {
       url: `/api/v2/experiments/${experimentId}/evaluation/latest`,
       headers: { cookie: cookies }
     });
+    const evidence = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/evidence`,
+      headers: { cookie: cookies }
+    });
+    const evidenceBody = V2EvidenceGateSchema.parse(evidence.json());
     await app.close();
 
     expect(create.statusCode).toBe(201);
@@ -811,6 +848,19 @@ describe("API-001 server contracts", () => {
     expect(assessmentBody.data.assessment.pnlStatus).toBe("NOT_AVAILABLE");
     expect(latest.statusCode).toBe(200);
     expect(V2LatestAssessmentSchema.parse(latest.json()).data.assessment?.verdict).toBe("INSUFFICIENT_EVIDENCE");
+    expect(evidence.statusCode).toBe(200);
+    expect(evidenceBody.data.state).toBe("READY");
+    expect(evidenceBody.data.evidence?.serverAuthored).toBe(true);
+    expect(evidenceBody.data.evidence?.assessment.verdict).toBe("INSUFFICIENT_EVIDENCE");
+    expect(evidenceBody.data.evidence?.assessment.evidencePlane).toBe("MAINNET_HISTORICAL");
+    expect(evidenceBody.data.evidence?.assessment.pnlStatus).toBe("NOT_AVAILABLE");
+    expect(evidenceBody.data.evidence?.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
+    expect(evidenceBody.data.evidence?.gateRows.map((row) => row.dimension)).toEqual(
+      expect.arrayContaining(["Forecast sample", "Forecast quality", "Forecast calibration", "Tradeability / execution quality", "PnL", "Provenance"])
+    );
+    expect(evidenceBody.data.evidence?.missingEvidence).toEqual(
+      expect.arrayContaining(["Forecast sample", "Tradeability / execution quality", "PnL"])
+    );
   });
 
   it("captures live-shadow observations for session-owned live experiments without wallet writes", async () => {

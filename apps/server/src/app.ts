@@ -847,6 +847,12 @@ interface AssessmentSummaryRow {
   readonly created_at: Date;
 }
 
+interface AssessmentDetailRow extends AssessmentSummaryRow {
+  readonly thresholds: Record<string, unknown>;
+  readonly replay_run_id: string | null;
+  readonly execution_metrics: Record<string, unknown>;
+}
+
 function serializeAssessmentSummary(row: AssessmentSummaryRow) {
   return {
     assessmentId: row.assessment_id,
@@ -900,6 +906,103 @@ async function loadOwnedAssessmentSummaries(
     [input.sessionId, input.assessmentIds === undefined ? null : [...input.assessmentIds], input.limit ?? 20]
   );
   return result.rows;
+}
+
+function numberFromRecord(record: Record<string, unknown>, key: string, fallback: number): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function formatMetric(value: number | null, digits = 4): string {
+  return value === null ? "NOT AVAILABLE" : value.toFixed(digits);
+}
+
+function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; readonly experimentId: string }) {
+  if (input.row === null) {
+    return {
+      evidence: null,
+      state: "EVALUATION_REQUIRED",
+      message: "Run evaluation before opening a server-authored Evidence Gate."
+    };
+  }
+  const minSampleSize = numberFromRecord(input.row.thresholds, "minSampleSize", 30);
+  const promoteMaxBrierScore = numberFromRecord(input.row.thresholds, "promoteMaxBrierScore", 0.2);
+  const promoteMaxAbsCalibrationBias = numberFromRecord(input.row.thresholds, "promoteMaxAbsCalibrationBias", 0.05);
+  const sampleDeficit = Math.max(0, minSampleSize - input.row.sample_size);
+  const tradeabilityStatus =
+    typeof input.row.execution_metrics.tradeabilityStatus === "string"
+      ? input.row.execution_metrics.tradeabilityStatus
+      : "NOT_EVALUATED";
+  const assessment = serializeAssessmentSummary(input.row);
+  const rows = [
+    {
+      dimension: "Forecast sample",
+      status: sampleDeficit === 0 ? "PASS" : "BLOCKED",
+      value: `${String(input.row.sample_size)}/${String(minSampleSize)} observations`,
+      detail:
+        sampleDeficit === 0
+          ? "Minimum scored historical sample is satisfied."
+          : `${String(sampleDeficit)} additional scored observations are required before promotion can be considered.`
+    },
+    {
+      dimension: "Forecast quality",
+      status:
+        input.row.brier_score === null
+          ? "NOT_AVAILABLE"
+          : input.row.brier_score <= promoteMaxBrierScore
+            ? "PASS"
+            : "BLOCKED",
+      value: formatMetric(input.row.brier_score),
+      detail: `Brier score is compared with the promotion threshold ${promoteMaxBrierScore.toFixed(4)}.`
+    },
+    {
+      dimension: "Forecast calibration",
+      status:
+        input.row.calibration_bias === null
+          ? "NOT_AVAILABLE"
+          : Math.abs(input.row.calibration_bias) <= promoteMaxAbsCalibrationBias
+            ? "PASS"
+            : "BLOCKED",
+      value: formatMetric(input.row.calibration_bias),
+      detail: `Absolute calibration bias must be <= ${promoteMaxAbsCalibrationBias.toFixed(4)} for promotion.`
+    },
+    {
+      dimension: "Tradeability / execution quality",
+      status: tradeabilityStatus === "EVALUATED" ? "VERIFIED" : "NOT_AVAILABLE",
+      value: tradeabilityStatus,
+      detail: "Historical replay forecast evidence remains separate from live execution and realized fill evidence."
+    },
+    {
+      dimension: "PnL",
+      status: input.row.pnl_status === "AVAILABLE" ? "VERIFIED" : "NOT_AVAILABLE",
+      value: input.row.pnl_status,
+      detail: "Replay or counterfactual PnL is never labeled realized wallet PnL."
+    },
+    {
+      dimension: "Provenance",
+      status: "VERIFIED",
+      value: input.row.evidence_plane,
+      detail: `${input.row.promotion_scope}; replay ${input.row.replay_run_id ?? "not linked"}.`
+    }
+  ];
+  return {
+    evidence: {
+      experimentId: input.experimentId,
+      assessment,
+      gateRows: rows,
+      missingEvidence: rows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
+      verdictReasons: input.row.reason_codes,
+      nextPermittedAction:
+        input.row.verdict === "PROMOTE"
+          ? "PROMOTION_REVIEW_REQUIRED"
+          : input.row.verdict === "INSUFFICIENT_EVIDENCE"
+            ? "COLLECT_MORE_EVIDENCE"
+            : "KEEP_IN_RESEARCH",
+      serverAuthored: true
+    },
+    state: "READY",
+    message: "Evidence Gate is server-authored from the latest immutable assessment."
+  };
 }
 
 async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string; readonly comparisonId: string }) {
@@ -1555,6 +1658,68 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "EVALUATION_STATE_UNAVAILABLE",
         error instanceof Error ? error.message : "Evaluation state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/evidence", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const result = await pool.query<AssessmentDetailRow>(
+        `
+          SELECT
+            evidence_assessments.id AS assessment_id,
+            metric_runs.id AS metric_run_id,
+            experiments.id AS experiment_id,
+            experiments.name AS experiment_name,
+            evidence_assessments.verdict,
+            evidence_assessments.reason_codes,
+            metric_runs.sample_size,
+            metric_runs.exclusion_count,
+            metric_runs.brier_score,
+            metric_runs.calibration_bias,
+            metric_runs.neutral_baseline_delta,
+            metric_runs.execution_metrics,
+            metric_runs.pnl_status,
+            metric_runs.evidence_plane,
+            metric_runs.replay_run_id,
+            metric_runs.promotion_scope,
+            evidence_assessments.thresholds,
+            evidence_assessments.created_at
+          FROM evidence_assessments
+          JOIN metric_runs ON metric_runs.id = evidence_assessments.metric_run_id
+          JOIN experiments ON experiments.id = metric_runs.experiment_id
+          WHERE experiments.id = $1
+            AND experiments.created_by_session_id = $2
+          ORDER BY evidence_assessments.created_at DESC
+          LIMIT 1
+        `,
+        [params.data.experimentId, ensured.session.id]
+      );
+      return v2Data(
+        {
+          ...buildEvidenceGate({ row: result.rows[0] ?? null, experimentId: params.data.experimentId }),
+          csrfToken: ensured.csrfToken
+        },
+        {
+          ownership: "research-session",
+          sourcePlane: "MAINNET_HISTORICAL",
+          verdictAuthority: "server-evaluation-engine"
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EVIDENCE_GATE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Evidence Gate unavailable",
         true,
         request.id
       );

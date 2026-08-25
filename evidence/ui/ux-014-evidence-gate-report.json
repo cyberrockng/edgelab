@@ -1,0 +1,39 @@
+{
+  "taskId": "UX-014",
+  "capturedAt": "2026-08-25T13:43:00+01:00",
+  "capability": "Evidence Gate route consumes a server-authored evidence DTO for evaluated experiments",
+  "routes": [
+    "/compare",
+    "/evidence/:experimentId"
+  ],
+  "apiContracts": [
+    "GET /api/v2/assessments",
+    "POST /api/v2/comparisons",
+    "GET /api/v2/comparisons/:comparisonId",
+    "GET /api/v2/experiments/:experimentId/evidence"
+  ],
+  "serverAuthoredVerdict": true,
+  "frontendVerdictDerivation": false,
+  "evidenceDimensions": [
+    "Forecast sample",
+    "Forecast quality",
+    "Forecast calibration",
+    "Tradeability / execution quality",
+    "PnL",
+    "Provenance"
+  ],
+  "separationPreserved": {
+    "forecastQualitySeparateFromTradeability": true,
+    "pnlSeparateFromForecast": true,
+    "historicalReplayNotRealizedWalletPnl": true,
+    "mainnetHistoricalReadOnly": true,
+    "shannonExecutionProofSeparate": true
+  },
+  "bookReconstruction": "SOURCE_INCOMPLETE / fail-closed; not used by Evidence Gate",
+  "testEvidence": {
+    "focusedServerTypecheck": "PASS",
+    "focusedWebTypecheck": "PASS",
+    "integrationApiEvidenceGate": "PASS"
+  },
+  "sensitiveData": "No owner-controlled signing material, session material, or API credentials recorded"
+}

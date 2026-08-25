@@ -297,6 +297,30 @@ export interface EvaluationResponse {
   readonly csrfToken?: string;
 }
 
+export interface EvidenceGateRow {
+  readonly dimension: string;
+  readonly status: "PASS" | "BLOCKED" | "PENDING" | "NOT_AVAILABLE" | "VERIFIED";
+  readonly value: string;
+  readonly detail: string;
+}
+
+export interface EvidenceGateRecord {
+  readonly experimentId: string;
+  readonly assessment: AssessmentSummaryRecord;
+  readonly gateRows: readonly EvidenceGateRow[];
+  readonly missingEvidence: readonly string[];
+  readonly verdictReasons: readonly string[];
+  readonly nextPermittedAction: string;
+  readonly serverAuthored: true;
+}
+
+export interface EvidenceGateResponse {
+  readonly evidence: EvidenceGateRecord | null;
+  readonly state: "READY" | "EVALUATION_REQUIRED";
+  readonly message: string;
+  readonly csrfToken?: string;
+}
+
 export interface LiveShadowState {
   readonly episodeCount: number;
   readonly snapshotCount: number;
@@ -475,6 +499,14 @@ export async function runHistoricalReplay(experimentId: string): Promise<V2Envel
 
 export async function fetchLatestEvaluation(experimentId: string): Promise<V2Envelope<EvaluationResponse>> {
   const response = await fetchV2Request<EvaluationResponse>(`/api/v2/experiments/${experimentId}/evaluation/latest`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function fetchEvidenceGate(experimentId: string): Promise<V2Envelope<EvidenceGateResponse>> {
+  const response = await fetchV2Request<EvidenceGateResponse>(`/api/v2/experiments/${experimentId}/evidence`);
   if (response.data.csrfToken !== undefined) {
     storeCsrfToken(response.data.csrfToken);
   }
