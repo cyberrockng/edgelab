@@ -10,15 +10,23 @@ EdgeLab is a forward-testing, live-shadow, recent-window DreamDEX Event Contract
 
 Show the dashboard verdict first: `INSUFFICIENT_EVIDENCE`.
 
-Point out the visible reasons: minimum sample not met, PnL separated from forecast quality, and tradeability evaluated independently.
+Point out the visible reason: promotion is blocked because the strategy has not earned enough evidence. EdgeLab protected the strategy from overconfidence instead of manufacturing confidence.
 
-## 0:55-1:25 Evidence Separation
+## 0:55-1:25 Evidence Gate
 
-Show the three evidence lanes:
+Show the Evidence Gate:
 
-- Forecast: pre-outcome decisions.
+- Candidate strategy cohort enters the gate.
+- Forecast sample is blocked at `0/30`.
+- Tradeability is verified by the real DreamDEX probe.
+- Risk envelope passed with the 0.01 tUSDC cap and no open order.
+- Settlement and realized PnL remain unavailable.
+
+Then show the three separate evidence lanes:
+
+- Forecast quality: pre-outcome decisions.
 - Tradeability: submitted, terminal, and open order counts.
-- Realized PnL: unavailable unless actual fill and settlement evidence exist.
+- Realized PnL: unavailable unless an actual fill and settlement both exist.
 
 ## 1:25-2:05 DreamDEX Lifecycle Proof
 

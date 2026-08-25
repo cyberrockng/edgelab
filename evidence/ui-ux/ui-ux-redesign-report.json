@@ -1,0 +1,88 @@
+{
+  "artifact": "UIUX-REDESIGN-001",
+  "capturedAt": "2026-08-25T05:50:33Z",
+  "baseline": {
+    "commit": "c86f3e7ff3d4e69c594fda4663235f1087d70774",
+    "summary": "The original interface was technically competent but read as a status-heavy dashboard. It exposed evidence and chain proof, but the product story, decision hierarchy, Evidence Gate concept, strategy comparison, and DreamDEX lifecycle narrative were not strong enough for a first-time judge."
+  },
+  "problemsIdentified": [
+    "Product purpose was not visually dominant within the first screen.",
+    "Infrastructure metadata competed with the verdict and evidence story.",
+    "The verdict did not feel like the result of evidence dimensions passing through a deterministic gate.",
+    "INSUFFICIENT_EVIDENCE read like a raw machine state instead of a deliberate protection against overconfidence.",
+    "Forecast evidence, tradeability, settlement evidence, and realized PnL were present but not visually separated enough.",
+    "Reference A and Reference B comparison did not answer which strategy had stronger evidence and why.",
+    "DreamDEX proof was hash-heavy and did not clearly narrate approval, submitted order, no fill, post-expiry terminal event, and escrow reconciliation.",
+    "The true terminal event, OrderExpired, needed stronger emphasis so the interface did not imply a successful cancellation.",
+    "Mobile responsiveness worked mechanically but weakened the core decision story.",
+    "Technical proof links needed to remain available without dominating the main product narrative."
+  ],
+  "designDirection": {
+    "visualConcept": "A calm strategy-validation instrument built around evidence gates, not a trading exchange or generic crypto dashboard.",
+    "signatureElement": "Evidence Gate: candidate strategy input, distinct evidence dimensions, and an output verdict that blocks promotion when required evidence is missing.",
+    "informationHierarchy": [
+      "Decision verdict",
+      "Reasons for the verdict",
+      "Separate evidence dimensions",
+      "Real DreamDEX lifecycle proof",
+      "Technical proof details"
+    ],
+    "navigationModel": "Single-page workflow with anchored sections: Overview, Strategies, Evidence, DreamDEX proof, and Details.",
+    "responsiveStrategy": "Desktop keeps the decision and Evidence Gate in the initial story. Mobile preserves the same order while converting the comparison matrix and lifecycle proof into stacked, labeled proof units."
+  },
+  "implementedChanges": [
+    "Rebuilt the first viewport around the statement: Test a strategy before exposing it to testnet capital.",
+    "Added a dominant INSUFFICIENT EVIDENCE verdict panel with sample count, additional requirement, and open-order status.",
+    "Created the Evidence Gate visual structure with Forecast sample, Forecast calibration, DreamDEX tradeability, Risk envelope, Settlement evidence, and Realized PnL as separate dimensions.",
+    "Reworked strategy comparison so Reference A and Reference B are compared across observations, calibration, tradeability, risk, PnL, and promotion status without synthetic metrics.",
+    "Reframed DreamDEX proof as a lifecycle: VERIFIED approval, SUBMITTED post-only order, NO FILL, EXPIRED terminal event, and RECONCILED escrow/open-order state.",
+    "Moved transaction hashes, order ID, chain ID, SDK version, and API source into a secondary technical proof section with explorer links.",
+    "Updated E2E coverage for first impression, evidence separation, truthful OrderExpired reporting, strategy comparison, proof links, keyboard navigation, console errors, and horizontal overflow.",
+    "Updated the demo script to narrate the Evidence Gate and insufficiency-as-protection concept."
+  ],
+  "productLogicPreserved": {
+    "evidenceRules": "INSUFFICIENT EVIDENCE remains a first-class outcome when the forecast sample is incomplete or evidence classes are unavailable.",
+    "dreamdexLifecycle": "The UI reports the real terminal state as OrderExpired after the owner-approved cancel transaction landed after expiry. It does not label the lifecycle as cancelled.",
+    "humanAuthorization": "The UI presents proof of the prior human-approved lifecycle and does not introduce any autonomous write path.",
+    "noFabricatedData": "No historical books, fills, liquidity, settlements, PnL, confidence, or calibration metrics were invented.",
+    "verdictLogic": "Promotion remains blocked because the sample requirement and required evidence classes are not satisfied."
+  },
+  "screenshots": [
+    "evidence/ui-ux/redesign-desktop-initial.png",
+    "evidence/ui-ux/redesign-desktop-comparison.png",
+    "evidence/ui-ux/redesign-desktop-dreamdex-proof.png",
+    "evidence/ui-ux/redesign-mobile-initial.png",
+    "evidence/ui-ux/redesign-mobile-evidence.png"
+  ],
+  "visualQa": {
+    "desktop": {
+      "viewports": ["1440x960", "1366x768", "1280x800"],
+      "result": "PASS",
+      "notes": "Decision, value proposition, and Evidence Gate are visible early. Comparison and lifecycle proof remain readable."
+    },
+    "mobile": {
+      "viewport": "Pixel 5",
+      "result": "PASS",
+      "notes": "No horizontal overflow. Evidence Gate, verdict, comparison labels, and lifecycle semantics remain legible."
+    },
+    "accessibility": {
+      "result": "PASS",
+      "notes": "Semantic sections, accessible labels, keyboard navigation, visible focus states, and non-color status labels were preserved or strengthened."
+    },
+    "demoFlow": {
+      "result": "PASS",
+      "notes": "The narrator can move from decision to Evidence Gate, strategy comparison, DreamDEX proof, and technical evidence without relying on fabricated performance claims."
+    }
+  },
+  "localValidation": {
+    "pnpmCheck": "PASS",
+    "pnpmBuild": "PASS",
+    "pnpmTestE2e": "PASS",
+    "dockerBuild": "PASS",
+    "dockerRuntimeSmoke": "PASS",
+    "screenshotCapture": "PASS",
+    "consoleErrors": 0,
+    "horizontalOverflow": false
+  },
+  "readyForIndependentUiUxAudit": true
+}

@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T00:05:30.000Z",
-  "sourceCommit": "cd6b4fe68560d53d7a11e5313ad3e4202782a4c7",
+  "producedAt": "2026-08-25T00:37:03.000Z",
+  "sourceCommit": "c86f3e7ff3d4e69c594fda4663235f1087d70774",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 29,
+  "artifactCount": 35,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -211,6 +211,48 @@
       "path": "evidence/ship/ship-001-status.json",
       "sha256": "8dca09681a1b73817a30831bcda73df81bc807d527244e0c014cd5a49bbf863c",
       "bytes": 1148,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/redesign-desktop-comparison.png",
+      "sha256": "915fa70a4f1ed1fc3de4aee6bbd6ee54458580b329d8f56b51b9cb9e31ec7caf",
+      "bytes": 50435,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/redesign-desktop-dreamdex-proof.png",
+      "sha256": "d42206872cda580fee0e60ea7d4fd0ca5933151f764262220e019eb7aa8f4ea8",
+      "bytes": 72763,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/redesign-desktop-initial.png",
+      "sha256": "25d4a8a1a73301323e6c80351529f2de0b2d53890622ae63002992d13c28dea0",
+      "bytes": 317659,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/redesign-mobile-evidence.png",
+      "sha256": "4b8122d42d9634c70c7f4946d7c9cad7b0379abb0765e87f5deb63f9b40a8ae3",
+      "bytes": 448555,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/redesign-mobile-initial.png",
+      "sha256": "99223c1a99998ce26cac145bdfa92b60c90f44eda3f38f8c164c7f886a879bc9",
+      "bytes": 176886,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui-ux/ui-ux-redesign-report.json",
+      "sha256": "e9ade36e65a1c15f3213b20245dc9557309f89153259a245b81a14f263d3c5ee",
+      "bytes": 6006,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     }
