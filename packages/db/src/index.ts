@@ -24,6 +24,33 @@ export interface LeaseResult {
   readonly expiresAt: Date;
 }
 
+export interface ResearchSessionRecord {
+  readonly id: string;
+  readonly tokenHash: string;
+  readonly csrfHash: string;
+  readonly csrfVersion: number;
+  readonly expiresAt: Date;
+}
+
+export interface ExperimentConfigurationInput {
+  readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
+  readonly assets: readonly ("BTC" | "ETH")[];
+  readonly intervals: readonly number[];
+  readonly windowFrom?: Date | null;
+  readonly windowTo?: Date | null;
+  readonly decisionOffsetSec: number;
+  readonly riskEnvelopeId?: string | null;
+  readonly ruleVersion: string;
+  readonly config: Record<string, unknown>;
+  readonly configHash: string;
+}
+
+export interface InteractiveExperimentRecord {
+  readonly experimentId: string;
+  readonly configurationId: string;
+  readonly version: number;
+}
+
 export function createPool(config: DbConfig): pg.Pool {
   return new Pool({
     connectionString: config.connectionString,
@@ -53,7 +80,7 @@ async function readMigration(version: string): Promise<string> {
   throw lastError instanceof Error ? lastError : new Error(`Migration ${version} not found`);
 }
 
-export const migrations = ["0001_initial_schema"] as const;
+export const migrations = ["0001_initial_schema", "0002_interactive_product"] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
   const results: MigrationResult[] = [];
@@ -178,4 +205,114 @@ export async function appendAuditEvent(
     ]
   );
   return eventHash;
+}
+
+export async function createResearchSession(
+  pool: pg.Pool,
+  input: {
+    readonly tokenHash: string;
+    readonly csrfHash: string;
+    readonly expiresAt: Date;
+    readonly csrfVersion?: number;
+  }
+): Promise<ResearchSessionRecord> {
+  const result = await pool.query<{
+    id: string;
+    token_hash: string;
+    csrf_hash: string;
+    csrf_version: number;
+    expires_at: Date;
+  }>(
+    `
+      INSERT INTO research_sessions(token_hash, csrf_hash, csrf_version, expires_at)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, token_hash, csrf_hash, csrf_version, expires_at
+    `,
+    [input.tokenHash, input.csrfHash, input.csrfVersion ?? 1, input.expiresAt]
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new Error("research session was not created");
+  }
+  return {
+    id: row.id,
+    tokenHash: row.token_hash,
+    csrfHash: row.csrf_hash,
+    csrfVersion: row.csrf_version,
+    expiresAt: row.expires_at
+  };
+}
+
+export async function createInteractiveExperiment(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+    readonly name: string;
+    readonly visibility?: "PRIVATE" | "PUBLIC_PROVEN" | "SHARED_LINK";
+    readonly configuration: ExperimentConfigurationInput;
+  }
+): Promise<InteractiveExperimentRecord> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const experiment = await client.query<{ id: string }>(
+      `
+        INSERT INTO experiments(created_by_session_id, name, visibility, decision_offset_sec, status)
+        VALUES ($1, $2, $3, $4, 'DRAFT')
+        RETURNING id
+      `,
+      [
+        input.sessionId,
+        input.name,
+        input.visibility ?? "PRIVATE",
+        input.configuration.decisionOffsetSec
+      ]
+    );
+    const experimentId = experiment.rows[0]?.id;
+    if (experimentId === undefined) {
+      throw new Error("experiment was not created");
+    }
+    const configuration = await client.query<{ id: string; version: number }>(
+      `
+        INSERT INTO experiment_configuration_versions(
+          experiment_id, version, mode, assets, intervals, window_from, window_to,
+          decision_offset_sec, risk_envelope_id, rule_version, config, config_hash
+        )
+        VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+        RETURNING id, version
+      `,
+      [
+        experimentId,
+        input.configuration.mode,
+        [...input.configuration.assets],
+        [...input.configuration.intervals],
+        input.configuration.windowFrom ?? null,
+        input.configuration.windowTo ?? null,
+        input.configuration.decisionOffsetSec,
+        input.configuration.riskEnvelopeId ?? null,
+        input.configuration.ruleVersion,
+        JSON.stringify(input.configuration.config),
+        input.configuration.configHash
+      ]
+    );
+    const configurationRow = configuration.rows[0];
+    if (configurationRow === undefined) {
+      throw new Error("experiment configuration was not created");
+    }
+    await client.query("UPDATE experiments SET active_configuration_id = $1, updated_at = now() WHERE id = $2", [
+      configurationRow.id,
+      experimentId
+    ]);
+    await client.query("COMMIT");
+    return {
+      experimentId,
+      configurationId: configurationRow.id,
+      version: configurationRow.version
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

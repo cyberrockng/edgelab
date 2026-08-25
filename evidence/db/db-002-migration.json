@@ -1,0 +1,64 @@
+{
+  "task": "DB-002",
+  "title": "Interactive product database migration verification",
+  "capturedAt": "2026-08-25T10:14:31.000Z",
+  "producer": "Codex execution agent",
+  "redaction": "schema names, migration hashes, and test-observed row counts only",
+  "migrations": {
+    "0001_initial_schema": {
+      "sha256": "b252b30e129b3c3082feb71508f2f8c01e6a12a9ab30503e9264e84cee435724",
+      "edited": false
+    },
+    "0002_interactive_product": {
+      "sha256": "3a69cfab26acbc489a8efb618a6234460e0380f16dec6c35a1feb341b3e6be2d",
+      "type": "additive interactive/replay migration"
+    }
+  },
+  "verifiedBy": {
+    "command": "pnpm check",
+    "testFile": "tests/integration/db.test.ts",
+    "totalRepositoryTests": 45,
+    "status": "PASS"
+  },
+  "emptySchemaMigration": {
+    "status": "PASS",
+    "observedBehavior": "runMigrations applies 0001 and 0002, then reruns both idempotently without hash drift."
+  },
+  "legacySchemaMigration": {
+    "status": "PASS",
+    "source": "0001-only schema with one legacy experiment row",
+    "postMigration": {
+      "configurationVersions": 1,
+      "policyJoinRows": 2,
+      "activeConfigurationBackfilled": true,
+      "configurationMutationRejected": true
+    }
+  },
+  "freshInteractiveWrite": {
+    "status": "PASS",
+    "researchSession": "created from token_hash/csrf_hash only",
+    "experiment": {
+      "ownerAddress": null,
+      "createdBySession": true,
+      "activeConfigurationVersion": 1,
+      "mode": "HISTORICAL_REPLAY",
+      "assets": ["BTC"]
+    }
+  },
+  "schemaCapabilities": [
+    "evidence_plane enum separates MAINNET_HISTORICAL, SHANNON_FORWARD, and SHANNON_EXECUTION",
+    "research_sessions stores token and CSRF hashes only",
+    "experiments support session ownership without requiring a wallet identity",
+    "experiment_configuration_versions are append-only",
+    "experiment_policy_versions preserve strategy association per configuration",
+    "replay_runs and replay_decisions persist bounded replay provenance and decisions",
+    "metric_runs carry evidence_plane, replay_run_id, promotion_scope, and provenance",
+    "comparison_sets and comparison_items persist user-selected assessments without computed vanity scores",
+    "historical_source_manifests persist source digests and row counts, not bulk raw source rows"
+  ],
+  "securityNotes": [
+    "No raw session token, CSRF value, connection string, or credential is stored in evidence.",
+    "No mainnet transaction capability is introduced by this migration.",
+    "Raw historical owner fields are not introduced into the EdgeLab database model."
+  ]
+}

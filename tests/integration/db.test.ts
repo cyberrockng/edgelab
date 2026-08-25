@@ -1,6 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { acquireLease, appendAuditEvent, createPool, runMigrations } from "@edgelab/db";
+import {
+  acquireLease,
+  appendAuditEvent,
+  createInteractiveExperiment,
+  createPool,
+  createResearchSession,
+  runMigrations
+} from "@edgelab/db";
 
 const connectionString =
   process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
@@ -10,6 +19,16 @@ const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
 async function resetPublicSchema(): Promise<void> {
   await pool.query("DROP SCHEMA public CASCADE");
   await pool.query("CREATE SCHEMA public");
+}
+
+async function applyInitialMigrationOnly(): Promise<void> {
+  const sql = await readFile(join(process.cwd(), "packages/db/migrations/0001_initial_schema.sql"), "utf8");
+  const sha256 = createHash("sha256").update(sql).digest("hex");
+  await pool.query(sql);
+  await pool.query(
+    "INSERT INTO schema_migrations(version, sha256) VALUES ('0001_initial_schema', $1)",
+    [sha256]
+  );
 }
 
 async function seedExperiment(): Promise<{
@@ -92,9 +111,11 @@ describe("DB-001 schema and recovery controls", () => {
 
   it("runs migrations idempotently and records hashes", async () => {
     const rerun = await runMigrations(pool);
-    expect(rerun).toHaveLength(1);
+    expect(rerun).toHaveLength(2);
     expect(rerun[0]?.applied).toBe(false);
     expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[1]?.applied).toBe(false);
+    expect(rerun[1]?.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("enforces chain and wallet identity constraints", async () => {
@@ -185,5 +206,100 @@ describe("DB-001 schema and recovery controls", () => {
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     expect(second).toMatch(/^[a-f0-9]{64}$/);
     expect(rows.rows[0]?.previous_hash).toBe(first);
+  });
+
+  it("backfills legacy experiments into immutable configuration versions", async () => {
+    await resetPublicSchema();
+    await applyInitialMigrationOnly();
+    const seeded = await seedExperiment();
+    const migrated = await runMigrations(pool);
+    expect(migrated[0]?.applied).toBe(false);
+    expect(migrated[1]?.applied).toBe(true);
+
+    const backfill = await pool.query<{
+      active_configuration_id: string | null;
+      configuration_count: string;
+      policy_count: string;
+    }>(
+      `
+        SELECT
+          experiments.active_configuration_id,
+          count(DISTINCT experiment_configuration_versions.id) AS configuration_count,
+          count(DISTINCT experiment_policy_versions.id) AS policy_count
+        FROM experiments
+        LEFT JOIN experiment_configuration_versions
+          ON experiment_configuration_versions.experiment_id = experiments.id
+        LEFT JOIN experiment_policy_versions
+          ON experiment_policy_versions.configuration_id = experiment_configuration_versions.id
+        WHERE experiments.id = $1
+        GROUP BY experiments.id
+      `,
+      [seeded.experimentId]
+    );
+    expect(backfill.rows[0]?.active_configuration_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    );
+    expect(backfill.rows[0]?.configuration_count).toBe("1");
+    expect(backfill.rows[0]?.policy_count).toBe("2");
+    await expect(
+      pool.query("UPDATE experiment_configuration_versions SET rule_version = 'mutated'")
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it("persists session-owned experiments without requiring a wallet identity", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const session = await createResearchSession(pool, {
+      tokenHash: "a".repeat(64),
+      csrfHash: "b".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const created = await createInteractiveExperiment(pool, {
+      sessionId: session.id,
+      name: "BTC hourly historical replay",
+      configuration: {
+        mode: "HISTORICAL_REPLAY",
+        assets: ["BTC"],
+        intervals: [3600],
+        decisionOffsetSec: 0,
+        ruleVersion: "interactive-2.0.0",
+        config: {
+          sourcePlane: "MAINNET_HISTORICAL",
+          bookReconstruction: "UNVERIFIED_FAIL_CLOSED"
+        },
+        configHash: "c".repeat(64)
+      }
+    });
+
+    const rows = await pool.query<{
+      name: string;
+      owner_address: string | null;
+      created_by_session_id: string;
+      active_configuration_id: string;
+      mode: string;
+      assets: string[];
+    }>(
+      `
+        SELECT
+          experiments.name,
+          experiments.owner_address,
+          experiments.created_by_session_id,
+          experiments.active_configuration_id,
+          experiment_configuration_versions.mode,
+          experiment_configuration_versions.assets
+        FROM experiments
+        JOIN experiment_configuration_versions
+          ON experiment_configuration_versions.id = experiments.active_configuration_id
+        WHERE experiments.id = $1
+      `,
+      [created.experimentId]
+    );
+    expect(created.version).toBe(1);
+    expect(rows.rows[0]?.name).toBe("BTC hourly historical replay");
+    expect(rows.rows[0]?.owner_address).toBeNull();
+    expect(rows.rows[0]?.created_by_session_id).toBe(session.id);
+    expect(rows.rows[0]?.active_configuration_id).toBe(created.configurationId);
+    expect(rows.rows[0]?.mode).toBe("HISTORICAL_REPLAY");
+    expect(rows.rows[0]?.assets).toEqual(["BTC"]);
   });
 });
