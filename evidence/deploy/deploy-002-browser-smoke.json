@@ -1,0 +1,395 @@
+{
+  "capturedAt": "2026-08-25T14:19:26.158Z",
+  "publicUrl": "https://api-production-bd986.up.railway.app",
+  "deployedCommit": "a3fb78dd5356e3f802789e11a329ded4e19ea807",
+  "deploymentId": "8850afb4-4255-4e1f-83b4-3f9c3e356b77",
+  "imageDigestShort": "sha256:e4bf6865...5f7565b",
+  "experimentId": "fb21b07f-ea66-4671-8657-cc964dba69eb",
+  "marketIdCompact": "0x00000000...001bf5",
+  "expectedFailureStates": [
+    {
+      "routeName": "market-detail",
+      "status": 409,
+      "method": "GET",
+      "kind": "EXPECTED_BOOK_RECONSTRUCTION_UNAVAILABLE"
+    },
+    {
+      "routeName": "market-detail",
+      "status": 409,
+      "method": "GET",
+      "kind": "EXPECTED_BOOK_RECONSTRUCTION_UNAVAILABLE"
+    },
+    {
+      "routeName": "market-detail",
+      "status": 409,
+      "method": "GET",
+      "kind": "EXPECTED_BOOK_RECONSTRUCTION_UNAVAILABLE"
+    },
+    {
+      "routeName": "market-detail",
+      "status": 409,
+      "method": "GET",
+      "kind": "EXPECTED_BOOK_RECONSTRUCTION_UNAVAILABLE"
+    }
+  ],
+  "unexpectedBadResponses": [],
+  "blockingConsoleErrors": [],
+  "requestFailures": [],
+  "failed": [],
+  "screenshots": [
+    "evidence/deploy/deploy-002-homepage.png",
+    "evidence/deploy/deploy-002-markets.png",
+    "evidence/deploy/deploy-002-market-detail.png",
+    "evidence/deploy/deploy-002-lab.png",
+    "evidence/deploy/deploy-002-proven-experiment.png",
+    "evidence/deploy/deploy-002-evidence-gate.png",
+    "evidence/deploy/deploy-002-proof.png",
+    "evidence/deploy/deploy-002-mobile.png"
+  ],
+  "runs": [
+    {
+      "viewportName": "desktop-1440",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "results": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "desktop-1366",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "results": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "desktop-1280",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "results": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "mobile-pixel5",
+      "viewport": {
+        "width": 393,
+        "height": 727
+      },
+      "results": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "root": true,
+          "hasContent": true,
+          "horizontalOverflow": false
+        }
+      ]
+    }
+  ]
+}

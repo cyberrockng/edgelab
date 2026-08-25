@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T13:41:59.000Z",
-  "sourceCommit": "074759174daefcf0980487ca4384ca3f5627dbe7",
+  "producedAt": "2026-08-25T14:10:12.000Z",
+  "sourceCommit": "a3fb78dd5356e3f802789e11a329ded4e19ea807",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 67,
+  "artifactCount": 77,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -99,6 +99,76 @@
       "path": "evidence/deploy/deploy-001-report.json",
       "sha256": "628a779a71f405c658bf0456a2e6e6db4aa6e9414163cf164593017c5fe2ec40",
       "bytes": 2279,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-browser-smoke.json",
+      "sha256": "ae70785ee0a25599a3ae9febf492345ec038b3d2d0da477b576f61c748b81fa1",
+      "bytes": 9907,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-evidence-gate.png",
+      "sha256": "d212f9d81773360ca24d8fc272fe6081cbaffbc0852b046b34640980a604f8e1",
+      "bytes": 197152,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-homepage.png",
+      "sha256": "59bbaec9d293da9305ed8960e1ae9a160cf31f81d2a832753a96b719361fc5fa",
+      "bytes": 407317,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-lab.png",
+      "sha256": "18a1235c3d4c6d43f547ccf78de4cf2d8d7206260517c3f8d962df585c2d31db",
+      "bytes": 169272,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-market-detail.png",
+      "sha256": "0e72ae9efd95cddabc1b5ed9402701a01ec937d77f2b5e776acef74ddd4d7843",
+      "bytes": 276749,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-markets.png",
+      "sha256": "2d62102917f3d74be4b43058a22215b8191b09e5b9339077dfbcbf7c0761d099",
+      "bytes": 262535,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-mobile.png",
+      "sha256": "7ceb45b4680db1ccd587e49063f3b145040d7e239e58f073b000a6330d9cea9c",
+      "bytes": 303397,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-proof.png",
+      "sha256": "790618dd6764589f384df8d5a1fd38fa19a86f12a718db8b59e50dfd2fd671d9",
+      "bytes": 174811,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-proven-experiment.png",
+      "sha256": "2dc68cbd540942fd2ebfbe66641d9a54d9f303f816c8d102d47869da901c3537",
+      "bytes": 162739,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deploy/deploy-002-report.json",
+      "sha256": "ac4dea4120683c68de9f926cc8bc626a6d0e12c1fd3ead15e27ce91ddc2011ba",
+      "bytes": 10268,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },

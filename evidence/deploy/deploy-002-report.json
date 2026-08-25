@@ -1,0 +1,379 @@
+{
+  "evidenceId": "DEPLOY-002-PRODUCTION",
+  "task": "DEPLOY-002",
+  "capturedAt": "2026-08-25T14:20:00.583Z",
+  "publicUrl": "https://api-production-bd986.up.railway.app/",
+  "provider": "Railway",
+  "service": "api",
+  "environment": "production",
+  "deployment": {
+    "deploymentId": "8850afb4-4255-4e1f-83b4-3f9c3e356b77",
+    "status": "SUCCESS",
+    "deployedCommit": "a3fb78dd5356e3f802789e11a329ded4e19ea807",
+    "imageDigestShort": "sha256:e4bf6865...5f7565b",
+    "build": "PASS",
+    "startup": "PASS",
+    "database": "PASS"
+  },
+  "health": {
+    "endpoint": "/healthz",
+    "status": 200,
+    "ok": true,
+    "buildCommit": "a3fb78dd5356e3f802789e11a329ded4e19ea807"
+  },
+  "readiness": {
+    "endpoint": "/readyz",
+    "status": 200,
+    "ok": true,
+    "database": "ok",
+    "chainId": 50312,
+    "marketsSdkVersion": "0.28.1"
+  },
+  "routeSmoke": [
+    {
+      "viewportName": "desktop-1440",
+      "routes": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "desktop-1366",
+      "routes": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "desktop-1280",
+      "routes": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        }
+      ]
+    },
+    {
+      "viewportName": "mobile-pixel5",
+      "routes": [
+        {
+          "routeName": "homepage",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "markets",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "market-detail",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "lab",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "experiment-workspace",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-experiment",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "compare",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proven-evidence-gate",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "proof",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        },
+        {
+          "routeName": "how-it-works",
+          "status": 200,
+          "rendered": true,
+          "horizontalOverflow": false
+        }
+      ]
+    }
+  ],
+  "interactionSmoke": {
+    "sessionCreated": true,
+    "marketBrowsing": "PASS",
+    "marketDetail": "PASS",
+    "experimentCreation": "PASS",
+    "persistenceReload": "PASS",
+    "replay": "PASS",
+    "evaluation": "PASS",
+    "evidenceGate": "PASS",
+    "provenExperiment": "PASS",
+    "executionProof": "PASS",
+    "resultVerdictObserved": "INSUFFICIENT_EVIDENCE",
+    "pnlStatusObserved": "NOT_AVAILABLE",
+    "proofTerminalEventObserved": "OrderExpired",
+    "proofFillStatusObserved": "NO_FILL"
+  },
+  "networkProvenance": {
+    "mainnet5031": "READ_ONLY_HISTORICAL_RESEARCH",
+    "shannon50312": "LIVE_FORWARD_AND_HUMAN_AUTHORIZED_TESTNET_EXECUTION",
+    "mainnetWrites": "FORBIDDEN",
+    "autonomousBlockchainWrites": "FORBIDDEN"
+  },
+  "expectedFailureStates": {
+    "reconstructedBook": {
+      "status": "FAIL_CLOSED_SOURCE_INCOMPLETE",
+      "observedResponses": 4,
+      "rationale": "Native historical book snapshots are not claimed; reconstructed book remains unavailable until semantics are verified."
+    }
+  },
+  "security": {
+    "secretsInFrontendBundle": "NOT_OBSERVED_BY_REPOSITORY_SECRET_SCAN",
+    "walletSecretMaterial": "NOT_PRESENT",
+    "publicEvidenceSanitized": true,
+    "csrfProtectedApplicationWrites": "PASS",
+    "cookieSession": "HTTP_ONLY_SERVER_SESSION_USED_FOR_RESEARCH_WORKSPACE"
+  },
+  "browserQa": {
+    "desktop1440": "PASS",
+    "desktop1366": "PASS",
+    "desktop1280": "PASS",
+    "mobilePixel5": "PASS",
+    "unexpectedBadResponses": 0,
+    "blockingConsoleErrors": 0,
+    "requestFailures": 0
+  },
+  "screenshots": [
+    "evidence/deploy/deploy-002-homepage.png",
+    "evidence/deploy/deploy-002-markets.png",
+    "evidence/deploy/deploy-002-market-detail.png",
+    "evidence/deploy/deploy-002-lab.png",
+    "evidence/deploy/deploy-002-proven-experiment.png",
+    "evidence/deploy/deploy-002-evidence-gate.png",
+    "evidence/deploy/deploy-002-proof.png",
+    "evidence/deploy/deploy-002-mobile.png"
+  ],
+  "knownLimitations": [
+    "Historical reconstructed-book functionality remains unavailable/fail-closed because BOOK-001 verification has not passed.",
+    "The public Proven Experiment verdict is truthfully INSUFFICIENT_EVIDENCE for the captured evidence artifact.",
+    "No final narrated video or official hackathon submission has been performed; System 3 independent audit remains next."
+  ],
+  "redaction": "No sensitive credential material, Railway secrets, database credentials, or session tokens are included."
+}
