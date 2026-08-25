@@ -32,6 +32,7 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps ./apps
 COPY --from=build /app/packages ./packages
+COPY --from=build /app/evidence ./evidence
 USER edgelab
 EXPOSE 3000
 CMD ["node", "apps/server/dist/index.js"]
