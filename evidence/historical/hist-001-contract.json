@@ -1,0 +1,163 @@
+{
+  "task": "HIST-001",
+  "title": "DreamDEX historical SDK and indexer contract verification",
+  "capturedAt": "2026-08-25T09:03:27.669Z",
+  "producer": "Codex execution agent",
+  "redaction": "public SDK/indexer method, field, and bounded sample metadata only",
+  "package": {
+    "name": "@somnia-chain/markets-sdk",
+    "version": "0.28.1",
+    "license": "MIT",
+    "repository": "git+https://github.com/somnia-chain/somnia-markets.git",
+    "repositoryDirectory": "packages/sdk",
+    "installedSourceInspected": true
+  },
+  "network": {
+    "plane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "rpcUrl": "https://api.infra.mainnet.somnia.network",
+    "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
+    "writePolicy": "read-only historical research; no EdgeLab mainnet transaction path"
+  },
+  "sdkMethodsVerified": {
+    "countBinaryMarkets": "function",
+    "listPastBinaryMarkets": "function",
+    "getMarketResolution": "function",
+    "getMarketStatusHistory": "function",
+    "getOpeningPrices": "function",
+    "getCandles": "function",
+    "getFills": "function",
+    "getOrders": "function",
+    "getBinaryPositionPnL": "function"
+  },
+  "boundedMainnetProbe": {
+    "countPastBinaryMarkets": 7104,
+    "countRelation": "exact under current public SDK cap",
+    "pastFinalizedPageSize": 12,
+    "latestSample": {
+      "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bb8",
+      "status": "Finalized",
+      "expiry": "1787648400"
+    },
+    "tradedSample": {
+      "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bb7",
+      "poolAddress": "0xa475e7cff65bd47c3a0783d071e7075e035048a8",
+      "asset": "BTC",
+      "intervalSec": 3600,
+      "tradeCount": 30
+    },
+    "earliestSample": {
+      "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "expiry": "1784645100",
+      "clobStatus": "Finalized",
+      "finalized": true,
+      "asset": "BTC",
+      "intervalSec": 412,
+      "tradeCount": 0
+    }
+  },
+  "historicalDataVerified": {
+    "markets": {
+      "status": "VERIFIED",
+      "notes": "SDK listPastBinaryMarkets returns finalized/resolved market rows and stable market IDs."
+    },
+    "resolutions": {
+      "status": "VERIFIED",
+      "notes": "SDK getMarketResolution returned opening and closing oracle answer references for a traded finalized market."
+    },
+    "lifecycle": {
+      "status": "VERIFIED",
+      "notes": "SDK getMarketStatusHistory returned lifecycle history rows for the sample market."
+    },
+    "candles": {
+      "status": "VERIFIED",
+      "supportedIntervalsSec": [60, 300, 900, 3600, 14400, 86400],
+      "notes": "SDK getCandles returned bounded rows with OHLC, volume, trade count, market, pool, and interval fields."
+    },
+    "fills": {
+      "status": "VERIFIED",
+      "notes": "SDK getFills returned pool-scoped rows; raw indexer supports market_id bounded queries."
+    },
+    "orders": {
+      "status": "VERIFIED",
+      "notes": "SDK getOrders is owner-scoped; raw indexer supports bounded market_id order queries with lifecycle and quantity fields."
+    },
+    "bookReconstruction": {
+      "status": "UNVERIFIED_FAIL_CLOSED",
+      "notes": "No native stored historical book snapshot surface was observed. Reconstruction remains disabled until order/fill lifecycle semantics are separately verified."
+    }
+  },
+  "rawIndexerFieldsVerified": {
+    "Market": [
+      "market_id",
+      "asset",
+      "intervalSec",
+      "tradingStart",
+      "expiry",
+      "poolAddress",
+      "clobStatus",
+      "finalized",
+      "winningOutcome",
+      "tradeCount"
+    ],
+    "Order": [
+      "market_id",
+      "side",
+      "isBid",
+      "price",
+      "fullQuantity",
+      "filledQuantity",
+      "quantityRemaining",
+      "status",
+      "rested",
+      "expireTimestampNs",
+      "placedAtBlock",
+      "placedAtTimestamp",
+      "lastUpdatedAtBlock",
+      "lastUpdatedAtTimestamp",
+      "placedTxHash",
+      "orderId",
+      "orderIdRaw"
+    ],
+    "Fill": [
+      "market_id",
+      "pool",
+      "fillPrice",
+      "quantity",
+      "quoteQuantity",
+      "kind",
+      "txHash",
+      "blockNumber",
+      "logIndex",
+      "makerOrderId",
+      "makerRemainingQuantity",
+      "makerSide",
+      "takerOrderId",
+      "takerRemainingQuantity",
+      "takerSide",
+      "takerIsBid",
+      "timestamp"
+    ],
+    "Candle": [
+      "bucketStart",
+      "openPrice",
+      "high",
+      "low",
+      "closePrice",
+      "baseVolume",
+      "quoteVolume",
+      "tradeCount",
+      "intervalSeconds",
+      "market_id",
+      "pool"
+    ]
+  },
+  "implementationImplications": [
+    "Use Somnia mainnet chain 5031 only for read-only historical research.",
+    "Use server-side pagination and bounded limits for orders, fills, and candles.",
+    "Do not expose raw account owner fields in judge-facing historical evidence unless a future requirement explicitly justifies it.",
+    "Treat raw Market.clobStatus/finalized as the raw status source; do not depend on a non-existent raw Market.status field.",
+    "Keep reconstructed historical resting-book functionality unavailable until BOOK-001 passes."
+  ],
+  "probeDigestSha256": "1ecce537161ec6e2c3fe4f9d78088fd3f9e87789a72f486dace22915bf92be55"
+}

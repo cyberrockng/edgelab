@@ -6,6 +6,7 @@ import {
 } from "@somnia-chain/markets-sdk";
 import {
   DREAMDEX_MARKETS_SDK_VERSION,
+  SOMNIA_MAINNET_CHAIN_ID,
   SOMNIA_SHANNON_CHAIN_ID,
   type EvidenceClass
 } from "@edgelab/domain";
@@ -19,10 +20,148 @@ export interface DreamDexReadConfig {
   readonly sdkVersion: string;
 }
 
+export interface MainnetHistoricalDreamDexConfig {
+  readonly rpcUrl: string;
+  readonly indexerUrl: string;
+  readonly chainId: number;
+  readonly sdkVersion: string;
+}
+
 export interface DreamDexBookLevel {
   readonly priceRaw: string;
   readonly quantityRaw: string;
 }
+
+export type HistoricalBookReconstructionCapability = "UNVERIFIED_FAIL_CLOSED" | "VERIFIED_BLOCK_LEVEL";
+
+export const DREAMDEX_MAINNET_INDEXER_URL = "https://prd.smk.somnia.host/v1/graphql" as const;
+export const SOMNIA_MAINNET_RPC_URL = "https://api.infra.mainnet.somnia.network" as const;
+export const HISTORICAL_GRAPHQL_QUERY_VERSION = "edgelab-mainnet-history-v1" as const;
+export const HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY =
+  "UNVERIFIED_FAIL_CLOSED" satisfies HistoricalBookReconstructionCapability;
+export const HISTORICAL_CANDLE_INTERVAL_SECONDS = [
+  60,
+  300,
+  900,
+  3600,
+  14400,
+  86400
+] as const;
+
+export const HISTORICAL_MARKET_ORDERS_QUERY = `query EdgeLabHistoricalOrders($marketId: String!, $limit: Int!, $offset: Int!) {
+  Order(
+    where: { market_id: { _eq: $marketId } }
+    order_by: [{ placedAtBlock: asc }, { lastUpdatedAtBlock: asc }, { id: asc }]
+    limit: $limit
+    offset: $offset
+  ) {
+    id
+    orderId
+    market_id
+    side
+    isBid
+    price
+    fullQuantity
+    filledQuantity
+    quantityRemaining
+    status
+    rested
+    expireTimestampNs
+    placedAtBlock
+    placedAtTimestamp
+    lastUpdatedAtBlock
+    lastUpdatedAtTimestamp
+    placedTxHash
+  }
+}`;
+
+export const HISTORICAL_MARKET_FILLS_QUERY = `query EdgeLabHistoricalFills($marketId: String!, $limit: Int!, $offset: Int!) {
+  Fill(
+    where: { market_id: { _eq: $marketId } }
+    order_by: [{ blockNumber: asc }, { logIndex: asc }, { id: asc }]
+    limit: $limit
+    offset: $offset
+  ) {
+    id
+    market_id
+    pool
+    fillPrice
+    quantity
+    quoteQuantity
+    kind
+    makerOrderId
+    makerRemainingQuantity
+    makerSide
+    takerOrderId
+    takerRemainingQuantity
+    takerSide
+    takerIsBid
+    timestamp
+    blockNumber
+    logIndex
+    txHash
+  }
+}`;
+
+export const historicalDreamDexSourceContract = {
+  version: HISTORICAL_GRAPHQL_QUERY_VERSION,
+  network: {
+    label: "Somnia Mainnet historical research",
+    chainId: SOMNIA_MAINNET_CHAIN_ID,
+    rpcUrl: SOMNIA_MAINNET_RPC_URL,
+    indexerUrl: DREAMDEX_MAINNET_INDEXER_URL,
+    writePolicy: "read-only-no-mainnet-signer"
+  },
+  sdk: {
+    packageName: "@somnia-chain/markets-sdk",
+    requiredVersion: DREAMDEX_MARKETS_SDK_VERSION,
+    requiredMethods: [
+      "countBinaryMarkets",
+      "listPastBinaryMarkets",
+      "getMarketResolution",
+      "getMarketStatusHistory",
+      "getOpeningPrices",
+      "getCandles",
+      "getFills",
+      "getOrders",
+      "getBinaryPositionPnL"
+    ]
+  },
+  indexerFields: {
+    order: [
+      "side",
+      "price",
+      "fullQuantity",
+      "filledQuantity",
+      "quantityRemaining",
+      "placedAtBlock",
+      "lastUpdatedAtBlock"
+    ],
+    fill: [
+      "fillPrice",
+      "quantity",
+      "kind",
+      "txHash",
+      "blockNumber",
+      "logIndex",
+      "makerOrderId",
+      "takerOrderId",
+      "makerRemainingQuantity",
+      "takerRemainingQuantity"
+    ],
+    candle: [
+      "openPrice",
+      "high",
+      "low",
+      "closePrice",
+      "baseVolume",
+      "quoteVolume",
+      "tradeCount"
+    ]
+  },
+  candleIntervals: HISTORICAL_CANDLE_INTERVAL_SECONDS,
+  bookReconstructionCapability: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+} as const;
 
 export interface DreamDexMarketEvidence {
   readonly stableMarketId: string;
@@ -107,9 +246,37 @@ export const somniaShannonTestnet = defineChain({
   testnet: true
 });
 
+export const somniaMainnetReadOnly = defineChain({
+  id: SOMNIA_MAINNET_CHAIN_ID,
+  name: "Somnia Mainnet",
+  nativeCurrency: {
+    name: "Somnia",
+    symbol: "SOMI",
+    decimals: 18
+  },
+  rpcUrls: {
+    default: {
+      http: [SOMNIA_MAINNET_RPC_URL]
+    }
+  },
+  testnet: false
+});
+
 export function validateDreamDexReadConfig(config: DreamDexReadConfig): DreamDexReadConfig {
   if (config.chainId !== SOMNIA_SHANNON_CHAIN_ID) {
     throw new Error(`DreamDEX reads must target Somnia Shannon chain ${String(SOMNIA_SHANNON_CHAIN_ID)}`);
+  }
+  if (config.sdkVersion !== DREAMDEX_MARKETS_SDK_VERSION) {
+    throw new Error(`DreamDEX SDK must be pinned to ${DREAMDEX_MARKETS_SDK_VERSION}`);
+  }
+  return config;
+}
+
+export function validateMainnetHistoricalDreamDexConfig(
+  config: MainnetHistoricalDreamDexConfig
+): MainnetHistoricalDreamDexConfig {
+  if (config.chainId !== SOMNIA_MAINNET_CHAIN_ID) {
+    throw new Error(`DreamDEX historical reads must target Somnia mainnet chain ${String(SOMNIA_MAINNET_CHAIN_ID)}`);
   }
   if (config.sdkVersion !== DREAMDEX_MARKETS_SDK_VERSION) {
     throw new Error(`DreamDEX SDK must be pinned to ${DREAMDEX_MARKETS_SDK_VERSION}`);
@@ -292,6 +459,8 @@ export async function captureMarketSnapshot(
 
 export const dreamDexBoundaries = {
   writes: "browser-wallet-human-gated-only",
-  historicalReplay: "forbidden",
-  fabricatedFills: "forbidden"
+  mainnetHistoricalWrites: "forbidden",
+  historicalReplay: "allowed-only-from-authentic-provenance-labeled-history",
+  fabricatedFills: "forbidden",
+  bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
 } as const;

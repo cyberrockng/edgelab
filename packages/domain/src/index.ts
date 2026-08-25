@@ -1,15 +1,25 @@
 import { z } from "zod";
 
 export const SOMNIA_SHANNON_CHAIN_ID = 50312 as const;
+export const SOMNIA_MAINNET_CHAIN_ID = 5031 as const;
 export const DREAMDEX_MARKETS_SDK_VERSION = "0.28.1" as const;
 
 export const EvidenceClassSchema = z.enum([
   "LIVE",
   "CAPTURED",
   "MOCK",
-  "SIMULATED_FROM_CAPTURED_BOOK"
+  "SIMULATED_FROM_CAPTURED_BOOK",
+  "RECONSTRUCTED_FROM_AUTHENTIC_LOGS",
+  "MODELED"
 ]);
 export type EvidenceClass = z.infer<typeof EvidenceClassSchema>;
+
+export const EvidencePlaneSchema = z.enum([
+  "MAINNET_HISTORICAL",
+  "SHANNON_FORWARD",
+  "SHANNON_EXECUTION"
+]);
+export type EvidencePlane = z.infer<typeof EvidencePlaneSchema>;
 
 export const VerdictSchema = z.enum([
   "PROMOTE",
