@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T09:55:04.000Z",
-  "sourceCommit": "a753c6100dec95555a571831e5a1628371e33fa0",
+  "producedAt": "2026-08-25T10:08:00.000Z",
+  "sourceCommit": "dbd55e68b001cb41dc6769e83896d2fc6571d83f",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 45,
+  "artifactCount": 46,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -169,6 +169,13 @@
       "path": "evidence/historical/hist-002-adapter.json",
       "sha256": "c80dd1d360d6024aa8e0256871f9182ec07f7030a548bd30279150bfbf842292",
       "bytes": 3661,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/historical/hist-003-api.json",
+      "sha256": "1cecbd10d2eb9cac2a260e0e8c68c6fa00a5112635968498964bd11286729d79",
+      "bytes": 2856,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },

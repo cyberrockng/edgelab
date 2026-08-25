@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   DREAMDEX_MARKETS_SDK_VERSION,
+  SOMNIA_MAINNET_CHAIN_ID,
   SOMNIA_SHANNON_CHAIN_ID
 } from "@edgelab/domain";
 
@@ -23,6 +24,12 @@ export const RuntimeConfigSchema = z.object({
   SOMNIA_RPC_URL: z.url(),
   SOMNIA_WS_RPC_URL: z.url(),
   DREAMDEX_INDEXER_URL: z.url(),
+  SOMNIA_MAINNET_CHAIN_ID: z.coerce
+    .number()
+    .refine((value) => value === SOMNIA_MAINNET_CHAIN_ID)
+    .default(SOMNIA_MAINNET_CHAIN_ID),
+  SOMNIA_MAINNET_RPC_URL: z.url().default("https://api.infra.mainnet.somnia.network"),
+  DREAMDEX_MAINNET_INDEXER_URL: z.url().default("https://prd.smk.somnia.host/v1/graphql"),
   MARKETS_SDK_VERSION: z.literal(DREAMDEX_MARKETS_SDK_VERSION),
   WORKER_ENABLED: z
     .enum(["true", "false"])

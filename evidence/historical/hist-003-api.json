@@ -1,0 +1,67 @@
+{
+  "task": "HIST-003",
+  "title": "Bounded historical HTTP API exposure",
+  "capturedAt": "2026-08-25T10:15:44.194Z",
+  "producer": "Codex execution agent",
+  "redaction": "route contracts, public network labels, sanitized mock response assertions, and test counts only",
+  "implementation": {
+    "serverFile": "apps/server/src/app.ts",
+    "configFile": "packages/config/src/index.ts",
+    "testFile": "tests/integration/api.test.ts",
+    "apiVersion": "v2",
+    "successEnvelope": "{ data, meta }",
+    "failureEnvelope": "{ error: { code, message, retryable, correlationId, details? } }"
+  },
+  "publicReadRoutes": {
+    "GET /api/v2/capabilities": "implemented",
+    "GET /api/v2/policies": "implemented",
+    "GET /api/v2/mainnet/history/markets": "implemented with allowlisted filters and bounded pagination",
+    "GET /api/v2/mainnet/history/markets/count": "implemented with EXACT/AT_LEAST relation",
+    "GET /api/v2/mainnet/history/markets/:marketId": "implemented",
+    "GET /api/v2/mainnet/history/markets/:marketId/resolution": "implemented as display-only, not policy input",
+    "GET /api/v2/mainnet/history/markets/:marketId/status-history": "implemented",
+    "GET /api/v2/mainnet/history/markets/:marketId/candles": "implemented with supported interval/window bounds",
+    "GET /api/v2/mainnet/history/markets/:marketId/orders": "implemented with server-only bounded market_id query",
+    "GET /api/v2/mainnet/history/markets/:marketId/fills": "implemented with server-only bounded market_id query",
+    "GET /api/v2/mainnet/history/markets/:marketId/reconstructed-book": "implemented as 409 capability_unverified",
+    "GET /api/v2/shannon/markets/live": "implemented with Shannon forward provenance"
+  },
+  "boundaries": {
+    "mainnetPlane": "MAINNET_HISTORICAL",
+    "mainnetChainId": 5031,
+    "mainnetWritePolicy": "read-only-no-mainnet-signer",
+    "shannonForwardChainId": 50312,
+    "browserGraphQlProxy": false,
+    "ownerFieldsExposed": false,
+    "historicalBookReconstruction": "UNVERIFIED_FAIL_CLOSED"
+  },
+  "acceptanceChecks": {
+    "v2Envelope": "PASS",
+    "queryValidation": "PASS",
+    "limitBounds": "PASS",
+    "marketIdValidation": "PASS",
+    "sourceProvenance": "PASS",
+    "independentSubresourceFailureHandling": "PASS",
+    "bookReconstructionFailClosed": "PASS",
+    "mainnetSignerAbsent": "PASS"
+  },
+  "tests": {
+    "pnpm check": "PASS - 59 tests",
+    "pnpm build": "PASS",
+    "apiIntegrationCoverage": [
+      "capabilities and policy metadata",
+      "historical count and market pages",
+      "invalid historical page bounds",
+      "market detail",
+      "resolution",
+      "status history",
+      "candles",
+      "orders",
+      "fills",
+      "reconstructed book fail-closed",
+      "Shannon live forward route"
+    ],
+    "pnpm secret:scan": "PASS",
+    "pnpm evidence:manifest": "PASS"
+  }
+}

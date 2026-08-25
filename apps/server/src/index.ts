@@ -1,6 +1,6 @@
 import { loadConfig } from "@edgelab/config";
 import { createPool, runMigrations } from "@edgelab/db";
-import { createDreamDexSdkClient } from "@edgelab/dreamdex";
+import { createDreamDexSdkClient, createMainnetHistoricalDreamDexSdkClient } from "@edgelab/dreamdex";
 import { buildApp } from "./app.js";
 
 const config = loadConfig();
@@ -13,10 +13,18 @@ const dreamDexConfig = {
   chainId: config.SOMNIA_CHAIN_ID,
   sdkVersion: config.MARKETS_SDK_VERSION
 };
+const historicalDreamDexConfig = {
+  rpcUrl: config.SOMNIA_MAINNET_RPC_URL,
+  indexerUrl: config.DREAMDEX_MAINNET_INDEXER_URL,
+  chainId: config.SOMNIA_MAINNET_CHAIN_ID,
+  sdkVersion: config.MARKETS_SDK_VERSION
+};
 const app = buildApp(config, {
   pool,
   dreamDexClient: createDreamDexSdkClient(dreamDexConfig),
-  dreamDexConfig
+  dreamDexConfig,
+  historicalDreamDexClient: createMainnetHistoricalDreamDexSdkClient(historicalDreamDexConfig),
+  historicalDreamDexConfig
 });
 
 await app.listen({ host: "0.0.0.0", port: config.PORT });

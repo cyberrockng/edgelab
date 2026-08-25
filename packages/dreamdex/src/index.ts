@@ -410,7 +410,7 @@ export interface HistoricalDreamDexSdkClient {
   getFills(pool: string, opts?: HistoricalTimeWindowPageOptions): Promise<FillRow[]>;
 }
 
-type JsonFetch = (
+export type HistoricalIndexerFetch = (
   input: string,
   init: { readonly method: "POST"; readonly headers: Record<string, string>; readonly body: string }
 ) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown> }>;
@@ -1024,7 +1024,7 @@ export async function listHistoricalCandles(
 
 async function executeHistoricalGraphQl<Schema extends z.ZodType>(
   config: MainnetHistoricalDreamDexConfig,
-  fetchImpl: JsonFetch,
+  fetchImpl: HistoricalIndexerFetch,
   query: string,
   variables: Record<string, string | number>,
   schema: Schema
@@ -1085,7 +1085,7 @@ export async function listHistoricalOrdersByMarket(
   config: MainnetHistoricalDreamDexConfig,
   marketId: string,
   options: HistoricalPageOptions = {},
-  fetchImpl: JsonFetch = fetch
+  fetchImpl: HistoricalIndexerFetch = fetch
 ): Promise<HistoricalDreamDexReadResult<HistoricalRowsPage<HistoricalOrderEvidence>>> {
   const validated = ensureHistoricalConfig(config);
   if (!validated.ok) {
@@ -1142,7 +1142,7 @@ export async function listHistoricalFillsByMarket(
   config: MainnetHistoricalDreamDexConfig,
   marketId: string,
   options: HistoricalPageOptions = {},
-  fetchImpl: JsonFetch = fetch
+  fetchImpl: HistoricalIndexerFetch = fetch
 ): Promise<HistoricalDreamDexReadResult<HistoricalRowsPage<HistoricalFillEvidence>>> {
   const validated = ensureHistoricalConfig(config);
   if (!validated.ok) {
