@@ -1,0 +1,108 @@
+{
+  "evidenceId": "EXG-003-PUBLIC",
+  "task": "UX-015/DEPLOY-002",
+  "capturedAt": "2026-08-25T14:47:00+01:00",
+  "proof": {
+    "evidenceId": "EXG-003",
+    "status": "VERIFIED",
+    "network": {
+      "name": "Somnia Shannon Testnet",
+      "chainId": 50312,
+      "explorerUrl": "https://shannon-explorer.somnia.network/"
+    },
+    "lifecycle": [
+      {
+        "state": "VERIFIED",
+        "title": "Exact approval",
+        "detail": "0.01 tUSDC approved to the selected DreamDEX pool",
+        "txHash": "0xeb2ce83146e757b8bb5b204e01b711d2e9dd479a35fc336def101c722e905312",
+        "href": null
+      },
+      {
+        "state": "SUBMITTED",
+        "title": "POST_ONLY BUY_YES order",
+        "detail": "Price 0.01, quantity 1; order ID remains inspectable below",
+        "txHash": "0x666d5d5a5dc95914ef6ae14684d964055f936bf52c19965850ed1c773b954196",
+        "href": null
+      },
+      {
+        "state": "NO FILL",
+        "title": "Rested without execution",
+        "detail": "No fill was observed; no PnL is inferred",
+        "txHash": null,
+        "href": null
+      },
+      {
+        "state": "EXPIRED",
+        "title": "Owner-approved cancel landed after expiry",
+        "detail": "DreamDEX emitted OrderExpired, not OrderCancelled",
+        "txHash": "0x94057033d8cd59cd1c58a6efa21d25cc7dc00c4eb0a0a0eaa2cfefb860ab02fd",
+        "href": null
+      },
+      {
+        "state": "RECONCILED",
+        "title": "Terminal state verified",
+        "detail": "No open order remains and escrow returned",
+        "txHash": null,
+        "href": null
+      }
+    ],
+    "order": {
+      "orderId": "110680464442257591736",
+      "marketId": "0x0000000000000000000000000000000000000000000000000000000000008a9d",
+      "side": "BUY_YES",
+      "priceRaw": "10000",
+      "quantityRaw": "1000000",
+      "filledQuantityRaw": "0",
+      "fillStatus": "NO_FILL",
+      "terminalEvent": "OrderExpired",
+      "cancelFunction": "0xdbc91396"
+    },
+    "reconciliation": {
+      "fillObserved": false,
+      "fillRequired": false,
+      "collateralReconciled": true,
+      "unexpectedOpenOrder": false,
+      "selfTrade": false,
+      "fakeVolume": false,
+      "pnlStatus": "NOT_AVAILABLE"
+    },
+    "technical": [
+      {
+        "label": "Wallet",
+        "value": "0x6b3a...7971",
+        "address": "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971",
+        "href": null
+      },
+      {
+        "label": "Approval",
+        "value": "0xeb2c...5312",
+        "txHash": "0xeb2ce83146e757b8bb5b204e01b711d2e9dd479a35fc336def101c722e905312",
+        "href": null
+      },
+      {
+        "label": "Order",
+        "value": "0x666d...4196",
+        "txHash": "0x666d5d5a5dc95914ef6ae14684d964055f936bf52c19965850ed1c773b954196",
+        "href": null
+      },
+      {
+        "label": "Terminal",
+        "value": "0x9405...02fd",
+        "txHash": "0x94057033d8cd59cd1c58a6efa21d25cc7dc00c4eb0a0a0eaa2cfefb860ab02fd",
+        "href": null
+      },
+      {
+        "label": "Order ID",
+        "value": "110680464442257591736",
+        "href": null
+      }
+    ],
+    "sourceArtifacts": [
+      "evidence/qa/qa-002-report.json",
+      "evidence/chain/chain-001-report.json",
+      "evidence/proof/exg-003-public.json"
+    ]
+  },
+  "redaction": "Public transaction hashes, order ID, chain labels, and sanitized lifecycle fields only"
+}

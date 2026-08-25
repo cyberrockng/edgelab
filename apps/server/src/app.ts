@@ -1101,116 +1101,50 @@ function explorerAddress(explorerUrl: string, address: string): string {
 }
 
 function buildExg003Proof() {
-  const intent = readEvidenceRecord("evidence/feasibility/blk-003-intent.json");
-  const order = readEvidenceRecord("evidence/feasibility/blk-003-order.json");
-  const terminal = readEvidenceRecord("evidence/feasibility/blk-003-terminal.json");
-  const network = recordField(terminal, "network");
-  const terminalEvent = recordField(terminal, "terminalEvent");
-  const postTerminal = recordField(terminal, "postTerminalVerification");
-  const terminalOrder = recordField(terminal, "order");
-  const approval = recordField(intent, "approval");
-  const wallet = recordField(intent, "wallet");
-  const orderTransaction = recordField(order, "orderTransaction");
-  const orderVerification = recordField(order, "onchainVerification");
-  const cancelPreflight = recordField(order, "cancelPreflight");
-  const terminalTransaction = recordField(terminal, "terminalTransaction");
-  const explorerUrl = stringField(network, "explorerUrl");
-  const terminalEventName = stringField(terminalEvent, "eventName");
-  const fillObserved = booleanField(postTerminal, "fillObserved");
-  const collateralReconciled = booleanField(postTerminal, "collateralReconciled");
-  const unexpectedOpenOrder = booleanField(postTerminal, "unexpectedOpenOrder");
+  const publicArtifact = readEvidenceRecord("evidence/proof/exg-003-public.json");
+  const proof = recordField(publicArtifact, "proof");
+  const network = recordField(proof, "network");
+  const order = recordField(proof, "order");
+  const reconciliation = recordField(proof, "reconciliation");
   const chainId = network.chainId;
   if (typeof chainId !== "number" || chainId !== SOMNIA_SHANNON_CHAIN_ID) {
     throw new Error("EXG-003 proof artifact is not on Somnia Shannon");
   }
-  if (terminalEventName !== "OrderExpired" || fillObserved || !collateralReconciled || unexpectedOpenOrder) {
+  if (
+    stringField(order, "terminalEvent") !== "OrderExpired" ||
+    stringField(order, "fillStatus") !== "NO_FILL" ||
+    booleanField(reconciliation, "fillObserved") ||
+    !booleanField(reconciliation, "collateralReconciled") ||
+    booleanField(reconciliation, "unexpectedOpenOrder") ||
+    stringField(reconciliation, "pnlStatus") !== "NOT_AVAILABLE"
+  ) {
     throw new Error("EXG-003 proof artifact does not match approved no-fill expired lifecycle");
   }
-  const approvalTxHash = stringField(approval, "transactionHash");
-  const orderTxHash = stringField(orderTransaction, "txHash");
-  const terminalTxHash = stringField(terminalTransaction, "txHash");
-  const orderId = stringField(terminalOrder, "orderId");
-  const walletAddress = stringField(wallet, "address");
-  return {
-    proof: {
-      evidenceId: "EXG-003",
-      status: "VERIFIED",
-      network: {
-        name: stringField(network, "name"),
-        chainId,
-        explorerUrl
-      },
-      lifecycle: [
-        {
-          state: "VERIFIED",
-          title: "Exact approval",
-          detail: "0.01 tUSDC approved to the selected DreamDEX pool",
-          txHash: approvalTxHash,
-          href: explorerTx(explorerUrl, approvalTxHash)
-        },
-        {
-          state: "SUBMITTED",
-          title: "POST_ONLY BUY_YES order",
-          detail: "Price 0.01, quantity 1; order ID remains inspectable below",
-          txHash: orderTxHash,
-          href: explorerTx(explorerUrl, orderTxHash)
-        },
-        {
-          state: "NO FILL",
-          title: "Rested without execution",
-          detail: "No fill was observed; no PnL is inferred",
-          txHash: null,
-          href: null
-        },
-        {
-          state: "EXPIRED",
-          title: "Owner-approved cancel landed after expiry",
-          detail: "DreamDEX emitted OrderExpired, not OrderCancelled",
-          txHash: terminalTxHash,
-          href: explorerTx(explorerUrl, terminalTxHash)
-        },
-        {
-          state: "RECONCILED",
-          title: "Terminal state verified",
-          detail: "No open order remains and escrow returned",
-          txHash: null,
-          href: null
-        }
-      ],
-      order: {
-        orderId,
-        marketId: stringField(terminalOrder, "marketId"),
-        side: stringField(terminalOrder, "side"),
-        priceRaw: stringField(terminalOrder, "priceRaw"),
-        quantityRaw: stringField(terminalOrder, "quantityRaw"),
-        filledQuantityRaw: stringField(terminalOrder, "filledQuantityRaw"),
-        fillStatus: stringField(orderVerification, "fillStatus"),
-        terminalEvent: terminalEventName,
-        cancelFunction: stringField(cancelPreflight, "functionSelector")
-      },
-      reconciliation: {
-        fillObserved,
-        fillRequired: booleanField(postTerminal, "fillRequired"),
-        collateralReconciled,
-        unexpectedOpenOrder,
-        selfTrade: booleanField(postTerminal, "selfTrade"),
-        fakeVolume: booleanField(postTerminal, "fakeVolume"),
-        pnlStatus: "NOT_AVAILABLE"
-      },
-      technical: [
-        { label: "Wallet", value: compactHash(walletAddress), href: explorerAddress(explorerUrl, walletAddress) },
-        { label: "Approval", value: compactHash(approvalTxHash), href: explorerTx(explorerUrl, approvalTxHash) },
-        { label: "Order", value: compactHash(orderTxHash), href: explorerTx(explorerUrl, orderTxHash) },
-        { label: "Terminal", value: compactHash(terminalTxHash), href: explorerTx(explorerUrl, terminalTxHash) },
-        { label: "Order ID", value: orderId, href: null }
-      ],
-      sourceArtifacts: [
-        "evidence/feasibility/blk-003-intent.json",
-        "evidence/feasibility/blk-003-order.json",
-        "evidence/feasibility/blk-003-terminal.json"
-      ]
+  const explorerUrl = stringField(network, "explorerUrl");
+  const responseProof = JSON.parse(JSON.stringify(proof)) as Record<string, unknown>;
+  const lifecycle = responseProof.lifecycle;
+  if (Array.isArray(lifecycle)) {
+    for (const step of lifecycle) {
+      if (isRecord(step) && typeof step.txHash === "string") {
+        step.href = explorerTx(explorerUrl, step.txHash);
+      }
     }
-  };
+  }
+  const technical = responseProof.technical;
+  if (Array.isArray(technical)) {
+    for (const row of technical) {
+      if (!isRecord(row)) {
+        continue;
+      }
+      if (typeof row.txHash === "string") {
+        row.href = explorerTx(explorerUrl, row.txHash);
+      }
+      if (typeof row.address === "string") {
+        row.href = explorerAddress(explorerUrl, row.address);
+      }
+    }
+  }
+  return { proof: responseProof };
 }
 
 function provenGateRows(input: {
