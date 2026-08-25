@@ -1,0 +1,53 @@
+{
+  "task": "EXP-002",
+  "title": "Research-session experiment CRUD and Strategy Lab vertical slice",
+  "capturedAt": "2026-08-25T11:09:15Z",
+  "scope": [
+    "Included pending migration 0003 in the migration runner.",
+    "Added additive migration 0004 for session-scoped experiment-create idempotency.",
+    "Added v2 research-session endpoint with hashed opaque session token storage.",
+    "Added v2 experiment create, list, and detail endpoints.",
+    "Connected /lab to persistent experiment creation and /lab/:experimentId reload."
+  ],
+  "applicationWrites": {
+    "createResearchSession": "writes hashed opaque token and csrf hash to research_sessions",
+    "createExperiment": "writes experiments, immutable experiment_configuration_versions, experiment_policy_versions",
+    "idempotency": "same research-session and Idempotency-Key replays the existing experiment",
+    "walletRequired": false
+  },
+  "blockchainWrites": {
+    "performed": false,
+    "policy": "No application write authorizes or submits a blockchain transaction."
+  },
+  "security": {
+    "sessionTokenStorage": "server stores sha256 hash only",
+    "cookie": "HttpOnly SameSite=Lax signed research-session cookie",
+    "csrf": "current csrf token required on experiment create",
+    "ownership": "private research-session experiments are non-disclosing to other sessions"
+  },
+  "dataIntegrity": {
+    "mainnetWrites": false,
+    "sourcePlaneStored": "MAINNET_HISTORICAL or SHANNON_FORWARD per experiment mode",
+    "historicalBookReconstruction": "SOURCE_INCOMPLETE",
+    "pnlStatus": "NOT_AVAILABLE"
+  },
+  "tests": {
+    "pnpm check": "PASS - lint, typecheck, and 61 Vitest tests passed.",
+    "pnpm build": "PASS - all workspace packages and web production bundle built.",
+    "pnpm test:e2e": "PASS - 32 Playwright tests passed after fixing an immutable strategy label mismatch.",
+    "initialE2EFailure": "The first e2e run failed because the test expected the form display label instead of the persisted immutable policy label; no backend create/reload assertion failed."
+  },
+  "screenshots": [
+    "evidence/ui/exp-002-lab-desktop.png",
+    "evidence/ui/exp-002-workspace-desktop.png"
+  ],
+  "acceptance": {
+    "createExperiment": "PASS",
+    "persistConfiguration": "PASS",
+    "reloadWorkspace": "PASS",
+    "csrfEnforced": "PASS",
+    "idempotency": "PASS",
+    "walletNotRequired": "PASS",
+    "blockchainWrites": "NONE"
+  }
+}

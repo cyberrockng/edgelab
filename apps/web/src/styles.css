@@ -392,7 +392,8 @@ label {
   font-weight: 900;
 }
 
-select {
+select,
+input {
   width: 100%;
   min-height: 42px;
   border: 1px solid #bfcac3;
@@ -400,6 +401,30 @@ select {
   padding: 8px 10px;
   background: #fff;
   color: var(--ink);
+}
+
+.experimentRow {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.experimentRow div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.experimentRow strong,
+.experimentRow small {
+  overflow-wrap: anywhere;
+}
+
+.experimentRow small {
+  color: var(--muted);
 }
 
 .factGrid {

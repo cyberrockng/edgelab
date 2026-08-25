@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T10:23:29.000Z",
-  "sourceCommit": "f4c87aa7a2fd02d585a5aaccf6ed02ab7f700d98",
+  "producedAt": "2026-08-25T10:42:05.000Z",
+  "sourceCommit": "458699fd6134d0d5f65b9827c6cbfd1a43cdf717",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 51,
+  "artifactCount": 54,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -120,6 +120,13 @@
       "path": "evidence/dreamdex/dex-001-read-adapter-report.json",
       "sha256": "2a5ac2f30bd0bf12f95465e33810299d9bb75e3d13b5e4e86f2b4416e24877a7",
       "bytes": 2254,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/experiments/exp-002-report.json",
+      "sha256": "7f17e8a4fa50afcb7c916341174858f94036e1509ab0032e45d5306a06a4390a",
+      "bytes": 2422,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },
@@ -295,6 +302,20 @@
       "path": "evidence/ui-ux/ui-ux-redesign-report.json",
       "sha256": "e9ade36e65a1c15f3213b20245dc9557309f89153259a245b81a14f263d3c5ee",
       "bytes": 6006,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/exp-002-lab-desktop.png",
+      "sha256": "3380e4b442c0587e1fa985bc0262d2b02dce38240694a4bdf8a9d0383683aed2",
+      "bytes": 162696,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/exp-002-workspace-desktop.png",
+      "sha256": "0ccc86d24d360286c58296b280c6356eb6124dcb1ca05b5b1fb0ec16681c3f9d",
+      "bytes": 147361,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },

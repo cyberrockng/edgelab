@@ -82,6 +82,36 @@ const V2LiveMarketsSchema = z.object({
   }),
   meta: z.object({ plane: z.string() })
 });
+const V2SessionSchema = z.object({
+  data: z.object({
+    session: z.object({
+      id: z.string().uuid(),
+      expiresAt: z.string(),
+      csrfVersion: z.number()
+    }),
+    csrfToken: z.string().min(32)
+  })
+});
+const V2ExperimentSchema = z.object({
+  data: z.object({
+    experiment: z.object({
+      experimentId: z.string().uuid(),
+      name: z.string(),
+      configuration: z.object({
+        mode: z.string(),
+        assets: z.array(z.string()),
+        intervals: z.array(z.number()),
+        config: z.object({
+          sourcePlane: z.string(),
+          historicalBookReconstruction: z.string(),
+          pnlStatus: z.string()
+        })
+      }),
+      policies: z.array(z.object({ policyId: z.string(), version: z.string(), role: z.string() }))
+    }),
+    idempotentReplay: z.boolean().optional()
+  })
+});
 const apiMarketId = `0x${"9".repeat(61)}abc`;
 
 const binaryMarket: BinaryMarket = {
@@ -274,6 +304,12 @@ function v2Deps() {
     },
     historicalIndexerFetch
   };
+}
+
+function cookieHeader(response: { headers: Record<string, string | string[] | undefined> }): string {
+  const raw = response.headers["set-cookie"];
+  const cookies = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+  return cookies.map((cookie) => cookie.split(";")[0]).join("; ");
 }
 
 async function resetPublicSchema(): Promise<void> {
@@ -495,5 +531,104 @@ describe("API-001 server contracts", () => {
     const responseBody = V2LiveMarketsSchema.parse(response.json());
     expect(responseBody.data.markets[0]?.source.chainId).toBe(50312);
     expect(responseBody.meta.plane).toBe("SHANNON_FORWARD");
+  });
+
+  it("creates and reloads session-owned experiments without wallet access", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const payload = {
+      name: "Judge BTC hourly replay",
+      mode: "HISTORICAL_REPLAY",
+      asset: "BTC",
+      intervalSec: 3600,
+      policyId: "reference-neutral",
+      policyVersion: "1.0.0",
+      marketId: apiMarketId,
+      riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+    };
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-judge-btc"
+      },
+      payload
+    });
+    const duplicate = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-judge-btc"
+      },
+      payload
+    });
+    const createBody = V2ExperimentSchema.parse(create.json());
+    const duplicateBody = V2ExperimentSchema.parse(duplicate.json());
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${createBody.data.experiment.experimentId}`,
+      headers: { cookie: cookies }
+    });
+    const otherSession = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const denied = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${createBody.data.experiment.experimentId}`,
+      headers: { cookie: cookieHeader(otherSession) }
+    });
+    await app.close();
+
+    expect(session.statusCode).toBe(200);
+    expect(create.statusCode).toBe(201);
+    expect(createBody.data.experiment.name).toBe("Judge BTC hourly replay");
+    expect(createBody.data.experiment.configuration.config.sourcePlane).toBe("MAINNET_HISTORICAL");
+    expect(createBody.data.experiment.configuration.config.historicalBookReconstruction).toBe("SOURCE_INCOMPLETE");
+    expect(createBody.data.experiment.configuration.config.pnlStatus).toBe("NOT_AVAILABLE");
+    expect(createBody.data.experiment.policies[0]).toMatchObject({
+      policyId: "reference-neutral",
+      version: "1.0.0",
+      role: "CANDIDATE"
+    });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicateBody.data.idempotentReplay).toBe(true);
+    expect(duplicateBody.data.experiment.experimentId).toBe(createBody.data.experiment.experimentId);
+    expect(detail.statusCode).toBe(200);
+    expect(V2ExperimentSchema.parse(detail.json()).data.experiment.experimentId).toBe(
+      createBody.data.experiment.experimentId
+    );
+    expect(denied.statusCode).toBe(404);
+  });
+
+  it("rejects experiment writes without the current research-session csrf token", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookieHeader(session),
+        "idempotency-key": "api-create-missing-csrf"
+      },
+      payload: {
+        name: "Missing csrf replay",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "reference-neutral",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    await app.close();
+
+    expect(rejected.statusCode).toBe(403);
+    expect(rejected.json()).toMatchObject({
+      error: { code: "CSRF_TOKEN_INVALID", retryable: false }
+    });
   });
 });

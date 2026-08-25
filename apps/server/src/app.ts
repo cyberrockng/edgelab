@@ -2,7 +2,8 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
-import Fastify, { type FastifyReply } from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,17 @@ import {
 import { summarizeChainEvidence } from "@edgelab/chain";
 import type { RuntimeConfig } from "@edgelab/config";
 import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_MAINNET_CHAIN_ID, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
+import {
+  createInteractiveExperiment,
+  createResearchSession,
+  findActiveResearchSessionByTokenHash,
+  getInteractiveExperiment,
+  listInteractiveExperiments,
+  rotateResearchSessionCsrf,
+  upsertPolicyVersion,
+  type InteractiveExperimentDetailRecord,
+  type ResearchSessionRecord
+} from "@edgelab/db";
 import {
   countHistoricalBinaryMarkets,
   createMainnetHistoricalDreamDexSdkClient,
@@ -62,6 +74,24 @@ export interface AppDependencies {
 const AddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const MarketIdSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
 const IntentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const IdempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+const ResearchSessionCookie = "edgelab_research_session";
+const CsrfHeader = "x-csrf-token";
+const SessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const IntervalSecSchema = z.union([z.literal(900), z.literal(3600), z.literal(14400), z.literal(86400)]);
+const ExperimentCreateSchema = z.object({
+  name: z.string().trim().min(3).max(80),
+  mode: z.enum(["HISTORICAL_REPLAY", "LIVE_SHADOW"]),
+  asset: z.enum(["BTC", "ETH"]),
+  intervalSec: IntervalSecSchema,
+  policyId: z.string().min(1),
+  policyVersion: z.string().min(1),
+  marketId: MarketIdSchema.optional(),
+  windowFrom: z.iso.datetime().optional(),
+  windowTo: z.iso.datetime().optional(),
+  decisionOffsetSec: z.number().int().min(-3600).max(3600).default(0),
+  riskEnvelopeId: z.literal("WATCH_ONLY_BOUNDED").default("WATCH_ONLY_BOUNDED")
+});
 const HistoricalMarketQuerySchema = z.object({
   asset: z.enum(["BTC", "ETH"]).optional(),
   intervalSec: z.coerce.number().int().positive().optional(),
@@ -95,10 +125,51 @@ const EvaluateRequestSchema = z.object({
 
 function requireIdempotencyKey(headers: Record<string, string | string[] | undefined>): string {
   const value = headers["idempotency-key"];
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== "string" || !IdempotencyKeySchema.safeParse(value).success) {
     throw new Error("Idempotency-Key header is required");
   }
-  return value;
+  return value.trim();
+}
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+function randomToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+function stableJson(input: unknown): string {
+  if (Array.isArray(input)) {
+    return `[${input.map(stableJson).join(",")}]`;
+  }
+  if (input !== null && typeof input === "object") {
+    return `{${Object.entries(input as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${JSON.stringify(key)}:${stableJson(value)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(input);
+}
+
+function sessionCookieOptions(config: RuntimeConfig) {
+  return {
+    path: "/",
+    httpOnly: true,
+    secure: config.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    signed: true,
+    maxAge: Math.floor(SessionTtlMs / 1000)
+  };
+}
+
+function readSignedSessionToken(request: FastifyRequest): string | null {
+  const rawCookie = request.cookies[ResearchSessionCookie];
+  if (typeof rawCookie !== "string") {
+    return null;
+  }
+  const unsigned = request.unsignCookie(rawCookie);
+  return unsigned.valid && typeof unsigned.value === "string" ? unsigned.value : null;
 }
 
 function requirePool(deps: AppDependencies): pg.Pool {
@@ -116,6 +187,84 @@ function requireDreamDex(deps: AppDependencies): {
     throw new Error("DreamDEX dependency is not configured");
   }
   return { client: deps.dreamDexClient, config: deps.dreamDexConfig };
+}
+
+async function createFreshResearchSession(
+  pool: pg.Pool,
+  config: RuntimeConfig,
+  reply: FastifyReply
+): Promise<{ readonly session: ResearchSessionRecord; readonly rawSessionToken: string; readonly csrfToken: string }> {
+  const rawSessionToken = randomToken();
+  const csrfToken = randomToken();
+  const session = await createResearchSession(pool, {
+    tokenHash: sha256(rawSessionToken),
+    csrfHash: sha256(csrfToken),
+    expiresAt: new Date(Date.now() + SessionTtlMs)
+  });
+  reply.setCookie(ResearchSessionCookie, rawSessionToken, sessionCookieOptions(config));
+  return { session, rawSessionToken, csrfToken };
+}
+
+async function ensureResearchSession(
+  pool: pg.Pool,
+  config: RuntimeConfig,
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<{ readonly session: ResearchSessionRecord; readonly csrfToken: string; readonly created: boolean }> {
+  const rawSessionToken = readSignedSessionToken(request);
+  if (rawSessionToken !== null) {
+    const existing = await findActiveResearchSessionByTokenHash(pool, sha256(rawSessionToken));
+    if (existing !== null) {
+      const csrfToken = randomToken();
+      const rotated = await rotateResearchSessionCsrf(pool, {
+        sessionId: existing.id,
+        csrfHash: sha256(csrfToken)
+      });
+      if (rotated !== null) {
+        reply.setCookie(ResearchSessionCookie, rawSessionToken, sessionCookieOptions(config));
+        return { session: rotated, csrfToken, created: false };
+      }
+    }
+  }
+  const created = await createFreshResearchSession(pool, config, reply);
+  return { session: created.session, csrfToken: created.csrfToken, created: true };
+}
+
+async function requireResearchSession(
+  pool: pg.Pool,
+  request: FastifyRequest
+): Promise<ResearchSessionRecord | null> {
+  const rawSessionToken = readSignedSessionToken(request);
+  if (rawSessionToken === null) {
+    return null;
+  }
+  return await findActiveResearchSessionByTokenHash(pool, sha256(rawSessionToken));
+}
+
+function requireCsrf(request: FastifyRequest, session: ResearchSessionRecord): boolean {
+  const value = request.headers[CsrfHeader];
+  return typeof value === "string" && sha256(value) === session.csrfHash;
+}
+
+function serializeExperiment(record: InteractiveExperimentDetailRecord) {
+  return {
+    experimentId: record.experimentId,
+    name: record.name,
+    status: record.status,
+    visibility: record.visibility,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    configuration: {
+      ...record.configuration,
+      windowFrom: record.configuration.windowFrom?.toISOString() ?? null,
+      windowTo: record.configuration.windowTo?.toISOString() ?? null
+    },
+    policies: record.policies
+  };
+}
+
+function policySupportedInMode(policyId: string, mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW"): boolean {
+  return mode === "LIVE_SHADOW" || policyId !== "reference-book-tilt";
 }
 
 function createDefaultHistoricalConfig(config: RuntimeConfig): MainnetHistoricalDreamDexConfig {
@@ -339,6 +488,232 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       { immutableVersions: true }
     )
   );
+
+  app.post("/api/v2/research-session", async (request, reply) => {
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      return v2Data(
+        {
+          session: {
+            id: ensured.session.id,
+            expiresAt: ensured.session.expiresAt.toISOString(),
+            csrfVersion: ensured.session.csrfVersion
+          },
+          csrfToken: ensured.csrfToken
+        },
+        {
+          created: ensured.created,
+          tokenPolicy: "opaque-session-token-hashed-server-side",
+          walletRequired: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "RESEARCH_SESSION_UNAVAILABLE",
+        error instanceof Error ? error.message : "Research session unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments", async (request, reply) => {
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const experiments = await listInteractiveExperiments(pool, {
+        sessionId: ensured.session.id,
+        limit: 20
+      });
+      return v2Data(
+        {
+          experiments: experiments.map(serializeExperiment),
+          session: {
+            id: ensured.session.id,
+            expiresAt: ensured.session.expiresAt.toISOString(),
+            csrfVersion: ensured.session.csrfVersion
+          },
+          csrfToken: ensured.csrfToken
+        },
+        {
+          ownership: "research-session",
+          walletRequired: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXPERIMENT_LIST_UNAVAILABLE",
+        error instanceof Error ? error.message : "Experiment list unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/experiments", async (request, reply) => {
+    const parsed = ExperimentCreateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return v2Error(
+        reply,
+        400,
+        "EXPERIMENT_CREATE_INVALID",
+        "Experiment configuration is invalid",
+        false,
+        request.id,
+        parsed.error.issues
+      );
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const policy = policyAdapters.find(
+        (adapter) => adapter.policyId === parsed.data.policyId && adapter.version === parsed.data.policyVersion
+      );
+      if (policy === undefined) {
+        return await v2Error(reply, 400, "POLICY_VERSION_UNSUPPORTED", "Selected policy version is not supported", false, request.id);
+      }
+      if (!policySupportedInMode(policy.policyId, parsed.data.mode)) {
+        return await v2Error(
+          reply,
+          400,
+          "POLICY_PLANE_UNSUPPORTED",
+          "Selected policy cannot run in the requested experiment mode",
+          false,
+          request.id
+        );
+      }
+      const windowFrom = parsed.data.windowFrom === undefined ? null : new Date(parsed.data.windowFrom);
+      const windowTo = parsed.data.windowTo === undefined ? null : new Date(parsed.data.windowTo);
+      if (windowFrom !== null && windowTo !== null && windowFrom >= windowTo) {
+        return await v2Error(reply, 400, "EXPERIMENT_WINDOW_INVALID", "Historical window start must precede end", false, request.id);
+      }
+      const policyManifest = createPolicyManifest(policy);
+      const policyVersionId = await upsertPolicyVersion(pool, {
+        ...policyManifest,
+        manifest: {
+          ...policyManifest,
+          supportedPlanes:
+            policy.policyId === "reference-book-tilt"
+              ? ["SHANNON_FORWARD"]
+              : ["MAINNET_HISTORICAL", "SHANNON_FORWARD"]
+        }
+      });
+      const configPayload = {
+        sourcePlane: parsed.data.mode === "HISTORICAL_REPLAY" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD",
+        selectedMarketId: parsed.data.marketId ?? null,
+        asset: parsed.data.asset,
+        intervalSec: parsed.data.intervalSec,
+        riskEnvelopeId: parsed.data.riskEnvelopeId,
+        policy: {
+          policyId: policy.policyId,
+          version: policy.version,
+          sourceHash: policyManifest.sourceHash
+        },
+        historicalBookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
+        pnlStatus: "NOT_AVAILABLE"
+      };
+      const created = await createInteractiveExperiment(pool, {
+        sessionId: session.id,
+        name: parsed.data.name,
+        createIdempotencyKey: idempotencyKey,
+        configuration: {
+          mode: parsed.data.mode,
+          assets: [parsed.data.asset],
+          intervals: [parsed.data.intervalSec],
+          windowFrom,
+          windowTo,
+          decisionOffsetSec: parsed.data.decisionOffsetSec,
+          ruleVersion: "interactive-2.0.0",
+          config: configPayload,
+          configHash: sha256(stableJson(configPayload))
+        },
+        policyVersions: [{ policyVersionId, role: "CANDIDATE" }]
+      });
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: created.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 500, "EXPERIMENT_CREATE_UNREADABLE", "Created experiment could not be reloaded", true, request.id);
+      }
+      return await reply.code(created.idempotentReplay ? 200 : 201).send(
+        v2Data(
+          {
+            experiment: serializeExperiment(experiment),
+            idempotentReplay: created.idempotentReplay
+          },
+          {
+            ownership: "research-session",
+            applicationWrite: true,
+            blockchainWrite: false
+          }
+        )
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXPERIMENT_CREATE_FAILED",
+        error instanceof Error ? error.message : "Experiment create failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      return v2Data(
+        {
+          experiment: serializeExperiment(experiment),
+          csrfToken: ensured.csrfToken
+        },
+        {
+          ownership: "research-session",
+          walletRequired: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXPERIMENT_DETAIL_UNAVAILABLE",
+        error instanceof Error ? error.message : "Experiment detail unavailable",
+        true,
+        request.id
+      );
+    }
+  });
 
   app.get("/api/v2/mainnet/history/markets/count", async (request, reply) => {
     const parsed = HistoricalMarketQuerySchema.omit({ limit: true, offset: true }).safeParse(request.query);

@@ -171,11 +171,111 @@ export interface HistoricalFillsResponse {
   }[];
 }
 
+export interface ResearchSessionResponse {
+  readonly session: {
+    readonly id: string;
+    readonly expiresAt: string;
+    readonly csrfVersion: number;
+  };
+  readonly csrfToken: string;
+}
+
+export interface ExperimentRecord {
+  readonly experimentId: string;
+  readonly name: string;
+  readonly status: string;
+  readonly visibility: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly configuration: {
+    readonly id: string;
+    readonly version: number;
+    readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
+    readonly assets: readonly string[];
+    readonly intervals: readonly number[];
+    readonly windowFrom: string | null;
+    readonly windowTo: string | null;
+    readonly decisionOffsetSec: number;
+    readonly riskEnvelopeId: string | null;
+    readonly ruleVersion: string;
+    readonly config: {
+      readonly sourcePlane?: string;
+      readonly selectedMarketId?: string | null;
+      readonly riskEnvelopeId?: string;
+      readonly historicalBookReconstruction?: string;
+      readonly pnlStatus?: string;
+      readonly [key: string]: unknown;
+    };
+    readonly configHash: string;
+  };
+  readonly policies: readonly {
+    readonly role: string;
+    readonly policyVersionId: string;
+    readonly policyId: string;
+    readonly version: string;
+    readonly label: string;
+    readonly adapterName: string;
+    readonly sourceHash: string;
+  }[];
+}
+
+export interface ExperimentsResponse {
+  readonly experiments: readonly ExperimentRecord[];
+  readonly session: ResearchSessionResponse["session"];
+  readonly csrfToken: string;
+}
+
+export interface ExperimentDetailResponse {
+  readonly experiment: ExperimentRecord;
+  readonly csrfToken?: string;
+  readonly idempotentReplay?: boolean;
+}
+
+export interface ExperimentCreateInput {
+  readonly name: string;
+  readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
+  readonly asset: "BTC" | "ETH";
+  readonly intervalSec: 900 | 3600 | 14400 | 86400;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  readonly marketId?: string;
+  readonly riskEnvelopeId: "WATCH_ONLY_BOUNDED";
+}
+
+const csrfStorageKey = "edgelab.research.csrf";
+
+function getStoredCsrfToken(): string | null {
+  if (typeof globalThis.localStorage === "undefined") {
+    return null;
+  }
+  return globalThis.localStorage.getItem(csrfStorageKey);
+}
+
+function storeCsrfToken(token: string): void {
+  if (typeof globalThis.localStorage !== "undefined") {
+    globalThis.localStorage.setItem(csrfStorageKey, token);
+  }
+}
+
 export async function fetchV2<TData, TMeta = Record<string, unknown>>(
   path: string
 ): Promise<V2Envelope<TData, TMeta>> {
+  return await fetchV2Request<TData, TMeta>(path);
+}
+
+export async function fetchV2Request<TData, TMeta = Record<string, unknown>>(
+  path: string,
+  init: RequestInit = {}
+): Promise<V2Envelope<TData, TMeta>> {
+  const headers = new Headers(init.headers);
+  headers.set("accept", "application/json");
+  if (init.body !== undefined) {
+    headers.set("content-type", "application/json");
+  }
   const response = await fetch(path, {
-    headers: { accept: "application/json" }
+    credentials: "same-origin",
+    ...init,
+    headers
   });
   const payload = (await response.json()) as unknown;
   if (!response.ok) {
@@ -183,6 +283,47 @@ export async function fetchV2<TData, TMeta = Record<string, unknown>>(
     throw new ApiError(body.error.message, response.status, body);
   }
   return payload as V2Envelope<TData, TMeta>;
+}
+
+export async function ensureResearchSession(): Promise<V2Envelope<ResearchSessionResponse>> {
+  const response = await fetchV2Request<ResearchSessionResponse>("/api/v2/research-session", {
+    method: "POST"
+  });
+  storeCsrfToken(response.data.csrfToken);
+  return response;
+}
+
+export async function createExperiment(input: ExperimentCreateInput): Promise<V2Envelope<ExperimentDetailResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  const response = await fetchV2Request<ExperimentDetailResponse>("/api/v2/experiments", {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `lab-${globalThis.crypto.randomUUID()}`
+    },
+    body: JSON.stringify(input)
+  });
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function listExperiments(): Promise<V2Envelope<ExperimentsResponse>> {
+  const response = await fetchV2Request<ExperimentsResponse>("/api/v2/experiments");
+  storeCsrfToken(response.data.csrfToken);
+  return response;
+}
+
+export async function fetchExperimentDetail(experimentId: string): Promise<V2Envelope<ExperimentDetailResponse>> {
+  const response = await fetchV2Request<ExperimentDetailResponse>(`/api/v2/experiments/${experimentId}`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
 }
 
 export function apiErrorMessage(error: unknown): string {

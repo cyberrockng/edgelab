@@ -89,6 +89,22 @@ test("market filters update URL state and keep source provenance visible", async
   await expect(page.getByLabel("Market explorer state")).toContainText("ETH");
 });
 
+test("strategy lab creates a persisted research-session experiment", async ({ page }) => {
+  await page.goto("/lab", { waitUntil: "networkidle" });
+  await page.getByLabel("Experiment name").fill(`E2E replay ${String(Date.now())}`);
+  await page.getByLabel("Strategy").selectOption("reference-neutral@1.0.0");
+  await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
+  await page.getByLabel("Asset universe").selectOption("BTC");
+  await page.getByLabel("Interval").selectOption("3600");
+  await page.getByRole("button", { name: "Create Experiment" }).click();
+
+  await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}$/);
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("Application state");
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("MAINNET_HISTORICAL");
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("Educational neutral baseline");
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("NOT_AVAILABLE");
+});
+
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await page.goto("/evidence/proven-experiment", { waitUntil: "networkidle" });
   const gate = page.getByRole("region", { name: "Evidence gate" });

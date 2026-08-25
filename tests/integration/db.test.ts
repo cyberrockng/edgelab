@@ -111,11 +111,15 @@ describe("DB-001 schema and recovery controls", () => {
 
   it("runs migrations idempotently and records hashes", async () => {
     const rerun = await runMigrations(pool);
-    expect(rerun).toHaveLength(2);
+    expect(rerun).toHaveLength(4);
     expect(rerun[0]?.applied).toBe(false);
     expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(rerun[1]?.applied).toBe(false);
     expect(rerun[1]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[2]?.applied).toBe(false);
+    expect(rerun[2]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[3]?.applied).toBe(false);
+    expect(rerun[3]?.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("enforces chain and wallet identity constraints", async () => {
@@ -215,6 +219,8 @@ describe("DB-001 schema and recovery controls", () => {
     const migrated = await runMigrations(pool);
     expect(migrated[0]?.applied).toBe(false);
     expect(migrated[1]?.applied).toBe(true);
+    expect(migrated[2]?.applied).toBe(true);
+    expect(migrated[3]?.applied).toBe(true);
 
     const backfill = await pool.query<{
       active_configuration_id: string | null;
@@ -257,6 +263,7 @@ describe("DB-001 schema and recovery controls", () => {
     const created = await createInteractiveExperiment(pool, {
       sessionId: session.id,
       name: "BTC hourly historical replay",
+      createIdempotencyKey: "create-btc-hourly",
       configuration: {
         mode: "HISTORICAL_REPLAY",
         assets: ["BTC"],
@@ -301,5 +308,26 @@ describe("DB-001 schema and recovery controls", () => {
     expect(rows.rows[0]?.active_configuration_id).toBe(created.configurationId);
     expect(rows.rows[0]?.mode).toBe("HISTORICAL_REPLAY");
     expect(rows.rows[0]?.assets).toEqual(["BTC"]);
+
+    const duplicate = await createInteractiveExperiment(pool, {
+      sessionId: session.id,
+      name: "BTC hourly historical replay",
+      createIdempotencyKey: "create-btc-hourly",
+      configuration: {
+        mode: "HISTORICAL_REPLAY",
+        assets: ["BTC"],
+        intervals: [3600],
+        decisionOffsetSec: 0,
+        ruleVersion: "interactive-2.0.0",
+        config: {
+          sourcePlane: "MAINNET_HISTORICAL",
+          bookReconstruction: "SOURCE_INCOMPLETE"
+        },
+        configHash: "c".repeat(64)
+      }
+    });
+    expect(duplicate.experimentId).toBe(created.experimentId);
+    expect(duplicate.configurationId).toBe(created.configurationId);
+    expect(duplicate.idempotentReplay).toBe(true);
   });
 });
