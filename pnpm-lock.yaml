@@ -114,6 +114,9 @@ importers:
       '@edgelab/policy-runtime':
         specifier: workspace:*
         version: link:../../packages/policy-runtime
+      '@edgelab/replay':
+        specifier: workspace:*
+        version: link:../../packages/replay
       '@edgelab/settle':
         specifier: workspace:*
         version: link:../../packages/settle

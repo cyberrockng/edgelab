@@ -13,6 +13,10 @@ export interface MetricAssessmentInput {
   readonly experimentId: string;
   readonly policyVersionId: string;
   readonly ruleVersion: string;
+  readonly replayRunId?: string;
+  readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
+  readonly promotionScope?: "HISTORICAL_REPLAY_ONLY" | "FORWARD_WINDOW";
+  readonly provenance?: Record<string, unknown>;
   readonly thresholds?: EvidenceThresholds;
 }
 
@@ -32,7 +36,7 @@ interface DecisionOutcomeRow {
   readonly decision_id: string;
   readonly policy_id: string;
   readonly policy_version: string;
-  readonly forecast_p_up: number;
+  readonly forecast_p_up: number | null;
   readonly action: string;
   readonly reason_codes: string[];
   readonly decided_at: Date;
@@ -63,6 +67,9 @@ function sha256(input: unknown): string {
 }
 
 function toPolicyDecision(row: DecisionOutcomeRow): PolicyDecision {
+  if (row.forecast_p_up === null) {
+    throw new Error("Cannot convert replay abstention without forecast into scored policy decision");
+  }
   return {
     policyId: row.policy_id,
     policyVersion: row.policy_version,
@@ -106,6 +113,39 @@ async function loadDecisionOutcomes(input: MetricAssessmentInput): Promise<Decis
   return result.rows;
 }
 
+async function loadReplayDecisionOutcomes(input: MetricAssessmentInput): Promise<DecisionOutcomeRow[]> {
+  if (input.replayRunId === undefined) {
+    return [];
+  }
+  const result = await input.pool.query<DecisionOutcomeRow>(
+    `
+      SELECT
+        rd.id AS decision_id,
+        pv.policy_id,
+        pv.version AS policy_version,
+        rd.forecast_p_up,
+        rd.action,
+        rd.reason_codes,
+        rd.decision_at AS decided_at,
+        rd.frame_hash AS snapshot_hash,
+        pv.source_hash AS policy_hash,
+        rd.market_id,
+        (rd.outcome_result IN ('YES', 'NO')) AS resolved,
+        false AS voided,
+        rd.outcome_result AS winner
+      FROM replay_decisions rd
+      JOIN replay_runs rr ON rr.id = rd.replay_run_id
+      JOIN policy_versions pv ON pv.id = rd.policy_version_id
+      WHERE rr.experiment_id = $1
+        AND rd.policy_version_id = $2
+        AND rd.replay_run_id = $3
+      ORDER BY rd.decision_at ASC, rd.id ASC
+    `,
+    [input.experimentId, input.policyVersionId, input.replayRunId]
+  );
+  return result.rows;
+}
+
 function scoreRows(rows: readonly DecisionOutcomeRow[]): {
   readonly scored: readonly ScoredDecision[];
   readonly exclusionCount: number;
@@ -113,6 +153,10 @@ function scoreRows(rows: readonly DecisionOutcomeRow[]): {
   const scored: ScoredDecision[] = [];
   let exclusionCount = 0;
   for (const row of rows) {
+    if (row.action === "ABSTAIN" || row.forecast_p_up === null) {
+      exclusionCount += 1;
+      continue;
+    }
     if (row.voided === true) {
       exclusionCount += 1;
       continue;
@@ -135,6 +179,10 @@ async function insertMetricRun(input: {
   readonly experimentId: string;
   readonly policyVersionId: string;
   readonly ruleVersion: string;
+  readonly replayRunId?: string;
+  readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
+  readonly promotionScope?: "HISTORICAL_REPLAY_ONLY" | "FORWARD_WINDOW";
+  readonly provenance?: Record<string, unknown>;
   readonly inputHash: string;
 }): Promise<string> {
   const result = await input.pool.query<{ id: string }>(
@@ -142,9 +190,9 @@ async function insertMetricRun(input: {
       INSERT INTO metric_runs(
         experiment_id, policy_version_id, rule_version, sample_size, exclusion_count,
         brier_score, calibration_bias, neutral_baseline_delta, execution_metrics,
-        pnl_status, input_hash
+        pnl_status, input_hash, replay_run_id, evidence_plane, promotion_scope, provenance
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15::jsonb)
       ON CONFLICT (experiment_id, policy_version_id, rule_version, input_hash) DO UPDATE
       SET input_hash = EXCLUDED.input_hash
       RETURNING id
@@ -160,7 +208,11 @@ async function insertMetricRun(input: {
       input.assessment.metrics.neutralBaselineDelta,
       JSON.stringify(input.assessment.metrics.executionMetrics),
       input.assessment.metrics.pnlStatus,
-      input.inputHash
+      input.inputHash,
+      input.replayRunId ?? null,
+      input.evidencePlane ?? "SHANNON_FORWARD",
+      input.promotionScope ?? "FORWARD_WINDOW",
+      JSON.stringify(input.provenance ?? {})
     ]
   );
   const row = result.rows[0];
@@ -204,7 +256,8 @@ async function insertAssessment(input: {
 }
 
 export async function runMetricAssessment(input: MetricAssessmentInput): Promise<PersistedMetricAssessment> {
-  const rows = await loadDecisionOutcomes(input);
+  const rows =
+    input.replayRunId === undefined ? await loadDecisionOutcomes(input) : await loadReplayDecisionOutcomes(input);
   const scored = scoreRows(rows);
   const assessmentOptions: { exclusionCount: number; thresholds?: EvidenceThresholds } = {
     exclusionCount: scored.exclusionCount
@@ -221,6 +274,8 @@ export async function runMetricAssessment(input: MetricAssessmentInput): Promise
       voided: row.voided,
       winner: row.winner
     })),
+    evidencePlane: input.evidencePlane ?? (input.replayRunId === undefined ? "SHANNON_FORWARD" : "MAINNET_HISTORICAL"),
+    replayRunId: input.replayRunId ?? null,
     thresholds: assessment.thresholds,
     ruleVersion: input.ruleVersion
   });
@@ -230,6 +285,10 @@ export async function runMetricAssessment(input: MetricAssessmentInput): Promise
     experimentId: input.experimentId,
     policyVersionId: input.policyVersionId,
     ruleVersion: input.ruleVersion,
+    evidencePlane: input.evidencePlane ?? (input.replayRunId === undefined ? "SHANNON_FORWARD" : "MAINNET_HISTORICAL"),
+    promotionScope: input.promotionScope ?? (input.replayRunId === undefined ? "FORWARD_WINDOW" : "HISTORICAL_REPLAY_ONLY"),
+    ...(input.replayRunId === undefined ? {} : { replayRunId: input.replayRunId }),
+    ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
     inputHash
   });
   const assessmentHash = sha256({ metricRunId, assessment, inputHash });

@@ -1,0 +1,50 @@
+{
+  "evidenceId": "REPLAY-002",
+  "capturedAt": "2026-08-25T11:54:48.289Z",
+  "producer": "EdgeLab local execution agent",
+  "task": "REPLAY-002 real historical replay vertical slice",
+  "source": {
+    "plane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "sdkVersion": "0.28.1",
+    "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
+    "writePolicy": "read-only-no-mainnet-signer"
+  },
+  "market": {
+    "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bdb",
+    "asset": "BTC",
+    "intervalSeconds": 900,
+    "status": "Finalized",
+    "winningOutcomeRaw": "1",
+    "normalizedOutcome": "NO"
+  },
+  "experiment": {
+    "experimentId": "68598888-768d-4aa4-82ae-3b3962813e68",
+    "mode": "HISTORICAL_REPLAY",
+    "policy": "historical-last-trade@1.0.0",
+    "riskEnvelope": "WATCH_ONLY_BOUNDED"
+  },
+  "replay": {
+    "status": "SUCCEEDED",
+    "selectedCount": 1,
+    "processedCount": 1,
+    "scoredCount": 0,
+    "excludedCount": 1,
+    "outputHash": "b6111d9f4b829abf27cea6e547d4a4575f5a3f27ffc2a9c7c6645809e8442ac4",
+    "bookReconstruction": "SOURCE_INCOMPLETE",
+    "blockchainWrite": false
+  },
+  "antiLookahead": {
+    "decisionFrames": "STRICTLY_BEFORE_DECISION_AT",
+    "outcomeEmbargo": "outcome persisted after decision frame hash",
+    "futureCandlesExcluded": true,
+    "futureFillsExcluded": true,
+    "resolutionEmbargoedFromPolicy": true
+  },
+  "tests": {
+    "pnpmCheck": "PASS",
+    "pnpmBuild": "PASS",
+    "pnpmTestE2E": "PASS"
+  },
+  "redaction": "public market ids and hashes only; no cookies, tokens, wallet secrets, or private credentials"
+}

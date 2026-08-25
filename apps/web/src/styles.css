@@ -317,6 +317,78 @@ p {
   align-items: center;
 }
 
+.workspaceFlow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.flowStep {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.flowStep h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.flowStep p {
+  margin: 0 0 12px;
+}
+
+.stepIndex {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--rail);
+  border-radius: 999px;
+  color: var(--rail);
+  font-weight: 700;
+}
+
+.resultPanel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.decisionList,
+.reasonList {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.decisionRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 0.7fr) minmax(80px, 0.5fr) minmax(90px, 0.6fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.reasonList {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.inlineError {
+  margin: 10px 0 0;
+  color: #8c2e22;
+  font-weight: 700;
+}
+
 .modelPanel {
   display: grid;
   gap: 10px;
@@ -936,7 +1008,12 @@ dd {
 
   .threeColumn,
   .methodGrid,
+  .workspaceFlow,
   .factGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .decisionRow {
     grid-template-columns: 1fr;
   }
 

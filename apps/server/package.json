@@ -20,6 +20,7 @@
     "@edgelab/evaluate": "workspace:*",
     "@edgelab/observe": "workspace:*",
     "@edgelab/policy-runtime": "workspace:*",
+    "@edgelab/replay": "workspace:*",
     "@edgelab/settle": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",

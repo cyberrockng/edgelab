@@ -231,6 +231,72 @@ export interface ExperimentDetailResponse {
   readonly idempotentReplay?: boolean;
 }
 
+export interface ReplayDecisionRecord {
+  readonly id: string;
+  readonly marketId: string;
+  readonly decisionAt: string;
+  readonly cutoffBlock: string;
+  readonly frameHash: string;
+  readonly forecastPUp: number | null;
+  readonly action: string;
+  readonly reasonCodes: readonly string[];
+  readonly outcomeLoadedAt: string | null;
+  readonly outcomeResult: string | null;
+  readonly exclusionReason: string | null;
+}
+
+export interface ReplayRunRecord {
+  readonly id: string;
+  readonly experimentId: string;
+  readonly configurationId: string;
+  readonly plane: "MAINNET_HISTORICAL";
+  readonly status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  readonly frozenNow: string;
+  readonly selectedCount: number;
+  readonly processedCount: number;
+  readonly scoredCount: number;
+  readonly excludedCount: number;
+  readonly capability: string;
+  readonly sourceVersion: string;
+  readonly queryVersion: string;
+  readonly inputHash: string;
+  readonly outputHash: string | null;
+  readonly errorCode: string | null;
+  readonly checkpoints: Record<string, unknown>;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly decisions?: readonly ReplayDecisionRecord[];
+}
+
+export interface ReplayResponse {
+  readonly replay: ReplayRunRecord | null;
+  readonly csrfToken?: string;
+  readonly idempotentReplay?: boolean;
+}
+
+export interface EvaluationAssessmentRecord {
+  readonly assessmentId: string;
+  readonly metricRunId: string;
+  readonly verdict: "PROMOTE" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
+  readonly reasonCodes: readonly string[];
+  readonly sampleSize: number;
+  readonly exclusionCount: number;
+  readonly brierScore: number | null;
+  readonly calibrationBias: number | null;
+  readonly neutralBaselineDelta: number | null;
+  readonly pnlStatus: "NOT_AVAILABLE" | "AVAILABLE";
+  readonly evidencePlane: string;
+  readonly replayRunId: string | null;
+  readonly promotionScope: string;
+  readonly createdAt: string;
+}
+
+export interface EvaluationResponse {
+  readonly assessment: EvaluationAssessmentRecord | null;
+  readonly csrfToken?: string;
+}
+
 export interface ExperimentCreateInput {
   readonly name: string;
   readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
@@ -323,6 +389,58 @@ export async function fetchExperimentDetail(experimentId: string): Promise<V2Env
   if (response.data.csrfToken !== undefined) {
     storeCsrfToken(response.data.csrfToken);
   }
+  return response;
+}
+
+export async function fetchReplayRun(experimentId: string): Promise<V2Envelope<ReplayResponse>> {
+  const response = await fetchV2Request<ReplayResponse>(`/api/v2/experiments/${experimentId}/replay`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function runHistoricalReplay(experimentId: string): Promise<V2Envelope<ReplayResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  const response = await fetchV2Request<ReplayResponse>(`/api/v2/experiments/${experimentId}/replay`, {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `replay-${globalThis.crypto.randomUUID()}`
+    }
+  });
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function fetchLatestEvaluation(experimentId: string): Promise<V2Envelope<EvaluationResponse>> {
+  const response = await fetchV2Request<EvaluationResponse>(`/api/v2/experiments/${experimentId}/evaluation/latest`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function evaluateExperiment(experimentId: string): Promise<V2Envelope<{ readonly assessment: EvaluationAssessmentRecord }>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  const response = await fetchV2Request<{ readonly assessment: EvaluationAssessmentRecord }>(
+    `/api/v2/experiments/${experimentId}/evaluate`,
+    {
+      method: "POST",
+      headers: {
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `evaluate-${globalThis.crypto.randomUUID()}`
+      }
+    }
+  );
   return response;
 }
 

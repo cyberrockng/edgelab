@@ -186,7 +186,63 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(decision.forecastPUp).toBe(0.51);
     expect(decision.action).toBe("WATCH_ONLY");
     expect(decision.reasonCodes).toContain("PRE_CUTOFF_FILL");
+    expect(decision.reasonCodes).toContain("YES_FILL_PRICE");
     expect(JSON.stringify(decision)).not.toContain("990000");
+  });
+
+  it("inverts NO-side historical fill prices into target YES probability", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({
+          fillPriceRaw: "490000",
+          kind: "DIRECT_NO",
+          makerSide: "SELL_NO",
+          takerSide: "BUY_NO"
+        })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.51);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("NO_FILL_PRICE_INVERTED");
+  });
+
+  it("abstains when a historical fill side cannot be mapped to YES or NO", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({
+          kind: "DIRECT",
+          makerSide: "SELL",
+          takerSide: "BUY"
+        })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.5);
+    expect(decision.action).toBe("ABSTAIN");
+    expect(decision.reasonCodes).toContain("FILL_OUTCOME_SIDE_UNSUPPORTED");
   });
 
   it("abstains when the historical frame has no qualifying pre-cutoff fill", () => {

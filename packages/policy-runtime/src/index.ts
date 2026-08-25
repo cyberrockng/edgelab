@@ -199,6 +199,18 @@ function scaledPriceToProbability(priceRaw: string, quoteDecimals: number): numb
   return Math.min(0.95, Math.max(0.05, numerator / denominator));
 }
 
+function normalizeHistoricalFillOutcome(fill: HistoricalDecisionFrame["fills"][number]): "YES" | "NO" | null {
+  const tags = [fill.kind, fill.makerSide, fill.takerSide]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toUpperCase());
+  const yesTagged = tags.some((value) => value.includes("YES"));
+  const noTagged = tags.some((value) => value.includes("NO"));
+  if (yesTagged === noTagged) {
+    return null;
+  }
+  return yesTagged ? "YES" : "NO";
+}
+
 export const referencePolicies: readonly PolicyAdapter[] = [
   {
     policyId: "reference-neutral",
@@ -253,10 +265,23 @@ export const historicalPolicies: readonly HistoricalPolicyAdapter[] = [
           reasonCodes: ["HISTORICAL_LAST_TRADE", "NO_PRE_CUTOFF_FILL"]
         };
       }
+      const fillOutcome = normalizeHistoricalFillOutcome(latestFill);
+      if (fillOutcome === null) {
+        return {
+          forecastPUp: 0.5,
+          action: "ABSTAIN",
+          reasonCodes: ["HISTORICAL_LAST_TRADE", "FILL_OUTCOME_SIDE_UNSUPPORTED"]
+        };
+      }
+      const rawProbability = scaledPriceToProbability(latestFill.fillPriceRaw, input.frame.market.quoteDecimals);
       return {
-        forecastPUp: scaledPriceToProbability(latestFill.fillPriceRaw, input.frame.market.quoteDecimals),
+        forecastPUp: fillOutcome === "YES" ? rawProbability : 1 - rawProbability,
         action: "WATCH_ONLY",
-        reasonCodes: ["HISTORICAL_LAST_TRADE", "PRE_CUTOFF_FILL"]
+        reasonCodes: [
+          "HISTORICAL_LAST_TRADE",
+          "PRE_CUTOFF_FILL",
+          fillOutcome === "YES" ? "YES_FILL_PRICE" : "NO_FILL_PRICE_INVERTED"
+        ]
       };
     }
   }

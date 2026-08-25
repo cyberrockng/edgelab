@@ -112,6 +112,51 @@ const V2ExperimentSchema = z.object({
     idempotentReplay: z.boolean().optional()
   })
 });
+const V2ReplaySchema = z.object({
+  data: z.object({
+    replay: z
+      .object({
+        id: z.string().uuid(),
+        status: z.string(),
+        selectedCount: z.number(),
+        processedCount: z.number(),
+        scoredCount: z.number(),
+        excludedCount: z.number(),
+        outputHash: z.string().nullable(),
+        decisions: z
+          .array(
+            z.object({
+              marketId: z.string(),
+              action: z.string(),
+              forecastPUp: z.number().nullable(),
+              outcomeResult: z.string().nullable(),
+              frameHash: z.string()
+            })
+          )
+          .optional()
+      })
+      .nullable(),
+    idempotentReplay: z.boolean().optional()
+  })
+});
+const V2AssessmentSchema = z.object({
+  data: z.object({
+    assessment: z.object({
+      verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+      reasonCodes: z.array(z.string()),
+      sampleSize: z.number(),
+      exclusionCount: z.number(),
+      pnlStatus: z.enum(["NOT_AVAILABLE", "AVAILABLE"]),
+      metricRunId: z.string().uuid().optional(),
+      assessmentId: z.string().uuid().optional()
+    })
+  })
+});
+const V2LatestAssessmentSchema = z.object({
+  data: z.object({
+    assessment: V2AssessmentSchema.shape.data.shape.assessment.nullable()
+  })
+});
 const apiMarketId = `0x${"9".repeat(61)}abc`;
 
 const binaryMarket: BinaryMarket = {
@@ -275,8 +320,8 @@ const historicalIndexerFetch: HistoricalIndexerFetch = () =>
               takerRemainingQuantity: "0",
               takerSide: "BUY_YES",
               takerIsBid: true,
-              timestamp: "1787566520",
-              blockNumber: "46",
+              timestamp: "1787569500",
+              blockNumber: "90",
               logIndex: 3,
               txHash: "0xfill"
             }
@@ -605,6 +650,91 @@ describe("API-001 server contracts", () => {
       createBody.data.experiment.experimentId
     );
     expect(denied.statusCode).toBe(404);
+  });
+
+  it("runs historical replay, persists decisions, and evaluates from replay evidence", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-replay-002"
+      },
+      payload: {
+        name: "Replay 002 historical last trade",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.0.0",
+        marketId: apiMarketId,
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-run-replay-002"
+      }
+    });
+    const replayBody = V2ReplaySchema.parse(replay.json());
+    const evaluate = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/evaluate`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-evaluate-replay-002"
+      }
+    });
+    const assessmentBody = V2AssessmentSchema.parse(evaluate.json());
+    const replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: { cookie: cookies }
+    });
+    const latest = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/evaluation/latest`,
+      headers: { cookie: cookies }
+    });
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(replay.statusCode).toBe(200);
+    expect(replayBody.data.replay).toMatchObject({
+      status: "SUCCEEDED",
+      selectedCount: 1,
+      processedCount: 1,
+      scoredCount: 1,
+      excludedCount: 0
+    });
+    expect(replayBody.data.replay?.outputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(replayBody.data.replay?.decisions?.[0]).toMatchObject({
+      marketId: apiMarketId.toLowerCase(),
+      action: "WATCH_ONLY",
+      outcomeResult: "YES"
+    });
+    expect(replayBody.data.replay?.decisions?.[0]?.frameHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(replayBody)).not.toContain("closingAnswer");
+    expect(replayReload.statusCode).toBe(200);
+    expect(V2ReplaySchema.parse(replayReload.json()).data.replay?.status).toBe("SUCCEEDED");
+    expect(evaluate.statusCode).toBe(200);
+    expect(assessmentBody.data.assessment.verdict).toBe("INSUFFICIENT_EVIDENCE");
+    expect(assessmentBody.data.assessment.reasonCodes).toContain("MIN_SAMPLE_NOT_MET");
+    expect(assessmentBody.data.assessment.sampleSize).toBe(1);
+    expect(assessmentBody.data.assessment.pnlStatus).toBe("NOT_AVAILABLE");
+    expect(latest.statusCode).toBe(200);
+    expect(V2LatestAssessmentSchema.parse(latest.json()).data.assessment?.verdict).toBe("INSUFFICIENT_EVIDENCE");
   });
 
   it("rejects experiment writes without the current research-session csrf token", async () => {

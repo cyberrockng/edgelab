@@ -19,14 +19,24 @@ import { summarizeChainEvidence } from "@edgelab/chain";
 import type { RuntimeConfig } from "@edgelab/config";
 import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_MAINNET_CHAIN_ID, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
 import {
+  completeReplayRun,
   createInteractiveExperiment,
+  createReplayRun,
   createResearchSession,
+  failReplayRun,
+  findReplayRunByInputHash,
   findActiveResearchSessionByTokenHash,
   getInteractiveExperiment,
+  getLatestReplayRunForExperiment,
   listInteractiveExperiments,
+  persistHistoricalSourceManifest,
+  persistReplayDecision,
   rotateResearchSessionCsrf,
+  startReplayRun,
   upsertPolicyVersion,
   type InteractiveExperimentDetailRecord,
+  type ReplayRunDetailRecord,
+  type ReplayRunRecord,
   type ResearchSessionRecord
 } from "@edgelab/db";
 import {
@@ -47,9 +57,13 @@ import {
   type DreamDexSdkClient,
   type HistoricalDreamDexReadResult,
   type HistoricalDreamDexSdkClient,
+  type HistoricalFillEvidence,
   type HistoricalIndexerFetch,
+  type HistoricalMarketEvidence,
   type HistoricalMarketFilters,
+  type HistoricalOrderEvidence,
   type HistoricalPageOptions,
+  type HistoricalRowsPage,
   type HistoricalTimeWindowPageOptions,
   type MainnetHistoricalDreamDexConfig
 } from "@edgelab/dreamdex";
@@ -58,11 +72,13 @@ import { observeExperiment } from "@edgelab/observe";
 import {
   createHistoricalPolicyManifest,
   createPolicyManifest,
+  evaluateHistoricalPolicy,
   historicalPolicies,
   referencePolicies,
   type HistoricalPolicyAdapter,
   type PolicyAdapter
 } from "@edgelab/policy-runtime";
+import { buildHistoricalDecisionFrame } from "@edgelab/replay";
 import { reconcileSettlements } from "@edgelab/settle";
 import { z } from "zod";
 
@@ -394,6 +410,382 @@ function compactHistoricalCandleQuery(
     ...(input.fromSec === undefined ? {} : { fromSec: input.fromSec }),
     ...(input.toSec === undefined ? {} : { toSec: input.toSec })
   };
+}
+
+const ReplaySourceVersion = "dreamdex-mainnet-history@0.28.1";
+const ReplayQueryVersion = "replay-002-bounded-v1";
+const ReplayMaxMarkets = 12;
+const ReplayPageLimit = 100;
+const ReplayMaxFills = 1_000;
+
+function serializeReplayRun(record: ReplayRunRecord | ReplayRunDetailRecord) {
+  return {
+    id: record.id,
+    experimentId: record.experimentId,
+    configurationId: record.configurationId,
+    plane: record.plane,
+    status: record.status,
+    frozenNow: record.frozenNow.toISOString(),
+    selectedCount: record.selectedCount,
+    processedCount: record.processedCount,
+    scoredCount: record.scoredCount,
+    excludedCount: record.excludedCount,
+    capability: record.capability,
+    sourceVersion: record.sourceVersion,
+    queryVersion: record.queryVersion,
+    inputHash: record.inputHash,
+    outputHash: record.outputHash,
+    errorCode: record.errorCode,
+    checkpoints: record.checkpoints,
+    createdAt: record.createdAt.toISOString(),
+    startedAt: record.startedAt?.toISOString() ?? null,
+    completedAt: record.completedAt?.toISOString() ?? null,
+    decisions:
+      "decisions" in record
+        ? record.decisions.map((decision) => ({
+            id: decision.id,
+            marketId: decision.marketId,
+            decisionAt: decision.decisionAt.toISOString(),
+            cutoffBlock: decision.cutoffBlock,
+            frameHash: decision.frameHash,
+            forecastPUp: decision.forecastPUp,
+            action: decision.action,
+            reasonCodes: decision.reasonCodes,
+            outcomeLoadedAt: decision.outcomeLoadedAt?.toISOString() ?? null,
+            outcomeResult: decision.outcomeResult,
+            exclusionReason: decision.exclusionReason
+          }))
+        : undefined
+  };
+}
+
+function candidatePolicy(record: InteractiveExperimentDetailRecord) {
+  return record.policies.find((policy) => policy.role === "CANDIDATE") ?? record.policies[0] ?? null;
+}
+
+function historicalPolicyAdapter(record: InteractiveExperimentDetailRecord): HistoricalPolicyAdapter | null {
+  const policy = candidatePolicy(record);
+  if (policy === null) {
+    return null;
+  }
+  return (
+    historicalPolicies.find((adapter) => adapter.policyId === policy.policyId && adapter.version === policy.version) ??
+    null
+  );
+}
+
+function experimentReplayInputHash(experiment: InteractiveExperimentDetailRecord): string {
+  return sha256(
+    stableJson({
+      experimentId: experiment.experimentId,
+      configurationId: experiment.configuration.id,
+      configHash: experiment.configuration.configHash,
+      candidatePolicy: candidatePolicy(experiment),
+      sourceVersion: ReplaySourceVersion,
+      queryVersion: ReplayQueryVersion
+    })
+  );
+}
+
+function selectedMarketId(experiment: InteractiveExperimentDetailRecord): string | null {
+  const value = experiment.configuration.config.selectedMarketId;
+  return typeof value === "string" && MarketIdSchema.safeParse(value).success ? value.toLowerCase() : null;
+}
+
+function normalizeOutcome(value: string | null): "YES" | "NO" | null {
+  if (value === null) {
+    return null;
+  }
+  const normalized = value.trim().toUpperCase();
+  if (["YES", "UP", "TRUE", "0"].includes(normalized)) {
+    return "YES";
+  }
+  if (["NO", "DOWN", "FALSE", "1"].includes(normalized)) {
+    return "NO";
+  }
+  return null;
+}
+
+function maxBlock(values: readonly string[]): string | null {
+  let max: bigint | null = null;
+  for (const value of values) {
+    if (!/^[0-9]+$/.test(value)) {
+      continue;
+    }
+    const parsed = BigInt(value);
+    if (max === null || parsed > max) {
+      max = parsed;
+    }
+  }
+  return max?.toString() ?? null;
+}
+
+function minBlock(values: readonly string[]): string | null {
+  let min: bigint | null = null;
+  for (const value of values) {
+    if (!/^[0-9]+$/.test(value)) {
+      continue;
+    }
+    const parsed = BigInt(value);
+    if (min === null || parsed < min) {
+      min = parsed;
+    }
+  }
+  return min?.toString() ?? null;
+}
+
+function cutoffBlockFromSourceRows(input: {
+  readonly decisionAtSeconds: number;
+  readonly orders: readonly HistoricalOrderEvidence[];
+  readonly fills: readonly HistoricalFillEvidence[];
+}): string {
+  const blocks: string[] = [];
+  for (const fill of input.fills) {
+    if (fill.timestampSeconds < input.decisionAtSeconds) {
+      blocks.push(fill.blockNumber);
+    }
+  }
+  for (const order of input.orders) {
+    if (order.placedAtTimestampSeconds < input.decisionAtSeconds) {
+      blocks.push(order.placedAtBlock);
+    }
+    if (order.lastUpdatedAtTimestampSeconds < input.decisionAtSeconds) {
+      blocks.push(order.lastUpdatedAtBlock);
+    }
+  }
+  return maxBlock(blocks) ?? "0";
+}
+
+async function fetchPagedHistoricalRows<T>(
+  readPage: (page: HistoricalPageOptions) => Promise<HistoricalDreamDexReadResult<HistoricalRowsPage<T>>>,
+  maxRows: number
+): Promise<HistoricalDreamDexReadResult<{ readonly rows: readonly T[]; readonly hasMore: boolean }>> {
+  const rows: T[] = [];
+  let offset = 0;
+  let hasMore = true;
+  while (hasMore && rows.length < maxRows) {
+    const page = await readPage({ limit: Math.min(ReplayPageLimit, maxRows - rows.length), offset });
+    if (!page.ok) {
+      return page;
+    }
+    rows.push(...page.value.rows);
+    hasMore = page.value.hasMore;
+    offset += page.value.page.limit;
+  }
+  return { ok: true, value: { rows, hasMore } };
+}
+
+async function selectHistoricalReplayMarkets(input: {
+  readonly experiment: InteractiveExperimentDetailRecord;
+  readonly client: HistoricalDreamDexSdkClient;
+  readonly config: MainnetHistoricalDreamDexConfig;
+}): Promise<HistoricalDreamDexReadResult<readonly HistoricalMarketEvidence[]>> {
+  const explicitMarketId = selectedMarketId(input.experiment);
+  if (explicitMarketId !== null) {
+    const market = await getHistoricalBinaryMarket(input.client, input.config, explicitMarketId);
+    if (!market.ok) {
+      return market;
+    }
+    return { ok: true, value: market.value === null ? [] : [market.value] };
+  }
+  const [asset] = input.experiment.configuration.assets;
+  const [intervalSec] = input.experiment.configuration.intervals;
+  const page = await listHistoricalBinaryMarkets(input.client, input.config, {
+    ...(asset === "BTC" || asset === "ETH" ? { asset } : {}),
+    ...(typeof intervalSec === "number" ? { intervalSec } : {}),
+    status: "Finalized",
+    limit: ReplayMaxMarkets,
+    offset: 0
+  });
+  if (!page.ok) {
+    return page;
+  }
+  const fromSeconds =
+    input.experiment.configuration.windowFrom === null
+      ? null
+      : Math.floor(input.experiment.configuration.windowFrom.getTime() / 1000);
+  const toSeconds =
+    input.experiment.configuration.windowTo === null
+      ? null
+      : Math.floor(input.experiment.configuration.windowTo.getTime() / 1000);
+  return {
+    ok: true,
+    value: page.value.rows.filter(
+      (market) =>
+        (fromSeconds === null || market.expirySeconds >= fromSeconds) &&
+        (toSeconds === null || market.tradingStartSeconds <= toSeconds)
+    )
+  };
+}
+
+async function executeHistoricalReplay(input: {
+  readonly pool: pg.Pool;
+  readonly replayRun: ReplayRunRecord;
+  readonly experiment: InteractiveExperimentDetailRecord;
+  readonly historicalDreamDexClient: HistoricalDreamDexSdkClient;
+  readonly historicalDreamDexConfig: MainnetHistoricalDreamDexConfig;
+  readonly historicalIndexerFetch?: HistoricalIndexerFetch;
+}): Promise<ReplayRunRecord> {
+  const adapter = historicalPolicyAdapter(input.experiment);
+  const policy = candidatePolicy(input.experiment);
+  if (adapter === null || policy === null) {
+    throw new Error("Experiment does not have a supported historical candidate policy");
+  }
+  const markets = await selectHistoricalReplayMarkets({
+    experiment: input.experiment,
+    client: input.historicalDreamDexClient,
+    config: input.historicalDreamDexConfig
+  });
+  if (!markets.ok) {
+    throw new Error(markets.message);
+  }
+  let processedCount = 0;
+  let scoredCount = 0;
+  const outputItems: unknown[] = [];
+  for (const market of markets.value.slice(0, ReplayMaxMarkets)) {
+    const decisionLeadSeconds = Math.max(60, Math.abs(input.experiment.configuration.decisionOffsetSec));
+    const decisionAtSeconds = Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionLeadSeconds);
+    const decisionAt = new Date(decisionAtSeconds * 1000);
+    const candles = await listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
+      fromSec: market.tradingStartSeconds,
+      toSec: decisionAtSeconds,
+      limit: 100
+    });
+    if (!candles.ok) {
+      throw new Error(candles.message);
+    }
+    const orders = await listHistoricalOrdersByMarket(
+      input.historicalDreamDexConfig,
+      market.stableMarketId,
+      { limit: ReplayPageLimit, offset: 0 },
+      input.historicalIndexerFetch
+    );
+    if (!orders.ok) {
+      throw new Error(orders.message);
+    }
+    const fills = await fetchPagedHistoricalRows(
+      (page) =>
+        listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
+      ReplayMaxFills
+    );
+    if (!fills.ok) {
+      throw new Error(fills.message);
+    }
+    const cutoffBlock = cutoffBlockFromSourceRows({
+      decisionAtSeconds,
+      orders: orders.value.rows,
+      fills: fills.value.rows
+    });
+    const frameResult = buildHistoricalDecisionFrame({
+      market,
+      decisionAt: decisionAt.toISOString(),
+      cutoffBlock,
+      candles: candles.value,
+      orders: orders.value.rows,
+      fills: fills.value.rows,
+      openingPrice:
+        market.openingPriceRaw === null
+          ? null
+          : {
+              priceRaw: market.openingPriceRaw,
+              availableAtBlock: cutoffBlock
+            },
+      quoteDecimals: market.quoteDecimals
+    });
+    const decision = evaluateHistoricalPolicy(adapter, {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+    const outcome = normalizeOutcome(market.winningOutcome);
+    const exclusionReason =
+      decision.action === "ABSTAIN"
+        ? decision.reasonCodes.join("|")
+        : outcome === null
+          ? "OUTCOME_UNAVAILABLE_OR_UNMAPPED"
+          : null;
+    await persistReplayDecision(input.pool, {
+      replayRunId: input.replayRun.id,
+      marketId: market.stableMarketId,
+      policyVersionId: policy.policyVersionId,
+      decisionAt,
+      cutoffBlock,
+      frameHash: frameResult.frameHash,
+      forecastPUp: decision.action === "ABSTAIN" ? null : decision.forecastPUp,
+      action: decision.action,
+      reasonCodes: decision.reasonCodes,
+      outcomeLoadedAt: new Date(),
+      outcomeResult: outcome,
+      exclusionReason
+    });
+    const blocks = [
+      ...orders.value.rows.flatMap((order) => [order.placedAtBlock, order.lastUpdatedAtBlock]),
+      ...fills.value.rows.map((fill) => fill.blockNumber)
+    ];
+    const manifestDigest = sha256(
+      stableJson({
+        marketId: market.stableMarketId,
+        frameHash: frameResult.frameHash,
+        ordersCount: orders.value.rows.length,
+        fillsCount: fills.value.rows.length,
+        candlesCount: candles.value.length,
+        partialOrders: orders.value.hasMore,
+        partialFills: fills.value.hasMore
+      })
+    );
+    await persistHistoricalSourceManifest(input.pool, {
+      replayRunId: input.replayRun.id,
+      marketId: market.stableMarketId,
+      sourceVersion: ReplaySourceVersion,
+      queryVersion: ReplayQueryVersion,
+      ordersCount: orders.value.rows.length,
+      fillsCount: fills.value.rows.length,
+      candlesCount: candles.value.length,
+      firstBlock: minBlock(blocks),
+      lastBlock: maxBlock(blocks),
+      completeness: orders.value.hasMore || fills.value.hasMore ? "PARTIAL" : "COMPLETE",
+      canonicalDigest: manifestDigest,
+      retrievedAt: new Date(),
+      sourceMetadata: {
+        plane: "MAINNET_HISTORICAL",
+        chainId: SOMNIA_MAINNET_CHAIN_ID,
+        marketId: market.stableMarketId,
+        cutoffBlock,
+        frameHash: frameResult.frameHash,
+        outcomeLoadedOnlyAfterFrame: true,
+        bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+      }
+    });
+    processedCount += 1;
+    if (decision.action !== "ABSTAIN" && outcome !== null) {
+      scoredCount += 1;
+    }
+    outputItems.push({
+      marketId: market.stableMarketId,
+      frameHash: frameResult.frameHash,
+      cutoffBlock,
+      action: decision.action,
+      outcome,
+      exclusionReason
+    });
+  }
+  const outputHash = sha256(stableJson(outputItems));
+  return await completeReplayRun(input.pool, {
+    replayRunId: input.replayRun.id,
+    selectedCount: markets.value.length,
+    processedCount,
+    scoredCount,
+    excludedCount: processedCount - scoredCount,
+    outputHash,
+    checkpoints: {
+      marketsProcessed: processedCount,
+      decisionsGenerated: processedCount,
+      scoredDecisions: scoredCount,
+      abstentionsOrUnusable: processedCount - scoredCount,
+      sourcePlane: "MAINNET_HISTORICAL",
+      outcomeEmbargo: "OUTCOME_WRITTEN_AFTER_FRAME_HASH",
+      bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+    }
+  });
 }
 
 export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
@@ -749,6 +1141,318 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "EXPERIMENT_DETAIL_UNAVAILABLE",
         error instanceof Error ? error.message : "Experiment detail unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/replay", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const replay = await getLatestReplayRunForExperiment(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      return v2Data(
+        {
+          replay: replay === null ? null : serializeReplayRun(replay),
+          csrfToken: ensured.csrfToken
+        },
+        {
+          ownership: "research-session",
+          sourcePlane: "MAINNET_HISTORICAL",
+          blockchainWrite: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "REPLAY_STATE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Replay state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/experiments/:experimentId/replay", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      if (experiment.configuration.mode !== "HISTORICAL_REPLAY") {
+        return await v2Error(reply, 409, "REPLAY_MODE_REQUIRED", "Only historical replay experiments can run historical qualification", false, request.id);
+      }
+      const adapter = historicalPolicyAdapter(experiment);
+      if (adapter === null) {
+        return await v2Error(reply, 409, "HISTORICAL_POLICY_UNSUPPORTED", "Experiment policy is not approved for historical replay", false, request.id);
+      }
+      const inputHash = experimentReplayInputHash(experiment);
+      const existing = await findReplayRunByInputHash(pool, {
+        sessionId: session.id,
+        experimentId: experiment.experimentId,
+        inputHash
+      });
+      if (existing !== null && existing.status === "SUCCEEDED") {
+        const replay = await getLatestReplayRunForExperiment(pool, {
+          sessionId: session.id,
+          experimentId: experiment.experimentId
+        });
+        return v2Data(
+          { replay: replay === null ? serializeReplayRun(existing) : serializeReplayRun(replay), idempotentReplay: true },
+          { applicationWrite: false, blockchainWrite: false, sourcePlane: "MAINNET_HISTORICAL" }
+        );
+      }
+      if (existing !== null && existing.status === "RUNNING") {
+        return await v2Error(reply, 409, "REPLAY_ALREADY_RUNNING", "Historical qualification is already running", true, request.id);
+      }
+      const replayRun = await createReplayRun(pool, {
+        experimentId: experiment.experimentId,
+        configurationId: experiment.configuration.id,
+        frozenNow: new Date(),
+        sourceVersion: ReplaySourceVersion,
+        queryVersion: ReplayQueryVersion,
+        inputHash,
+        idempotencyKey,
+        capability: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
+        checkpoints: {
+          sourcePlane: "MAINNET_HISTORICAL",
+          antiLookahead: "STRICTLY_BEFORE_DECISION_AT",
+          bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+        }
+      });
+      const running = await startReplayRun(pool, replayRun.id);
+      let completed: ReplayRunRecord;
+      try {
+        completed = await executeHistoricalReplay({
+          pool,
+          replayRun: running,
+          experiment,
+          historicalDreamDexClient,
+          historicalDreamDexConfig,
+          ...(deps.historicalIndexerFetch === undefined ? {} : { historicalIndexerFetch: deps.historicalIndexerFetch })
+        });
+      } catch (error) {
+        await failReplayRun(pool, {
+          replayRunId: running.id,
+          errorCode: error instanceof Error ? error.message.slice(0, 120) : "REPLAY_FAILED",
+          checkpoints: {
+            sourcePlane: "MAINNET_HISTORICAL",
+            failedAt: new Date().toISOString()
+          }
+        });
+        throw error;
+      }
+      const detail = await getLatestReplayRunForExperiment(pool, {
+        sessionId: session.id,
+        experimentId: experiment.experimentId
+      });
+      return v2Data(
+        { replay: detail === null ? serializeReplayRun(completed) : serializeReplayRun(detail), idempotentReplay: false },
+        {
+          applicationWrite: true,
+          blockchainWrite: false,
+          sourcePlane: "MAINNET_HISTORICAL",
+          outcomeEmbargo: "outcomes persisted only after decision frame hashes"
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "REPLAY_RUN_FAILED",
+        error instanceof Error ? error.message : "Historical replay failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/evaluation/latest", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const result = await pool.query<{
+        assessment_id: string;
+        metric_run_id: string;
+        verdict: string;
+        reason_codes: string[];
+        sample_size: number;
+        exclusion_count: number;
+        brier_score: number | null;
+        calibration_bias: number | null;
+        neutral_baseline_delta: number | null;
+        pnl_status: string;
+        evidence_plane: string;
+        replay_run_id: string | null;
+        promotion_scope: string;
+        created_at: Date;
+      }>(
+        `
+          SELECT
+            evidence_assessments.id AS assessment_id,
+            metric_runs.id AS metric_run_id,
+            evidence_assessments.verdict,
+            evidence_assessments.reason_codes,
+            metric_runs.sample_size,
+            metric_runs.exclusion_count,
+            metric_runs.brier_score,
+            metric_runs.calibration_bias,
+            metric_runs.neutral_baseline_delta,
+            metric_runs.pnl_status,
+            metric_runs.evidence_plane,
+            metric_runs.replay_run_id,
+            metric_runs.promotion_scope,
+            evidence_assessments.created_at
+          FROM evidence_assessments
+          JOIN metric_runs ON metric_runs.id = evidence_assessments.metric_run_id
+          JOIN experiments ON experiments.id = metric_runs.experiment_id
+          WHERE experiments.id = $1
+            AND experiments.created_by_session_id = $2
+          ORDER BY evidence_assessments.created_at DESC
+          LIMIT 1
+        `,
+        [params.data.experimentId, ensured.session.id]
+      );
+      const row = result.rows[0] ?? null;
+      return v2Data(
+        {
+          assessment:
+            row === null
+              ? null
+              : {
+                  assessmentId: row.assessment_id,
+                  metricRunId: row.metric_run_id,
+                  verdict: row.verdict,
+                  reasonCodes: row.reason_codes,
+                  sampleSize: row.sample_size,
+                  exclusionCount: row.exclusion_count,
+                  brierScore: row.brier_score,
+                  calibrationBias: row.calibration_bias,
+                  neutralBaselineDelta: row.neutral_baseline_delta,
+                  pnlStatus: row.pnl_status,
+                  evidencePlane: row.evidence_plane,
+                  replayRunId: row.replay_run_id,
+                  promotionScope: row.promotion_scope,
+                  createdAt: row.created_at.toISOString()
+                },
+          csrfToken: ensured.csrfToken
+        },
+        { ownership: "research-session", sourcePlane: "MAINNET_HISTORICAL" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EVALUATION_STATE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Evaluation state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/experiments/:experimentId/evaluate", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      const policy = candidatePolicy(experiment);
+      if (policy === null) {
+        return await v2Error(reply, 409, "CANDIDATE_POLICY_MISSING", "Experiment has no candidate policy to evaluate", false, request.id);
+      }
+      const replay = await getLatestReplayRunForExperiment(pool, {
+        sessionId: session.id,
+        experimentId: experiment.experimentId
+      });
+      if (replay === null || replay.status !== "SUCCEEDED") {
+        return await v2Error(reply, 409, "REPLAY_REQUIRED", "Run historical qualification before evaluating evidence", false, request.id);
+      }
+      const assessment = await runMetricAssessment({
+        pool,
+        experimentId: experiment.experimentId,
+        policyVersionId: policy.policyVersionId,
+        replayRunId: replay.id,
+        evidencePlane: "MAINNET_HISTORICAL",
+        promotionScope: "HISTORICAL_REPLAY_ONLY",
+        ruleVersion: "eval-002-historical-replay-v1",
+        provenance: {
+          replayRunId: replay.id,
+          replayOutputHash: replay.outputHash,
+          sourcePlane: "MAINNET_HISTORICAL",
+          pnlLabel: "REPLAY_COUNTERFACTUAL_OR_NOT_AVAILABLE",
+          bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+        }
+      });
+      return v2Data(
+        { assessment },
+        {
+          applicationWrite: true,
+          blockchainWrite: false,
+          sourcePlane: "MAINNET_HISTORICAL",
+          verdictAuthority: "server-evaluation-engine"
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EVALUATION_FAILED",
+        error instanceof Error ? error.message : "Evaluation failed",
         true,
         request.id
       );

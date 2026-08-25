@@ -1,0 +1,17 @@
+{
+  "evidenceId": "REPLAY-002-SAMPLE",
+  "capturedAt": "2026-08-25T11:54:48.289Z",
+  "replayDecision": {
+    "marketId": "0x0000000000000000000000000000000000000000000000000000000000001bdb",
+    "action": "ABSTAIN",
+    "forecastPUp": null,
+    "outcomeResult": "NO",
+    "frameHash": "01ba06e562e0dae82f3894a47d29a71ad2c549ee4449bd648401032343134395",
+    "reasonCodes": [
+      "HISTORICAL_LAST_TRADE",
+      "NO_PRE_CUTOFF_FILL"
+    ]
+  },
+  "interpretation": "The policy received a valid pre-outcome frame but no verified fill in the last 900 seconds before cutoff, so it abstained. EdgeLab treated this as insufficient evidence rather than fabricating a forecast.",
+  "redaction": "public evidence only"
+}
