@@ -1,0 +1,33 @@
+{
+  "task": "UX-010",
+  "capturedAt": "2026-08-25T09:51:13.769Z",
+  "tool": "@axe-core/playwright@4.13.0",
+  "routes": [
+    {
+      "route": "/",
+      "violationCount": 0,
+      "violations": []
+    },
+    {
+      "route": "/markets",
+      "violationCount": 0,
+      "violations": []
+    },
+    {
+      "route": "/evidence/proven-experiment",
+      "violationCount": 0,
+      "violations": []
+    },
+    {
+      "route": "/proof",
+      "violationCount": 0,
+      "violations": []
+    },
+    {
+      "route": "/how-it-works",
+      "violationCount": 0,
+      "violations": []
+    }
+  ],
+  "status": "PASS"
+}

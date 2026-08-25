@@ -1,0 +1,61 @@
+{
+  "task": "UX-010",
+  "title": "Route shell and global navigation verification",
+  "capturedAt": "2026-08-25T09:51:40.000Z",
+  "producer": "Codex execution agent",
+  "redaction": "public route, test, screenshot, and accessibility metadata only",
+  "dependencies": {
+    "react-router-dom": {
+      "version": "7.18.2",
+      "license": "MIT",
+      "purpose": "browser routes, direct links, active navigation, route fallback"
+    },
+    "@tanstack/react-query": {
+      "version": "5.102.3",
+      "license": "MIT",
+      "purpose": "pinned for upcoming typed server-state pages; not yet used for verdict derivation"
+    },
+    "@axe-core/playwright": {
+      "version": "4.13.0",
+      "license": "MPL-2.0",
+      "purpose": "dev-only standalone accessibility scan evidence"
+    }
+  },
+  "routesVerified": [
+    "/",
+    "/markets",
+    "/markets/:marketId",
+    "/lab",
+    "/lab/:experimentId",
+    "/compare",
+    "/evidence/:experimentId",
+    "/proof",
+    "/how-it-works"
+  ],
+  "spaFallback": {
+    "clientRoutes": "200 text/html",
+    "apiMissingRoute": "404 application/json",
+    "missingAsset": "404 application/json",
+    "status": "PASS"
+  },
+  "tests": {
+    "pnpm check": "PASS; 45 tests",
+    "pnpm build": "PASS; route chunks emitted",
+    "pnpm test:e2e": "PASS; 28 Playwright tests across desktop and mobile projects",
+    "axe": "PASS; zero violations on /, /markets, /evidence/proven-experiment, /proof, /how-it-works"
+  },
+  "truthPreserved": [
+    "Homepage no longer leads with a fabricated or browser-derived final verdict.",
+    "Evidence route states that the browser does not manufacture PROMOTE, HOLD, REJECT, or INSUFFICIENT EVIDENCE.",
+    "Market routes show no fabricated rows while historical APIs are pending.",
+    "Proof route preserves OrderExpired and no-fill truth.",
+    "Mainnet historical research and Shannon execution labels remain separate."
+  ],
+  "screenshots": [
+    "evidence/ui/ux-010-home-desktop.png",
+    "evidence/ui/ux-010-markets-desktop.png",
+    "evidence/ui/ux-010-proof-desktop.png",
+    "evidence/ui/ux-010-home-mobile.png"
+  ],
+  "accessibilityEvidence": "evidence/ui/ux-010-axe.json"
+}

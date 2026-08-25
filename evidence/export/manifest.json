@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-25T09:09:52.000Z",
-  "sourceCommit": "a300264386a0d99d19af952971e634934022ef98",
+  "producedAt": "2026-08-25T09:15:21.000Z",
+  "sourceCommit": "fcda51047b9ff7a0009d0a46f09fecccc0fb4f01",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 38,
+  "artifactCount": 44,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -274,6 +274,48 @@
       "path": "evidence/ui-ux/ui-ux-redesign-report.json",
       "sha256": "e9ade36e65a1c15f3213b20245dc9557309f89153259a245b81a14f263d3c5ee",
       "bytes": 6006,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-axe.json",
+      "sha256": "92e7f6d4066341ffd3912a4cfbc3c3033670de77ec8daae21da7c76c6c4d9ffd",
+      "bytes": 611,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-home-desktop.png",
+      "sha256": "d23fa10cc7895b8ce1bb5d7db1a6e3f13a65172ba74112542eb96d9c660bb367",
+      "bytes": 410925,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-home-mobile.png",
+      "sha256": "ca913c348640a43b0e17fd486e3a11363503424ec6a3bfcf1592dd2128f3b4a5",
+      "bytes": 296954,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-markets-desktop.png",
+      "sha256": "bc9b4dc7949df158fa7fa8b176c33b1dab9ee2adce52bee380aa027a07373a58",
+      "bytes": 148313,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-proof-desktop.png",
+      "sha256": "89fd08d77f33f25450d03be481cd177d88fc433973ba6137e0f980b3d346e9d1",
+      "bytes": 164500,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/ui/ux-010-report.json",
+      "sha256": "e6ec7c3fec0cd5fc281933280621052bbf2a2129b57ff52bb93aa638ed212e25",
+      "bytes": 2153,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     }

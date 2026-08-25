@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
@@ -102,6 +102,22 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       prefix: "/"
     });
   }
+
+  app.setNotFoundHandler((request, reply) => {
+    const methodAllowsSpaFallback = request.method === "GET" || request.method === "HEAD";
+    const path = new URL(request.url, config.PUBLIC_APP_URL).pathname;
+    const isApiPath = path === "/api" || path.startsWith("/api/");
+    const looksLikeAsset = path.split("/").at(-1)?.includes(".") ?? false;
+    if (staticRoot !== undefined && methodAllowsSpaFallback && !isApiPath && !looksLikeAsset) {
+      const html = readFileSync(join(staticRoot, "index.html"), "utf8");
+      return reply.type("text/html; charset=utf-8").send(html);
+    }
+    return reply.code(404).send({
+      ok: false,
+      reasonCode: "NOT_FOUND",
+      message: "Route not found"
+    });
+  });
 
   app.get("/healthz", () => ({
     ok: true,
