@@ -91,6 +91,53 @@ const V2ProofSchema = z.object({
     blockchainWrite: z.literal(false)
   })
 });
+const V2ProvenExperimentSchema = z.object({
+  data: z.object({
+    provenExperiment: z.object({
+      slug: z.literal("proven-experiment"),
+      status: z.literal("PUBLIC_PROVEN"),
+      selectionDisclosure: z.string(),
+      source: z.object({
+        plane: z.literal("MAINNET_HISTORICAL"),
+        chainId: z.literal(5031),
+        writePolicy: z.literal("read-only-no-mainnet-signer")
+      }),
+      replay: z.object({
+        status: z.literal("SUCCEEDED"),
+        processedCount: z.number(),
+        scoredCount: z.number(),
+        excludedCount: z.number(),
+        blockchainWrite: z.literal(false)
+      }),
+      decision: z.object({
+        action: z.string(),
+        frameHash: z.string(),
+        reasonCodes: z.array(z.string())
+      }),
+      assessment: z.object({
+        verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+        sampleSize: z.number(),
+        pnlStatus: z.literal("NOT_AVAILABLE")
+      }),
+      evidenceGate: z.object({
+        serverAuthored: z.literal(true),
+        verdictReasons: z.array(z.string()),
+        gateRows: z.array(z.object({ dimension: z.string(), status: z.string() }))
+      }),
+      reproducibility: z.object({
+        sourceArtifacts: z.array(z.string()),
+        replayOutputHash: z.string(),
+        inputHash: z.string(),
+        assessmentHash: z.string(),
+        exportPath: z.literal("evidence/proven/manifest.json")
+      })
+    })
+  }),
+  meta: z.object({
+    publicProven: z.literal(true),
+    blockchainWrite: z.literal(false)
+  })
+});
 const V2HistoricalPageSchema = z.object({
   data: z.object({
     markets: z.array(z.object({ stableMarketId: z.string() }))
@@ -634,6 +681,44 @@ describe("API-001 server contracts", () => {
     expect(body.data.proof.lifecycle.find((row) => row.state === "EXPIRED")?.detail).toContain("not OrderCancelled");
     expect(body.data.proof.technical.map((row) => row.label)).toEqual(
       expect.arrayContaining(["Approval", "Order", "Terminal", "Order ID"])
+    );
+  });
+
+  it("serves a reproducible public Proven Experiment from captured real replay evidence", async () => {
+    const app = buildApp(config, v2Deps());
+    const list = await app.inject({ method: "GET", url: "/api/v2/proven-experiments" });
+    const detail = await app.inject({ method: "GET", url: "/api/v2/proven-experiments/proven-experiment" });
+    const body = V2ProvenExperimentSchema.parse(detail.json());
+    await app.close();
+
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({
+      data: {
+        provenExperiments: [
+          expect.objectContaining({
+            slug: "proven-experiment",
+            verdict: "INSUFFICIENT_EVIDENCE",
+            route: "/lab/proven-experiment"
+          })
+        ]
+      }
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(body.data.provenExperiment.selectionDisclosure).toContain("not favorability");
+    expect(body.data.provenExperiment.replay).toMatchObject({
+      processedCount: 1,
+      scoredCount: 0,
+      excludedCount: 1,
+      blockchainWrite: false
+    });
+    expect(body.data.provenExperiment.assessment).toMatchObject({
+      verdict: "INSUFFICIENT_EVIDENCE",
+      sampleSize: 0,
+      pnlStatus: "NOT_AVAILABLE"
+    });
+    expect(body.data.provenExperiment.evidenceGate.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
+    expect(body.data.provenExperiment.reproducibility.sourceArtifacts).toEqual(
+      expect.arrayContaining(["evidence/replay/replay-002-report.json", "evidence/evaluate/eval-002-report.json"])
     );
   });
 

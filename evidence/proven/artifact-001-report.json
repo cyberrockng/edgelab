@@ -1,0 +1,46 @@
+{
+  "taskId": "ARTIFACT-001",
+  "capturedAt": "2026-08-25T13:58:30+01:00",
+  "capability": "Public Proven Experiment exposes a deterministic captured real-evidence replay path",
+  "publicRoutes": [
+    "/lab/proven-experiment",
+    "/evidence/proven-experiment"
+  ],
+  "apiContracts": [
+    "GET /api/v2/proven-experiments",
+    "GET /api/v2/proven-experiments/proven-experiment"
+  ],
+  "source": {
+    "plane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "writePolicy": "read-only-no-mainnet-signer"
+  },
+  "result": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "sampleSize": 0,
+    "excludedCount": 1,
+    "pnlStatus": "NOT_AVAILABLE",
+    "selectionBasis": "reproducibility and completeness, not favorability"
+  },
+  "integrity": {
+    "serverAuthoredEvidenceGate": true,
+    "futureDataLeakageClaimedAbsent": true,
+    "bookReconstructionUsed": false,
+    "fabricatedPerformance": false,
+    "blockchainWriteDuringArtifact001": false
+  },
+  "export": {
+    "path": "evidence/proven/manifest.json",
+    "sourceArtifacts": [
+      "evidence/replay/replay-002-report.json",
+      "evidence/replay/replay-002-sample.json",
+      "evidence/evaluate/eval-002-report.json"
+    ]
+  },
+  "testEvidence": {
+    "focusedServerTypecheck": "PASS",
+    "focusedWebTypecheck": "PASS",
+    "integrationApiProvenExperiment": "PASS"
+  },
+  "sensitiveData": "Sanitized public replay and evaluation metadata only"
+}

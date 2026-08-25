@@ -364,6 +364,84 @@ export interface EvidenceGateResponse {
   readonly csrfToken?: string;
 }
 
+export interface ProvenExperimentSummary {
+  readonly slug: "proven-experiment";
+  readonly title: string;
+  readonly verdict: EvaluationAssessmentRecord["verdict"];
+  readonly sampleSize: number;
+  readonly sourcePlane: string;
+  readonly policy: string;
+  readonly route: string;
+  readonly evidenceRoute: string;
+  readonly exportPath: string;
+}
+
+export interface ProvenExperimentRecord extends ProvenExperimentSummary {
+  readonly status: "PUBLIC_PROVEN";
+  readonly selectionDisclosure: string;
+  readonly source: {
+    readonly plane: "MAINNET_HISTORICAL";
+    readonly chainId: 5031;
+    readonly sdkVersion: string;
+    readonly writePolicy: string;
+  };
+  readonly market: {
+    readonly stableMarketId: string;
+    readonly asset: string;
+    readonly intervalSeconds: number;
+    readonly status: string;
+    readonly normalizedOutcome: string;
+  };
+  readonly experiment: {
+    readonly experimentId: string;
+    readonly mode: "HISTORICAL_REPLAY";
+    readonly policy: string;
+    readonly riskEnvelope: string;
+  };
+  readonly replay: {
+    readonly status: "SUCCEEDED";
+    readonly selectedCount: number;
+    readonly processedCount: number;
+    readonly scoredCount: number;
+    readonly excludedCount: number;
+    readonly outputHash: string;
+    readonly bookReconstruction: string;
+    readonly blockchainWrite: false;
+  };
+  readonly decision: {
+    readonly marketId: string;
+    readonly action: string;
+    readonly forecastPUp: number | null;
+    readonly outcomeResult: string | null;
+    readonly frameHash: string;
+    readonly reasonCodes: readonly string[];
+  };
+  readonly antiLookahead: {
+    readonly decisionFrames: string;
+    readonly outcomeEmbargo: string;
+    readonly futureCandlesExcluded: boolean;
+    readonly futureFillsExcluded: boolean;
+    readonly resolutionEmbargoedFromPolicy: boolean;
+  };
+  readonly assessment: AssessmentSummaryRecord;
+  readonly evidenceGate: EvidenceGateRecord;
+  readonly reproducibility: {
+    readonly sourceArtifacts: readonly string[];
+    readonly replayOutputHash: string;
+    readonly inputHash: string;
+    readonly assessmentHash: string;
+    readonly exportPath: string;
+  };
+}
+
+export interface ProvenExperimentsResponse {
+  readonly provenExperiments: readonly ProvenExperimentSummary[];
+}
+
+export interface ProvenExperimentResponse {
+  readonly provenExperiment: ProvenExperimentRecord;
+}
+
 export interface LiveShadowState {
   readonly episodeCount: number;
   readonly snapshotCount: number;
@@ -554,6 +632,14 @@ export async function fetchEvidenceGate(experimentId: string): Promise<V2Envelop
     storeCsrfToken(response.data.csrfToken);
   }
   return response;
+}
+
+export async function fetchProvenExperiments(): Promise<V2Envelope<ProvenExperimentsResponse>> {
+  return await fetchV2Request<ProvenExperimentsResponse>("/api/v2/proven-experiments");
+}
+
+export async function fetchProvenExperiment(slug = "proven-experiment"): Promise<V2Envelope<ProvenExperimentResponse>> {
+  return await fetchV2Request<ProvenExperimentResponse>(`/api/v2/proven-experiments/${slug}`);
 }
 
 export async function evaluateExperiment(experimentId: string): Promise<V2Envelope<{ readonly assessment: EvaluationAssessmentRecord }>> {

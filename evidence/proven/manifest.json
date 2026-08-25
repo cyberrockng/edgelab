@@ -1,0 +1,78 @@
+{
+  "evidenceId": "PROVEN-001",
+  "task": "ARTIFACT-001",
+  "capturedAt": "2026-08-25T13:58:00+01:00",
+  "title": "Proven replay: historical last-trade abstention",
+  "status": "PUBLIC_PROVEN",
+  "selectionDisclosure": "Representative single-market captured run selected for reproducibility and completeness, not favorability.",
+  "source": {
+    "plane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "sdkVersion": "0.28.1",
+    "writePolicy": "read-only-no-mainnet-signer"
+  },
+  "market": {
+    "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bdb",
+    "asset": "BTC",
+    "intervalSeconds": 900,
+    "status": "Finalized",
+    "normalizedOutcome": "NO"
+  },
+  "experiment": {
+    "experimentId": "68598888-768d-4aa4-82ae-3b3962813e68",
+    "mode": "HISTORICAL_REPLAY",
+    "policy": "historical-last-trade@1.0.0",
+    "riskEnvelope": "WATCH_ONLY_BOUNDED"
+  },
+  "replay": {
+    "status": "SUCCEEDED",
+    "selectedCount": 1,
+    "processedCount": 1,
+    "scoredCount": 0,
+    "excludedCount": 1,
+    "outputHash": "b6111d9f4b829abf27cea6e547d4a4575f5a3f27ffc2a9c7c6645809e8442ac4",
+    "frameHash": "01ba06e562e0dae82f3894a47d29a71ad2c549ee4449bd648401032343134395",
+    "bookReconstruction": "SOURCE_INCOMPLETE",
+    "blockchainWrite": false
+  },
+  "decision": {
+    "action": "ABSTAIN",
+    "forecastPUp": null,
+    "outcomeResult": "NO",
+    "reasonCodes": [
+      "HISTORICAL_LAST_TRADE",
+      "NO_PRE_CUTOFF_FILL"
+    ]
+  },
+  "assessment": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "reasonCodes": [
+      "MIN_SAMPLE_NOT_MET",
+      "SUFFICIENCY_RUN_FIRST",
+      "PNL_SEPARATE_FROM_FORECAST"
+    ],
+    "sampleSize": 0,
+    "exclusionCount": 1,
+    "brierScore": null,
+    "calibrationBias": null,
+    "pnlStatus": "NOT_AVAILABLE",
+    "pnlLabel": "not realized wallet PnL"
+  },
+  "antiLookahead": {
+    "decisionFrames": "STRICTLY_BEFORE_DECISION_AT",
+    "outcomeEmbargo": "outcome persisted after decision frame hash",
+    "futureCandlesExcluded": true,
+    "futureFillsExcluded": true,
+    "resolutionEmbargoedFromPolicy": true
+  },
+  "sourceArtifacts": [
+    "evidence/replay/replay-002-report.json",
+    "evidence/replay/replay-002-sample.json",
+    "evidence/evaluate/eval-002-report.json"
+  ],
+  "hashes": {
+    "inputHash": "7ffbda85a2649c0457b09859202adde8b033593f16bc75859b1be54747c41cb5",
+    "assessmentHash": "cb45f64b36a4352ec9a0e4055b31e25267f3388b3fbba365a1d959dfce475ab4"
+  },
+  "redaction": "Public market IDs, replay hashes, reason codes, and evaluation outputs only"
+}

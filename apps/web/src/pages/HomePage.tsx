@@ -20,6 +20,9 @@ export default function HomePage() {
             <Link className="secondaryAction" to="/markets?plane=historical">
               Explore DreamDEX History
             </Link>
+            <Link className="secondaryAction" to="/lab/proven-experiment">
+              Open Proven Experiment
+            </Link>
             <Link className="secondaryAction" to="/proof">
               View Verified Execution
             </Link>
@@ -54,7 +57,7 @@ export default function HomePage() {
         <article>
           <span className="label">Operate</span>
           <h2>Experiments are application state.</h2>
-          <p>Strategy Lab routes support the upcoming create, replay, evaluate, compare, and evidence workflows.</p>
+          <p>Strategy Lab routes let judges create a fresh run or inspect a captured public replay with real evidence.</p>
         </article>
         <article>
           <span className="label">Verify</span>

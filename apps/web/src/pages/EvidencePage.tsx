@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { apiErrorMessage, capturedSummary, fetchEvidenceGate, minimumSample } from "../data.js";
+import { apiErrorMessage, capturedSummary, fetchEvidenceGate, fetchProvenExperiment, minimumSample } from "../data.js";
 
 function normalizeStatus(status: string): string {
   return status.replaceAll("_", "-").replaceAll(" ", "-").toLowerCase();
@@ -12,13 +12,19 @@ function validUuid(value: string | undefined): value is string {
 
 export default function EvidencePage() {
   const { experimentId } = useParams();
+  const isProvenExperiment = experimentId === "proven-experiment";
   const canLoadEvidence = validUuid(experimentId);
   const evidenceQuery = useQuery({
     enabled: canLoadEvidence,
     queryKey: ["experiment", experimentId, "evaluation"],
     queryFn: () => fetchEvidenceGate(experimentId ?? "")
   });
-  const evidence = evidenceQuery.data?.data.evidence ?? null;
+  const provenQuery = useQuery({
+    enabled: isProvenExperiment,
+    queryKey: ["proven-experiment", experimentId],
+    queryFn: () => fetchProvenExperiment("proven-experiment")
+  });
+  const evidence = evidenceQuery.data?.data.evidence ?? provenQuery.data?.data.provenExperiment.evidenceGate ?? null;
   const summary = capturedSummary;
   const sampleSize = summary.counts.decisions;
   const remainingSamples = Math.max(0, minimumSample - sampleSize);
@@ -74,10 +80,15 @@ export default function EvidencePage() {
           </small>
         </div>
         <div className="gateBody" role="list" aria-label="Evidence gate dimensions">
-          {evidenceQuery.isLoading ? <div className="stateBox">Loading server Evidence Gate...</div> : null}
+          {evidenceQuery.isLoading || provenQuery.isLoading ? <div className="stateBox">Loading server Evidence Gate...</div> : null}
           {evidenceQuery.isError ? (
             <div className="stateBox errorState" role="alert">
               {apiErrorMessage(evidenceQuery.error)}
+            </div>
+          ) : null}
+          {provenQuery.isError ? (
+            <div className="stateBox errorState" role="alert">
+              {apiErrorMessage(provenQuery.error)}
             </div>
           ) : null}
           {evidenceQuery.data?.data.state === "EVALUATION_REQUIRED" ? (

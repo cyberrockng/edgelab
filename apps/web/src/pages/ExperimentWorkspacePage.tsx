@@ -7,6 +7,7 @@ import {
   fetchExperimentDetail,
   fetchLatestEvaluation,
   fetchLiveShadowState,
+  fetchProvenExperiment,
   fetchReplayRun,
   observeLiveShadow,
   runHistoricalReplay
@@ -18,8 +19,14 @@ function validUuid(value: string | undefined): value is string {
 
 export default function ExperimentWorkspacePage() {
   const { experimentId } = useParams();
+  const isProvenExperiment = experimentId === "proven-experiment";
   const canLoad = validUuid(experimentId);
   const queryClient = useQueryClient();
+  const provenQuery = useQuery({
+    enabled: isProvenExperiment,
+    queryKey: ["proven-experiment", "workspace"],
+    queryFn: () => fetchProvenExperiment("proven-experiment")
+  });
   const experimentQuery = useQuery({
     enabled: canLoad,
     queryKey: ["experiment", experimentId],
@@ -71,6 +78,116 @@ export default function ExperimentWorkspacePage() {
   const replayReady = replay?.status === "SUCCEEDED";
   const isHistoricalReplay = experiment?.configuration.mode === "HISTORICAL_REPLAY";
   const isLiveShadow = experiment?.configuration.mode === "LIVE_SHADOW";
+
+  if (isProvenExperiment) {
+    const proven = provenQuery.data?.data.provenExperiment ?? null;
+    return (
+      <div className="pageStack">
+        <section className="routeHero">
+          <p className="eyebrow">Proven Experiment</p>
+          <h1>Inspect a captured real-evidence replay.</h1>
+          <p>This public path is reproducible from sanitized artifacts and does not claim favorable performance.</p>
+        </section>
+        <section className="routePanel" aria-label="Proven experiment workspace">
+          {provenQuery.isLoading ? <div className="stateBox">Loading proven experiment...</div> : null}
+          {provenQuery.isError ? (
+            <div className="stateBox errorState" role="alert">
+              {apiErrorMessage(provenQuery.error)}
+            </div>
+          ) : null}
+          {proven !== null ? (
+            <>
+              <div className="sourceBar">
+                <span className="statusPill">PUBLIC PROVEN</span>
+                <span className="statusPill">{proven.source.plane}</span>
+                <span className="statusPill">No blockchain write</span>
+              </div>
+              <h2>{proven.title}</h2>
+              <p>{proven.selectionDisclosure}</p>
+              <dl className="factGrid">
+                <div>
+                  <dt>Strategy</dt>
+                  <dd>{proven.experiment.policy}</dd>
+                </div>
+                <div>
+                  <dt>Market</dt>
+                  <dd className="monoText">{compactId(proven.market.stableMarketId)}</dd>
+                </div>
+                <div>
+                  <dt>Replay status</dt>
+                  <dd>{proven.replay.status}</dd>
+                </div>
+                <div>
+                  <dt>Processed</dt>
+                  <dd>{proven.replay.processedCount}</dd>
+                </div>
+                <div>
+                  <dt>Scored</dt>
+                  <dd>{proven.replay.scoredCount}</dd>
+                </div>
+                <div>
+                  <dt>Excluded</dt>
+                  <dd>{proven.replay.excludedCount}</dd>
+                </div>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{proven.decision.action}</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>{proven.decision.outcomeResult ?? "NOT AVAILABLE"}</dd>
+                </div>
+                <div>
+                  <dt>Verdict</dt>
+                  <dd>{proven.assessment.verdict.replaceAll("_", " ")}</dd>
+                </div>
+                <div>
+                  <dt>PnL</dt>
+                  <dd>{proven.assessment.pnlStatus}</dd>
+                </div>
+                <div>
+                  <dt>Replay hash</dt>
+                  <dd className="monoText">{compactId(proven.replay.outputHash)}</dd>
+                </div>
+                <div>
+                  <dt>Export</dt>
+                  <dd>{proven.reproducibility.exportPath}</dd>
+                </div>
+              </dl>
+              <section className="resultPanel" aria-label="Proven anti-lookahead evidence">
+                <div className="sectionHeader">
+                  <div>
+                    <p className="eyebrow">Replay integrity</p>
+                    <h2>{proven.antiLookahead.decisionFrames}</h2>
+                  </div>
+                  <span className="statusPill">Book: {proven.replay.bookReconstruction}</span>
+                </div>
+                <p>{proven.antiLookahead.outcomeEmbargo}</p>
+                <div className="reasonList">
+                  {proven.decision.reasonCodes.map((reason) => (
+                    <span className="statusPill" key={reason}>
+                      {reason.replaceAll("_", " ")}
+                    </span>
+                  ))}
+                </div>
+              </section>
+              <div className="actionRow">
+                <Link className="primaryAction" to="/evidence/proven-experiment">
+                  View Evidence Gate
+                </Link>
+                <Link className="secondaryAction" to="/markets">
+                  Explore Markets
+                </Link>
+                <Link className="secondaryAction" to="/proof">
+                  View Shannon Proof
+                </Link>
+              </div>
+            </>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="pageStack">

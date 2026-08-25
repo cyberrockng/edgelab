@@ -33,6 +33,10 @@ test("homepage explains the interactive product and links to real routes", async
     "href",
     "/markets?plane=historical"
   );
+  await expect(page.getByRole("link", { name: "Open Proven Experiment" })).toHaveAttribute(
+    "href",
+    "/lab/proven-experiment"
+  );
   await expect(page.getByRole("link", { name: "View Verified Execution" })).toHaveAttribute("href", "/proof");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical Reality");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Evidence Gate");
@@ -108,12 +112,12 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await page.goto("/evidence/proven-experiment", { waitUntil: "networkidle" });
   const gate = page.getByRole("region", { name: "Evidence gate" });
-  await expect(gate).toContainText("AWAITING SERVER EVALUATION");
-  await expect(gate).toContainText(
-    "The browser does not manufacture PROMOTE, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
-  );
+  await expect(gate).toContainText("INSUFFICIENT EVIDENCE");
+  await expect(gate).toContainText("MIN SAMPLE NOT MET");
+  await expect(gate).toContainText("MAINNET_HISTORICAL");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Forecast sample");
-  await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Realized PnL");
+  await expect(page.getByLabel("Evidence gate dimensions")).toContainText("PnL");
+  await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Tradeability / execution quality");
 });
 
 test("truthful DreamDEX proof remains reachable", async ({ page }) => {

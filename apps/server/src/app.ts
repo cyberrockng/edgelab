@@ -1050,6 +1050,44 @@ function booleanField(record: Record<string, unknown>, key: string): boolean {
   return value;
 }
 
+function numberField(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Evidence artifact number field is missing: ${key}`);
+  }
+  return value;
+}
+
+function nullableNumberField(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Evidence artifact nullable number field is malformed: ${key}`);
+  }
+  return value;
+}
+
+function nullableStringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Evidence artifact nullable string field is malformed: ${key}`);
+  }
+  return value;
+}
+
+function stringArrayField(record: Record<string, unknown>, key: string): readonly string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`Evidence artifact string array field is missing: ${key}`);
+  }
+  return value.map((item) => String(item));
+}
+
 function compactHash(value: string): string {
   return value.length > 18 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
 }
@@ -1171,6 +1209,190 @@ function buildExg003Proof() {
         "evidence/feasibility/blk-003-order.json",
         "evidence/feasibility/blk-003-terminal.json"
       ]
+    }
+  };
+}
+
+function provenGateRows(input: {
+  readonly sampleSize: number;
+  readonly exclusionCount: number;
+  readonly brierScore: number | null;
+  readonly calibrationBias: number | null;
+  readonly pnlStatus: string;
+  readonly replayOutputHash: string;
+}) {
+  const minSampleSize = 30;
+  return [
+    {
+      dimension: "Forecast sample",
+      status: input.sampleSize >= minSampleSize ? "PASS" : "BLOCKED",
+      value: `${String(input.sampleSize)}/${String(minSampleSize)} observations`,
+      detail: `${String(Math.max(0, minSampleSize - input.sampleSize))} additional scored observations are required before promotion can be considered.`
+    },
+    {
+      dimension: "Forecast quality",
+      status: input.brierScore === null ? "NOT_AVAILABLE" : "PASS",
+      value: input.brierScore === null ? "NOT AVAILABLE" : input.brierScore.toFixed(4),
+      detail: "No forecast-quality claim is made when the replay produced no scored decisions."
+    },
+    {
+      dimension: "Forecast calibration",
+      status: input.calibrationBias === null ? "NOT_AVAILABLE" : "PASS",
+      value: input.calibrationBias === null ? "NOT AVAILABLE" : input.calibrationBias.toFixed(4),
+      detail: "Calibration remains unavailable until scored historical decisions exist."
+    },
+    {
+      dimension: "Tradeability / execution quality",
+      status: "NOT_AVAILABLE",
+      value: "HISTORICAL_REPLAY_ONLY",
+      detail: "Historical replay does not prove live fillability or realized execution quality."
+    },
+    {
+      dimension: "PnL",
+      status: "NOT_AVAILABLE",
+      value: input.pnlStatus,
+      detail: "No realized wallet PnL is claimed for a retrospective replay."
+    },
+    {
+      dimension: "Provenance",
+      status: "VERIFIED",
+      value: compactHash(input.replayOutputHash),
+      detail: "Replay output hash links the gate to the captured real-evidence run."
+    },
+    {
+      dimension: "Excluded evidence",
+      status: input.exclusionCount === 0 ? "PASS" : "BLOCKED",
+      value: `${String(input.exclusionCount)} excluded`,
+      detail: "Abstentions and unusable decisions remain visible instead of being scored as wins."
+    }
+  ];
+}
+
+function buildProvenExperiment() {
+  const replayReport = readEvidenceRecord("evidence/replay/replay-002-report.json");
+  const replaySample = readEvidenceRecord("evidence/replay/replay-002-sample.json");
+  const evalReport = readEvidenceRecord("evidence/evaluate/eval-002-report.json");
+  const source = recordField(replayReport, "source");
+  const market = recordField(replayReport, "market");
+  const experiment = recordField(replayReport, "experiment");
+  const replay = recordField(replayReport, "replay");
+  const antiLookahead = recordField(replayReport, "antiLookahead");
+  const decision = recordField(replaySample, "replayDecision");
+  const metrics = recordField(evalReport, "metrics");
+  const provenance = recordField(evalReport, "provenance");
+  const experimentId = stringField(experiment, "experimentId");
+  const sampleSize = numberField(metrics, "sampleSize");
+  const exclusionCount = numberField(metrics, "exclusionCount");
+  const brierScore = nullableNumberField(metrics, "brierScore");
+  const calibrationBias = nullableNumberField(metrics, "calibrationBias");
+  const pnlStatus = stringField(metrics, "pnlStatus");
+  const replayOutputHash = stringField(replay, "outputHash");
+  const reasonCodes = stringArrayField(evalReport, "reasonCodes");
+  const assessment = {
+    assessmentId: stringField(evalReport, "assessmentId"),
+    metricRunId: stringField(evalReport, "metricRunId"),
+    experimentId,
+    experimentName: "Proven replay: historical last-trade abstention",
+    verdict: stringField(evalReport, "verdict"),
+    reasonCodes,
+    sampleSize,
+    exclusionCount,
+    brierScore,
+    calibrationBias,
+    neutralBaselineDelta: null,
+    pnlStatus,
+    evidencePlane: "MAINNET_HISTORICAL",
+    replayRunId: null,
+    promotionScope: "HISTORICAL_REPLAY_ONLY",
+    createdAt: stringField(evalReport, "capturedAt")
+  };
+  const gateRows = provenGateRows({
+    sampleSize,
+    exclusionCount,
+    brierScore,
+    calibrationBias,
+    pnlStatus,
+    replayOutputHash
+  });
+  return {
+    provenExperiment: {
+      slug: "proven-experiment",
+      title: "Proven replay: historical last-trade abstention",
+      status: "PUBLIC_PROVEN",
+      verdict: assessment.verdict,
+      sampleSize: assessment.sampleSize,
+      sourcePlane: "MAINNET_HISTORICAL",
+      policy: stringField(experiment, "policy"),
+      route: "/lab/proven-experiment",
+      evidenceRoute: "/evidence/proven-experiment",
+      exportPath: "evidence/proven/manifest.json",
+      selectionDisclosure:
+        "Representative single-market captured run selected for reproducibility and completeness, not favorability.",
+      source: {
+        plane: stringField(source, "plane"),
+        chainId: numberField(source, "chainId"),
+        sdkVersion: stringField(source, "sdkVersion"),
+        writePolicy: stringField(source, "writePolicy")
+      },
+      market: {
+        stableMarketId: stringField(market, "stableMarketId"),
+        asset: stringField(market, "asset"),
+        intervalSeconds: numberField(market, "intervalSeconds"),
+        status: stringField(market, "status"),
+        normalizedOutcome: stringField(market, "normalizedOutcome")
+      },
+      experiment: {
+        experimentId,
+        mode: stringField(experiment, "mode"),
+        policy: stringField(experiment, "policy"),
+        riskEnvelope: stringField(experiment, "riskEnvelope")
+      },
+      replay: {
+        status: stringField(replay, "status"),
+        selectedCount: numberField(replay, "selectedCount"),
+        processedCount: numberField(replay, "processedCount"),
+        scoredCount: numberField(replay, "scoredCount"),
+        excludedCount: numberField(replay, "excludedCount"),
+        outputHash: replayOutputHash,
+        bookReconstruction: stringField(replay, "bookReconstruction"),
+        blockchainWrite: booleanField(replay, "blockchainWrite")
+      },
+      decision: {
+        marketId: stringField(decision, "marketId"),
+        action: stringField(decision, "action"),
+        forecastPUp: nullableNumberField(decision, "forecastPUp"),
+        outcomeResult: nullableStringField(decision, "outcomeResult"),
+        frameHash: stringField(decision, "frameHash"),
+        reasonCodes: stringArrayField(decision, "reasonCodes")
+      },
+      antiLookahead: {
+        decisionFrames: stringField(antiLookahead, "decisionFrames"),
+        outcomeEmbargo: stringField(antiLookahead, "outcomeEmbargo"),
+        futureCandlesExcluded: booleanField(antiLookahead, "futureCandlesExcluded"),
+        futureFillsExcluded: booleanField(antiLookahead, "futureFillsExcluded"),
+        resolutionEmbargoedFromPolicy: booleanField(antiLookahead, "resolutionEmbargoedFromPolicy")
+      },
+      assessment,
+      evidenceGate: {
+        experimentId,
+        assessment,
+        gateRows,
+        missingEvidence: gateRows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
+        verdictReasons: reasonCodes,
+        nextPermittedAction: "COLLECT_MORE_EVIDENCE",
+        serverAuthored: true
+      },
+      reproducibility: {
+        sourceArtifacts: [
+          "evidence/replay/replay-002-report.json",
+          "evidence/replay/replay-002-sample.json",
+          "evidence/evaluate/eval-002-report.json"
+        ],
+        replayOutputHash,
+        inputHash: stringField(provenance, "inputHash"),
+        assessmentHash: stringField(provenance, "assessmentHash"),
+        exportPath: "evidence/proven/manifest.json"
+      }
     }
   };
 }
@@ -1380,6 +1602,67 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         "EXG_003_PROOF_UNAVAILABLE",
         error instanceof Error ? error.message : "EXG-003 proof unavailable",
         false,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/proven-experiments", (request, reply) => {
+    try {
+      const proven = buildProvenExperiment().provenExperiment;
+      return v2Data(
+        {
+          provenExperiments: [
+            {
+              slug: proven.slug,
+              title: proven.title,
+              verdict: proven.assessment.verdict,
+              sampleSize: proven.assessment.sampleSize,
+              sourcePlane: proven.source.plane,
+              policy: proven.experiment.policy,
+              route: `/lab/${proven.slug}`,
+              evidenceRoute: `/evidence/${proven.slug}`,
+              exportPath: proven.reproducibility.exportPath
+            }
+          ]
+        },
+        {
+          sourcePlane: "MAINNET_HISTORICAL",
+          publicProven: true,
+          blockchainWrite: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "PROVEN_EXPERIMENT_UNAVAILABLE",
+        error instanceof Error ? error.message : "Proven Experiment unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/proven-experiments/:slug", (request, reply) => {
+    const params = z.object({ slug: z.literal("proven-experiment") }).safeParse(request.params);
+    if (!params.success) {
+      return v2Error(reply, 404, "PROVEN_EXPERIMENT_NOT_FOUND", "Proven Experiment was not found", false, request.id);
+    }
+    try {
+      return v2Data(buildProvenExperiment(), {
+        sourcePlane: "MAINNET_HISTORICAL",
+        publicProven: true,
+        blockchainWrite: false,
+        verdictAuthority: "captured-server-evaluation-export"
+      });
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "PROVEN_EXPERIMENT_UNAVAILABLE",
+        error instanceof Error ? error.message : "Proven Experiment unavailable",
+        true,
         request.id
       );
     }
