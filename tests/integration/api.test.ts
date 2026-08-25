@@ -391,7 +391,7 @@ describe("API-001 server contracts", () => {
         writePolicy: "read-only-no-mainnet-signer"
       })
     );
-    expect(capabilitiesBody.data.dreamDex.historicalBookReconstruction).toBe("UNVERIFIED_FAIL_CLOSED");
+    expect(capabilitiesBody.data.dreamDex.historicalBookReconstruction).toBe("SOURCE_INCOMPLETE");
     expect(policies.statusCode).toBe(200);
     const policiesBody = V2PoliciesSchema.parse(policies.json());
     expect(policiesBody.data.policies).toContainEqual(
@@ -479,7 +479,7 @@ describe("API-001 server contracts", () => {
         code: "DREAMDEX_HISTORICAL_CAPABILITY_UNVERIFIED",
         retryable: false,
         details: {
-          capability: "UNVERIFIED_FAIL_CLOSED",
+          capability: "SOURCE_INCOMPLETE",
           nativeStoredSnapshots: false
         }
       }

@@ -294,8 +294,8 @@ describe("HIST-001 DreamDEX historical source contract", () => {
   });
 
   it("keeps historical book reconstruction unavailable until BOOK-001 verifies semantics", () => {
-    expect(HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY).toBe("UNVERIFIED_FAIL_CLOSED");
-    expect(historicalDreamDexSourceContract.bookReconstructionCapability).toBe("UNVERIFIED_FAIL_CLOSED");
+    expect(HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY).toBe("SOURCE_INCOMPLETE");
+    expect(historicalDreamDexSourceContract.bookReconstructionCapability).toBe("SOURCE_INCOMPLETE");
   });
 
   it("uses bounded raw indexer queries for market-wide historical orders and fills", () => {
@@ -545,6 +545,6 @@ describe("HIST-002 read-only historical adapter", () => {
       throw new Error("expected book reconstruction to remain unavailable");
     }
     expect(result.reasonCode).toBe("DREAMDEX_HISTORICAL_CAPABILITY_UNVERIFIED");
-    expect(result.message).toContain("BOOK-001");
+    expect(result.message).toContain("could not prove");
   });
 });

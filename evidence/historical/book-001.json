@@ -1,0 +1,73 @@
+{
+  "task": "BOOK-001",
+  "title": "Historical reconstructed resting-book capability decision",
+  "capturedAt": "2026-08-25T10:22:17.766Z",
+  "producer": "Codex execution agent",
+  "decision": "SOURCE_INCOMPLETE",
+  "productStatus": "FAIL_CLOSED",
+  "redaction": "public SDK comments, public indexer capability results, bounded aggregate-free row summaries, and public market IDs only",
+  "network": {
+    "plane": "MAINNET_HISTORICAL",
+    "chainId": 5031,
+    "writePolicy": "read-only-no-mainnet-signer"
+  },
+  "requirementsChecked": {
+    "threeRepresentativeMarkets": "PARTIAL - three real markets were probed with bounded row reads",
+    "cancelHeavyMarket": "OBSERVED - sampled markets contained many rested cancelled orders",
+    "partialOrFullFillMarket": "OBSERVED - sample market contained real fills and maker/taker remaining quantities",
+    "poolReuseOrSameBlockCase": "NOT PROVEN - pool reuse linkage query timed out and no reliable bounded proof was available",
+    "authoritativePlacedAtBlockMeaning": "NOT PROVEN",
+    "authoritativeLastUpdatedAtBlockMeaning": "NOT PROVEN",
+    "takerPlacementTimingSameTransaction": "NOT PROVEN - linked maker/taker order lookup timed out",
+    "cumulativeDepletionConservation": "NOT PROVEN - public aggregate counts unavailable and complete order coverage not established",
+    "sameBlockOrdering": "NOT PROVEN beyond fill logIndex ordering",
+    "archiveStateComparison": "NOT PROVEN - no verified archive book comparison path",
+    "storedHistoricalSnapshots": "CONFIRMED ABSENT"
+  },
+  "readOnlyProbeFindings": {
+    "aggregateAvailability": {
+      "Order_aggregate": "unavailable on public query_root",
+      "Fill_aggregate": "unavailable on public query_root",
+      "impact": "exact completeness counts for reconstruction cannot be proven through this public path"
+    },
+    "sampleMarket": {
+      "marketId": "0x0000000000000000000000000000000000000000000000000000000000001bb7",
+      "sampledOrders": 101,
+      "sampledFills": 30,
+      "observedOrderStatuses": ["Cancelled"],
+      "observedRestedOrders": 101,
+      "observedFirstFillKind": "DIRECT_YES",
+      "observedFirstFillLogIndex": 9
+    },
+    "timeoutFindings": [
+      "Pool-reuse linkage query returned upstream request timeout.",
+      "Linked maker/taker order query returned upstream request timeout."
+    ],
+    "sdkSourceEvidence": [
+      "SDK current snapshot loader hydrates live books from Open, rested, non-expired orders at snapshot time.",
+      "SDK comments state expired makers can remain resting until swept and must be excluded by expiry, not status alone.",
+      "SDK comments state orders are stamped with stable market_id, supporting isolation but not sufficient for archival reconstruction precision."
+    ]
+  },
+  "capability": {
+    "enumValue": "SOURCE_INCOMPLETE",
+    "apiBehavior": "409 error for reconstructed-book requests",
+    "uiRequirement": "show unavailable/source-incomplete state, not a reconstructed book",
+    "book002Status": "DO_NOT_PRODUCTIZE"
+  },
+  "acceptanceResult": {
+    "canClaimBlockLevelBook": false,
+    "canClaimEventLevelBook": false,
+    "canClaimStoredSnapshot": false,
+    "mustRemainFailClosed": true
+  },
+  "tests": {
+    "pnpm check": "PASS - 59 tests",
+    "pnpm build": "PASS",
+    "pnpm secret:scan": "PASS",
+    "pnpm evidence:manifest": "PASS",
+    "unitCapabilityExpectation": "PASS - source incomplete remains unavailable",
+    "apiCapabilityExpectation": "PASS - reconstructed-book endpoint returns fail-closed 409",
+    "databaseMigration": "PASS - replay_runs capability default updated additively"
+  }
+}

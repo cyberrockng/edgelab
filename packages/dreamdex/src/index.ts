@@ -39,7 +39,12 @@ export interface DreamDexBookLevel {
   readonly quantityRaw: string;
 }
 
-export type HistoricalBookReconstructionCapability = "UNVERIFIED_FAIL_CLOSED" | "VERIFIED_BLOCK_LEVEL";
+export type HistoricalBookReconstructionCapability =
+  | "UNVERIFIED"
+  | "BLOCK_LEVEL"
+  | "EVENT_LEVEL"
+  | "UNSUPPORTED"
+  | "SOURCE_INCOMPLETE";
 export type HistoricalMarketStatus = "Resolved" | "Finalized";
 export type HistoricalAsset = "BTC" | "ETH";
 
@@ -188,7 +193,7 @@ export const DREAMDEX_MAINNET_INDEXER_URL = "https://prd.smk.somnia.host/v1/grap
 export const SOMNIA_MAINNET_RPC_URL = "https://api.infra.mainnet.somnia.network" as const;
 export const HISTORICAL_GRAPHQL_QUERY_VERSION = "edgelab-mainnet-history-v1" as const;
 export const HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY =
-  "UNVERIFIED_FAIL_CLOSED" satisfies HistoricalBookReconstructionCapability;
+  "SOURCE_INCOMPLETE" satisfies HistoricalBookReconstructionCapability;
 export const HISTORICAL_CANDLE_INTERVAL_SECONDS = [
   60,
   300,
@@ -1204,7 +1209,7 @@ export function getHistoricalReconstructedBookCapability(): HistoricalDreamDexRe
     ok: false,
     reasonCode: "DREAMDEX_HISTORICAL_CAPABILITY_UNVERIFIED",
     message:
-      "Historical resting-book reconstruction remains unavailable until BOOK-001 verifies order lifecycle and same-block semantics"
+      "Historical resting-book reconstruction is unavailable because BOOK-001 could not prove complete order/fill coverage, linked lifecycle semantics, pool-reuse behavior, and archive-state comparison"
   };
 }
 

@@ -265,7 +265,7 @@ describe("DB-001 schema and recovery controls", () => {
         ruleVersion: "interactive-2.0.0",
         config: {
           sourcePlane: "MAINNET_HISTORICAL",
-          bookReconstruction: "UNVERIFIED_FAIL_CLOSED"
+          bookReconstruction: "SOURCE_INCOMPLETE"
         },
         configHash: "c".repeat(64)
       }
