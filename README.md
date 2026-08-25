@@ -12,6 +12,7 @@ It compares immutable reference policies using pre-outcome decisions, separated 
 - EXG-002 wallet funding proof: passed with public chain evidence.
 - EXG-003 approval, order, and terminal lifecycle: passed with a real no-fill DreamDEX order lifecycle.
 - Local Docker deployment smoke: passed.
+- Public HTTPS audit deployment: https://api-production-bd986.up.railway.app
 - Final submission video and form receipt: pending owner-controlled SHIP-001 actions.
 
 ## Product Boundaries
@@ -160,7 +161,7 @@ Rollback for the local deployment is to stop the smoke container and return to t
 - Current policy evidence intentionally remains insufficient for promotion.
 - The EXG-003 order lifecycle had no fill; this is valid tradeability evidence, not PnL evidence.
 - The terminal event was `OrderExpired` after an owner-approved `cancelOrder` call landed post-expiry.
-- Public HTTPS hosting, final narrated video, and submission-form receipt remain SHIP-001 owner-controlled steps.
+- Final narrated video and submission-form receipt remain SHIP-001 owner-controlled steps after independent audit.
 - Licensed under MIT after repository dependency metadata showed no obvious GPL/AGPL/LGPL/proprietary/unknown license conflict.
 
 ## License

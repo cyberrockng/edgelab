@@ -1,0 +1,95 @@
+{
+  "evidenceId": "EVD-008",
+  "task": "PUBLIC-DEPLOYMENT",
+  "producer": "Codex execution agent",
+  "producedAt": "2026-08-25T00:35:31Z",
+  "sourceCommit": "cd6b4fe68560d53d7a11e5313ad3e4202782a4c7",
+  "provider": "Railway",
+  "project": {
+    "name": "edgelab",
+    "appService": "api",
+    "databaseService": "Postgres"
+  },
+  "url": "https://api-production-bd986.up.railway.app",
+  "domain": {
+    "type": "service",
+    "targetPort": 3000,
+    "syncStatus": "ACTIVE"
+  },
+  "deployment": {
+    "id": "af8ed47a-fbed-414f-af7a-ae75f6114caf",
+    "status": "SUCCESS",
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "/Dockerfile",
+    "imageDigest": "sha256:ec797a3eb676f05150a281d0535b3d741f2521e0d70500b230fc332ab1e490a2"
+  },
+  "runtime": {
+    "backend": "Fastify",
+    "database": "Railway managed PostgreSQL",
+    "chainId": 50312,
+    "marketsSdkVersion": "0.28.1",
+    "workerEnabled": false,
+    "serviceSignsTransactions": false
+  },
+  "verification": {
+    "healthz": {
+      "ok": true,
+      "buildCommit": "cd6b4fe68560d53d7a11e5313ad3e4202782a4c7"
+    },
+    "readyz": {
+      "ok": true,
+      "database": "ok",
+      "chainId": 50312,
+      "marketsSdkVersion": "0.28.1"
+    },
+    "dreamdexMarkets": {
+      "ok": true,
+      "marketCount": 3,
+      "firstMarketEvidenceClass": "LIVE"
+    },
+    "evidenceSummary": {
+      "submittedOrderCount": 1,
+      "fillCount": 0,
+      "terminalOrderCount": 1,
+      "openOrderCount": 0,
+      "latestTerminalState": "EXPIRED",
+      "tradeabilityStatus": "EVALUATED"
+    },
+    "freshBrowser": {
+      "desktop": {
+        "status": 200,
+        "title": "EdgeLab",
+        "consoleErrors": 0,
+        "pageErrors": 0,
+        "horizontalOverflow": false
+      },
+      "mobile": {
+        "status": 200,
+        "title": "EdgeLab",
+        "consoleErrors": 0,
+        "pageErrors": 0,
+        "horizontalOverflow": false
+      }
+    },
+    "playwright": {
+      "command": "E2E_BASE_URL=https://api-production-bd986.up.railway.app pnpm test:e2e",
+      "result": "PASS",
+      "testsPassed": 4,
+      "durationSeconds": 6.6
+    },
+    "secretExposureCheck": {
+      "servedBundleSecretMarkersFound": false,
+      "markersChecked": "runtime database, session, Postgres credential, private-network, signing, recovery, and wallet credential indicators"
+    }
+  },
+  "screenshots": [
+    "evidence/deploy/public-desktop.png",
+    "evidence/deploy/public-mobile.png"
+  ],
+  "knownLimitations": [
+    "Railway database initially required EXG-003 evidence import after first deployment.",
+    "Final narrated video capture and official submission receipt remain intentionally pending for independent audit boundary."
+  ],
+  "redaction": "Public URL, public chain summary, deployment metadata, and sanitized verification results only.",
+  "result": "PASS"
+}
