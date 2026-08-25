@@ -147,8 +147,8 @@ const V2AssessmentSchema = z.object({
       sampleSize: z.number(),
       exclusionCount: z.number(),
       pnlStatus: z.enum(["NOT_AVAILABLE", "AVAILABLE"]),
-      metricRunId: z.string().uuid().optional(),
-      assessmentId: z.string().uuid().optional()
+      metricRunId: z.string().uuid(),
+      assessmentId: z.string().uuid()
     })
   })
 });
@@ -179,6 +179,39 @@ const V2LiveShadowSchema = z.object({
       decisionCount: z.number(),
       sourcePlane: z.literal("SHANNON_FORWARD"),
       blockchainWrite: z.literal(false)
+    })
+  })
+});
+const V2AssessmentListSchema = z.object({
+  data: z.object({
+    assessments: z.array(
+      z.object({
+        assessmentId: z.string().uuid(),
+        experimentName: z.string(),
+        verdict: z.string(),
+        sampleSize: z.number(),
+        evidencePlane: z.string(),
+        pnlStatus: z.string()
+      })
+    ),
+    csrfToken: z.string().optional()
+  })
+});
+const V2ComparisonSchema = z.object({
+  data: z.object({
+    comparison: z.object({
+      comparisonId: z.string().uuid(),
+      name: z.string(),
+      items: z.array(
+        z.object({
+          assessmentId: z.string().uuid(),
+          displayOrder: z.number(),
+          verdict: z.string(),
+          sampleSize: z.number(),
+          evidencePlane: z.string(),
+          pnlStatus: z.string()
+        })
+      )
     })
   })
 });
@@ -837,6 +870,102 @@ describe("API-001 server contracts", () => {
     });
     expect(reloaded.statusCode).toBe(200);
     expect(V2LiveShadowSchema.parse(reloaded.json()).data.liveShadow.decisionCount).toBe(1);
+  });
+
+  it("saves and reloads ordered comparisons from immutable owned assessments", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+
+    async function createEvaluated(name: string, key: string): Promise<string> {
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/v2/experiments",
+        headers: {
+          cookie: cookies,
+          "x-csrf-token": sessionBody.data.csrfToken,
+          "idempotency-key": `api-comparison-create-${key}`
+        },
+        payload: {
+          name,
+          mode: "HISTORICAL_REPLAY",
+          asset: "BTC",
+          intervalSec: 3600,
+          policyId: "historical-last-trade",
+          policyVersion: "1.0.0",
+          marketId: apiMarketId,
+          riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+        }
+      });
+      const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+      await app.inject({
+        method: "POST",
+        url: `/api/v2/experiments/${experimentId}/replay`,
+        headers: {
+          cookie: cookies,
+          "x-csrf-token": sessionBody.data.csrfToken,
+          "idempotency-key": `api-comparison-replay-${key}`
+        }
+      });
+      const evaluate = await app.inject({
+        method: "POST",
+        url: `/api/v2/experiments/${experimentId}/evaluate`,
+        headers: {
+          cookie: cookies,
+          "x-csrf-token": sessionBody.data.csrfToken,
+          "idempotency-key": `api-comparison-evaluate-${key}`
+        }
+      });
+      return V2AssessmentSchema.parse(evaluate.json()).data.assessment.assessmentId;
+    }
+
+    const firstAssessmentId = await createEvaluated("Comparison replay A", "a");
+    const secondAssessmentId = await createEvaluated("Comparison replay B", "b");
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/v2/assessments",
+      headers: { cookie: cookies }
+    });
+    const listBody = V2AssessmentListSchema.parse(list.json());
+    const compare = await app.inject({
+      method: "POST",
+      url: "/api/v2/comparisons",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": listBody.data.csrfToken ?? sessionBody.data.csrfToken,
+        "idempotency-key": "api-save-comparison-001"
+      },
+      payload: {
+        name: "API comparison",
+        assessmentIds: [firstAssessmentId, secondAssessmentId]
+      }
+    });
+    const comparisonBody = V2ComparisonSchema.parse(compare.json());
+    const reload = await app.inject({
+      method: "GET",
+      url: `/api/v2/comparisons/${comparisonBody.data.comparison.comparisonId}`,
+      headers: { cookie: cookies }
+    });
+    await app.close();
+
+    expect(list.statusCode).toBe(200);
+    expect(listBody.data.assessments.map((item) => item.assessmentId)).toEqual(
+      expect.arrayContaining([firstAssessmentId, secondAssessmentId])
+    );
+    expect(compare.statusCode).toBe(200);
+    expect(comparisonBody.data.comparison.name).toBe("API comparison");
+    expect(comparisonBody.data.comparison.items.map((item) => item.assessmentId)).toEqual([
+      firstAssessmentId,
+      secondAssessmentId
+    ]);
+    expect(comparisonBody.data.comparison.items[0]).toMatchObject({
+      displayOrder: 0,
+      evidencePlane: "MAINNET_HISTORICAL",
+      pnlStatus: "NOT_AVAILABLE"
+    });
+    expect(reload.statusCode).toBe(200);
+    expect(V2ComparisonSchema.parse(reload.json()).data.comparison.items).toHaveLength(2);
   });
 
   it("rejects experiment writes without the current research-session csrf token", async () => {

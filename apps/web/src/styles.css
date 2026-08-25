@@ -383,6 +383,28 @@ p {
   flex-wrap: wrap;
 }
 
+.selectionList {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.checkRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.checkRow input {
+  width: 18px;
+  height: 18px;
+}
+
 .inlineError {
   margin: 10px 0 0;
   color: #8c2e22;

@@ -145,6 +145,10 @@ const EvaluateRequestSchema = z.object({
   policyVersionId: z.string().uuid(),
   ruleVersion: z.string().min(1)
 });
+const ComparisonCreateSchema = z.object({
+  name: z.string().trim().min(3).max(80),
+  assessmentIds: z.array(z.string().uuid()).min(2).max(4)
+});
 
 function requireIdempotencyKey(headers: Record<string, string | string[] | undefined>): string {
   const value = headers["idempotency-key"];
@@ -822,6 +826,141 @@ async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: s
     latestMarketId: row?.latest_market_id ?? null,
     sourcePlane: "SHANNON_FORWARD",
     blockchainWrite: false
+  };
+}
+
+interface AssessmentSummaryRow {
+  readonly assessment_id: string;
+  readonly metric_run_id: string;
+  readonly experiment_id: string;
+  readonly experiment_name: string;
+  readonly verdict: string;
+  readonly reason_codes: string[];
+  readonly sample_size: number;
+  readonly exclusion_count: number;
+  readonly brier_score: number | null;
+  readonly calibration_bias: number | null;
+  readonly neutral_baseline_delta: number | null;
+  readonly pnl_status: string;
+  readonly evidence_plane: string;
+  readonly promotion_scope: string;
+  readonly created_at: Date;
+}
+
+function serializeAssessmentSummary(row: AssessmentSummaryRow) {
+  return {
+    assessmentId: row.assessment_id,
+    metricRunId: row.metric_run_id,
+    experimentId: row.experiment_id,
+    experimentName: row.experiment_name,
+    verdict: row.verdict,
+    reasonCodes: row.reason_codes,
+    sampleSize: row.sample_size,
+    exclusionCount: row.exclusion_count,
+    brierScore: row.brier_score,
+    calibrationBias: row.calibration_bias,
+    neutralBaselineDelta: row.neutral_baseline_delta,
+    pnlStatus: row.pnl_status,
+    evidencePlane: row.evidence_plane,
+    promotionScope: row.promotion_scope,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+async function loadOwnedAssessmentSummaries(
+  pool: pg.Pool,
+  input: { readonly sessionId: string; readonly assessmentIds?: readonly string[]; readonly limit?: number }
+): Promise<AssessmentSummaryRow[]> {
+  const result = await pool.query<AssessmentSummaryRow>(
+    `
+      SELECT
+        ea.id AS assessment_id,
+        mr.id AS metric_run_id,
+        e.id AS experiment_id,
+        e.name AS experiment_name,
+        ea.verdict,
+        ea.reason_codes,
+        mr.sample_size,
+        mr.exclusion_count,
+        mr.brier_score,
+        mr.calibration_bias,
+        mr.neutral_baseline_delta,
+        mr.pnl_status,
+        mr.evidence_plane,
+        mr.promotion_scope,
+        ea.created_at
+      FROM evidence_assessments ea
+      JOIN metric_runs mr ON mr.id = ea.metric_run_id
+      JOIN experiments e ON e.id = mr.experiment_id
+      WHERE e.created_by_session_id = $1
+        AND ($2::uuid[] IS NULL OR ea.id = ANY($2::uuid[]))
+      ORDER BY ea.created_at DESC, ea.id DESC
+      LIMIT $3
+    `,
+    [input.sessionId, input.assessmentIds === undefined ? null : [...input.assessmentIds], input.limit ?? 20]
+  );
+  return result.rows;
+}
+
+async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string; readonly comparisonId: string }) {
+  const result = await pool.query<{
+    comparison_id: string;
+    name: string;
+    created_at: Date;
+    updated_at: Date;
+    items: unknown;
+  }>(
+    `
+      SELECT
+        cs.id AS comparison_id,
+        cs.name,
+        cs.created_at,
+        cs.updated_at,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'assessmentId', ea.id,
+              'displayOrder', ci.display_order,
+              'metricRunId', mr.id,
+              'experimentId', e.id,
+              'experimentName', e.name,
+              'verdict', ea.verdict,
+              'reasonCodes', ea.reason_codes,
+              'sampleSize', mr.sample_size,
+              'exclusionCount', mr.exclusion_count,
+              'brierScore', mr.brier_score,
+              'calibrationBias', mr.calibration_bias,
+              'neutralBaselineDelta', mr.neutral_baseline_delta,
+              'pnlStatus', mr.pnl_status,
+              'evidencePlane', mr.evidence_plane,
+              'promotionScope', mr.promotion_scope,
+              'createdAt', ea.created_at
+            )
+            ORDER BY ci.display_order
+          ) FILTER (WHERE ea.id IS NOT NULL),
+          '[]'::jsonb
+        ) AS items
+      FROM comparison_sets cs
+      JOIN comparison_items ci ON ci.comparison_set_id = cs.id
+      JOIN evidence_assessments ea ON ea.id = ci.assessment_id
+      JOIN metric_runs mr ON mr.id = ea.metric_run_id
+      JOIN experiments e ON e.id = mr.experiment_id
+      WHERE cs.id = $1
+        AND cs.created_by_session_id = $2
+      GROUP BY cs.id
+    `,
+    [input.comparisonId, input.sessionId]
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    comparisonId: row.comparison_id,
+    name: row.name.replace(/#[A-Za-z0-9._:-]{8,128}$/, ""),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    items: Array.isArray(row.items) ? row.items : []
   };
 }
 
@@ -1596,6 +1735,158 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "LIVE_SHADOW_OBSERVE_FAILED",
         error instanceof Error ? error.message : "Live-shadow observation failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/assessments", async (request, reply) => {
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const assessments = await loadOwnedAssessmentSummaries(pool, {
+        sessionId: ensured.session.id,
+        limit: 20
+      });
+      return v2Data(
+        {
+          assessments: assessments.map(serializeAssessmentSummary),
+          csrfToken: ensured.csrfToken
+        },
+        { ownership: "research-session", comparisonSource: "immutable-assessments" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "ASSESSMENT_LIST_UNAVAILABLE",
+        error instanceof Error ? error.message : "Assessment list unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/comparisons", async (request, reply) => {
+    const parsed = ComparisonCreateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return await v2Error(reply, 400, "COMPARISON_CREATE_INVALID", "Comparison request is invalid", false, request.id, parsed.error.issues);
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const uniqueIds = [...new Set(parsed.data.assessmentIds)];
+      if (uniqueIds.length !== parsed.data.assessmentIds.length) {
+        return await v2Error(reply, 400, "COMPARISON_DUPLICATE_ASSESSMENT", "Comparison assessment IDs must be unique", false, request.id);
+      }
+      const owned = await loadOwnedAssessmentSummaries(pool, {
+        sessionId: session.id,
+        assessmentIds: uniqueIds,
+        limit: uniqueIds.length
+      });
+      if (owned.length !== uniqueIds.length) {
+        return await v2Error(reply, 404, "ASSESSMENT_NOT_FOUND", "One or more assessments are unavailable for this session", false, request.id);
+      }
+      const client = await pool.connect();
+      let comparisonId: string;
+      try {
+        await client.query("BEGIN");
+        const existing = await client.query<{ id: string }>(
+          `
+            SELECT id
+            FROM comparison_sets
+            WHERE created_by_session_id = $1
+              AND name = $2
+            ORDER BY created_at DESC
+            LIMIT 1
+          `,
+          [session.id, `${parsed.data.name}#${idempotencyKey}`]
+        );
+        const existingRow = existing.rows[0];
+        if (existingRow === undefined) {
+          const comparison = await client.query<{ id: string }>(
+            `
+              INSERT INTO comparison_sets(created_by_session_id, name)
+              VALUES ($1, $2)
+              RETURNING id
+            `,
+            [session.id, `${parsed.data.name}#${idempotencyKey}`]
+          );
+          comparisonId = comparison.rows[0]?.id ?? "";
+          for (const [displayOrder, assessmentId] of parsed.data.assessmentIds.entries()) {
+            await client.query(
+              `
+                INSERT INTO comparison_items(comparison_set_id, assessment_id, display_order)
+                VALUES ($1, $2, $3)
+              `,
+              [comparisonId, assessmentId, displayOrder]
+            );
+          }
+        } else {
+          comparisonId = existingRow.id;
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      const comparison = await loadComparison(pool, { sessionId: session.id, comparisonId });
+      return v2Data(
+        { comparison },
+        { applicationWrite: true, blockchainWrite: false, comparisonSource: "immutable-assessments" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "COMPARISON_CREATE_FAILED",
+        error instanceof Error ? error.message : "Comparison create failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/comparisons/:comparisonId", async (request, reply) => {
+    const params = z.object({ comparisonId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "COMPARISON_ID_INVALID", "Comparison ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const comparison = await loadComparison(pool, {
+        sessionId: ensured.session.id,
+        comparisonId: params.data.comparisonId
+      });
+      if (comparison === null) {
+        return await v2Error(reply, 404, "COMPARISON_NOT_FOUND", "Comparison was not found for this research session", false, request.id);
+      }
+      return v2Data(
+        { comparison, csrfToken: ensured.csrfToken },
+        { ownership: "research-session", comparisonSource: "immutable-assessments" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "COMPARISON_DETAIL_UNAVAILABLE",
+        error instanceof Error ? error.message : "Comparison detail unavailable",
         true,
         request.id
       );

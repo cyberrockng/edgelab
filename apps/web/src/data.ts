@@ -329,6 +329,29 @@ export interface LiveShadowObserveResponse {
   readonly liveShadow: LiveShadowState;
 }
 
+export interface AssessmentSummaryRecord extends EvaluationAssessmentRecord {
+  readonly experimentId: string;
+  readonly experimentName: string;
+}
+
+export interface AssessmentListResponse {
+  readonly assessments: readonly AssessmentSummaryRecord[];
+  readonly csrfToken?: string;
+}
+
+export interface ComparisonRecord {
+  readonly comparisonId: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly items: readonly (AssessmentSummaryRecord & { readonly displayOrder: number })[];
+}
+
+export interface ComparisonResponse {
+  readonly comparison: ComparisonRecord | null;
+  readonly csrfToken?: string;
+}
+
 export interface ExperimentCreateInput {
   readonly name: string;
   readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
@@ -495,6 +518,32 @@ export async function observeLiveShadow(experimentId: string): Promise<V2Envelop
       "x-csrf-token": csrfToken,
       "idempotency-key": `live-${globalThis.crypto.randomUUID()}`
     }
+  });
+}
+
+export async function fetchAssessments(): Promise<V2Envelope<AssessmentListResponse>> {
+  const response = await fetchV2Request<AssessmentListResponse>("/api/v2/assessments");
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function createComparison(input: {
+  readonly name: string;
+  readonly assessmentIds: readonly string[];
+}): Promise<V2Envelope<ComparisonResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request<ComparisonResponse>("/api/v2/comparisons", {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `compare-${globalThis.crypto.randomUUID()}`
+    },
+    body: JSON.stringify(input)
   });
 }
 

@@ -1,0 +1,34 @@
+{
+  "evidenceId": "COMP-001",
+  "capturedAt": "2026-08-25T13:12:08.000Z",
+  "producer": "EdgeLab local execution agent",
+  "task": "COMP-001 persist and serve evidence comparisons",
+  "capability": {
+    "assessmentListApi": "GET /api/v2/assessments",
+    "comparisonCreateApi": "POST /api/v2/comparisons",
+    "comparisonReloadApi": "GET /api/v2/comparisons/:comparisonId",
+    "uiRoute": "/compare",
+    "itemCount": "2-4 immutable owned assessments"
+  },
+  "integrity": {
+    "clientRecomputesMetrics": false,
+    "compositeScore": false,
+    "assessmentOwnershipChecked": true,
+    "orderPreserved": true,
+    "pnlSeparated": true,
+    "evidencePlanePreserved": true
+  },
+  "testEvidence": {
+    "suite": "tests/integration/api.test.ts",
+    "test": "saves and reloads ordered comparisons from immutable owned assessments",
+    "result": "PASS",
+    "assertions": [
+      "owned assessments are listed",
+      "comparison saves exact assessment IDs",
+      "display order is retained",
+      "MAINNET_HISTORICAL evidence plane is retained",
+      "PnL remains NOT_AVAILABLE"
+    ]
+  },
+  "redaction": "no cookies, CSRF tokens, private credentials, or wallet secrets"
+}
