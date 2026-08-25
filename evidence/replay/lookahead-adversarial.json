@@ -1,0 +1,41 @@
+{
+  "task": "REPLAY-001",
+  "title": "Anti-look-ahead historical decision frame boundary",
+  "capturedAt": "2026-08-25T11:17:01Z",
+  "implementation": {
+    "package": "@edgelab/replay",
+    "schemaVersion": "historical-decision-frame-v1",
+    "module": "packages/replay/src/index.ts"
+  },
+  "clockModel": {
+    "decisionAt": "ISO timestamp supplied by replay job",
+    "cutoffBlock": "authoritative highest block strictly before decisionAt",
+    "cutoffRule": "STRICTLY_BEFORE_DECISION_AT",
+    "sourceRetrievalTime": "not used for historical availability"
+  },
+  "embargoes": {
+    "futureCandles": "excluded unless bucketStartSeconds + intervalSeconds <= decisionAtSeconds",
+    "futureOrders": "excluded unless placement and last update are at or before cutoff block and before decision second",
+    "futureFills": "excluded unless block is at or before cutoff block and timestamp is before decision second",
+    "openingPrice": "included only with an explicit availableAtBlock at or before cutoff",
+    "outcomeFields": "not present in HistoricalDecisionFrameSchema",
+    "winningOutcome": "outcome phase only",
+    "closingPrice": "outcome phase only",
+    "resolution": "outcome phase only"
+  },
+  "tests": {
+    "targeted": "PASS - pnpm --filter @edgelab/replay typecheck && pnpm vitest run tests/unit/replay.test.ts",
+    "adversarialFutureMutation": "PASS - mutating future candles/orders/fills and market outcome fields leaves frame hash identical",
+    "strictBoundary": "PASS - data at the decision second is excluded",
+    "runtimeSchema": "PASS - extra winningOutcome, closingPriceRaw, and resolution fields are rejected"
+  },
+  "security": {
+    "networkAccess": false,
+    "walletAccess": false,
+    "policyOutcomeAccess": false
+  },
+  "limitations": [
+    "REPLAY-001 defines the pure frame boundary only; REPLAY-002 will connect it to resumable replay jobs.",
+    "The caller must supply the authoritative cutoffBlock from the block lookup layer."
+  ]
+}

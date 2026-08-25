@@ -7,6 +7,7 @@
     { "path": "./packages/policy-runtime" },
     { "path": "./packages/metrics" },
     { "path": "./packages/dreamdex" },
+    { "path": "./packages/replay" },
     { "path": "./packages/chain" },
     { "path": "./packages/evaluate" },
     { "path": "./packages/auth" },

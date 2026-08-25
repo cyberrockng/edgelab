@@ -26,7 +26,7 @@ export default tseslint.config(
             "tests/integration/*.ts",
             "tests/e2e/*.ts"
           ],
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 18
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20
         },
         tsconfigRootDir: import.meta.dirname
       },

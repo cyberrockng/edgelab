@@ -275,6 +275,15 @@ importers:
         specifier: workspace:*
         version: link:../domain
 
+  packages/replay:
+    dependencies:
+      '@edgelab/dreamdex':
+        specifier: workspace:*
+        version: link:../dreamdex
+      zod:
+        specifier: ^4.1.5
+        version: 4.4.3
+
   packages/settle:
     dependencies:
       '@edgelab/db':

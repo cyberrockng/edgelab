@@ -16,6 +16,7 @@ export default defineConfig({
       "@edgelab/metrics": `${root}packages/metrics/src/index.ts`,
       "@edgelab/observe": `${root}packages/observe/src/index.ts`,
       "@edgelab/policy-runtime": `${root}packages/policy-runtime/src/index.ts`,
+      "@edgelab/replay": `${root}packages/replay/src/index.ts`,
       "@edgelab/server": `${root}apps/server/src/app.ts`,
       "@edgelab/settle": `${root}packages/settle/src/index.ts`
     }
