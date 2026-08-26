@@ -1299,7 +1299,7 @@ function provenGateRows(input: {
     {
       dimension: "Tradeability / execution quality",
       status: "NOT_AVAILABLE",
-      value: "PROMOTE_TO_FORWARD_OBSERVATION",
+      value: "NOT_AVAILABLE",
       detail: "Historical replay does not prove live fillability or realized execution quality."
     },
     {

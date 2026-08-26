@@ -139,7 +139,7 @@ const V2ProvenExperimentSchema = z.object({
       evidenceGate: z.object({
         serverAuthored: z.literal(true),
         verdictReasons: z.array(z.string()),
-        gateRows: z.array(z.object({ dimension: z.string(), status: z.string() }))
+        gateRows: z.array(z.object({ dimension: z.string(), status: z.string(), value: z.string() }))
       }),
       reproducibility: z.object({
         sourceArtifacts: z.array(z.string()),
@@ -768,6 +768,14 @@ describe("API-001 server contracts", () => {
       pnlStatus: "NOT_AVAILABLE"
     });
     expect(body.data.provenExperiment.evidenceGate.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
+    expect(
+      body.data.provenExperiment.evidenceGate.gateRows.find(
+        (row) => row.dimension === "Tradeability / execution quality"
+      )
+    ).toMatchObject({
+      status: "NOT_AVAILABLE",
+      value: "NOT_AVAILABLE"
+    });
     expect(body.data.provenExperiment.reproducibility.sourceArtifacts).toEqual(
       expect.arrayContaining(["evidence/replay/replay-002-report.json", "evidence/evaluate/eval-002-report.json"])
     );
