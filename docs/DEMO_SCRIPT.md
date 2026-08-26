@@ -1,48 +1,33 @@
 # EdgeLab Demo Script
 
-Target duration: 2:40.
+Target duration: 2:40. Do not record or submit this until a fresh independent System 3 audit passes.
 
 ## 0:00-0:20 Opening
 
-EdgeLab is a forward-testing, live-shadow, recent-window DreamDEX Event Contract strategy evidence lab. It does not claim guaranteed alpha, does not fabricate historical books or fills, and does not let the server sign transactions.
+EdgeLab tests whether a DreamDEX Event Contract strategy deserves progression. It separates mainnet historical research, Shannon live-shadow evidence, and human-authorized Shannon execution proof.
 
-## 0:20-0:55 Decision First
+## 0:20-0:55 Market Reality
 
-Show the dashboard verdict first: `INSUFFICIENT_EVIDENCE`.
+Open `/markets?plane=mainnet-history`, filter a finalized BTC or ETH market, and inspect `/markets/:marketId?plane=mainnet-history`.
 
-Point out the visible reason: promotion is blocked because the strategy has not earned enough evidence. EdgeLab protected the strategy from overconfidence instead of manufacturing confidence.
+Show the stable market ID, pool, lifecycle, fills/orders/candles, and `SOURCE_INCOMPLETE` reconstructed book state. State that pool reuse is isolated by market window and no stored historical book snapshot is claimed.
 
-## 0:55-1:25 Evidence Gate
+## 0:55-1:30 Strategy Lab
 
-Show the Evidence Gate:
+Open Strategy Lab from the market CTA. Select Last-Trade Probability, historical replay mode, interval, decision offset, and the fixed watch-only risk envelope. Create the experiment, then start replay.
 
-- Candidate strategy cohort enters the gate.
-- Forecast sample is blocked at `0/30`.
-- Tradeability is verified by the real DreamDEX probe.
-- Risk envelope passed with the 0.01 tUSDC cap and no open order.
-- Settlement and realized PnL remain unavailable.
+Show queued/running/completed status, decision frame hash, cutoff block, `forecastPUp`, action, exclusions, and that outcomes are loaded only after decisions.
 
-Then show the three separate evidence lanes:
+## 1:30-2:00 Evidence Gate And Compare
 
-- Forecast quality: pre-outcome decisions.
-- Tradeability: submitted, terminal, and open order counts.
-- Realized PnL: unavailable unless an actual fill and settlement both exist.
+Evaluate the replay from the workspace. Show the server-authored Evidence Gate: verdict, reasons, sample count, Brier/bias when available, provenance, tradeability, PnL availability, and next permitted action.
 
-## 1:25-2:05 DreamDEX Lifecycle Proof
+Open `/compare`, select two to four owned assessments when available, save, and refresh `/compare/:comparisonId` to show the saved immutable comparison.
 
-Show the public proof references:
+## 2:00-2:30 Shannon Proof
 
-- Exact 0.01 tUSDC approval.
-- POST_ONLY BUY_YES order at 0.01, quantity 1.
-- Terminal reconciliation with no fill required.
-- Chain `50312`, order ID `110680464442257591736`.
-
-State clearly that the terminal event was `OrderExpired` because the owner-approved cancellation landed after order expiry, and that this is recorded as terminal proof without implying a fill.
-
-## 2:05-2:30 Reusable Evidence Export
-
-Show `pnpm evidence:manifest` and the exported manifest hash. Explain that the manifest indexes sanitized evidence artifacts with hashes, sizes, classes, source version, and redaction notes.
+Open `/proof`. Show chain `50312`, exact approval, POST_ONLY BUY_YES order, no fill, actual `OrderExpired` terminal event, collateral reconciliation, and explorer links. State that this proves execution handling, not profit.
 
 ## 2:30-2:40 Close
 
-Restate the boundary: EdgeLab calibrates whether evidence is sufficient to promote a strategy. If evidence is not sufficient, the correct answer is visible and valid.
+Restate the boundary: EdgeLab promotes only when evidence is sufficient. If the corrected evidence says `INSUFFICIENT_EVIDENCE`, that is the truthful verdict.

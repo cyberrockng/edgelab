@@ -19,7 +19,13 @@ import { summarizeChainEvidence } from "@edgelab/chain";
 import type { RuntimeConfig } from "@edgelab/config";
 import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_MAINNET_CHAIN_ID, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
 import {
+  appendAuditEvent,
+  blockReplayRun,
+  cancelReplayRun,
   completeReplayRun,
+  countComparisonSets,
+  countInteractiveExperiments,
+  countReplayRuns,
   createInteractiveExperiment,
   createReplayRun,
   createResearchSession,
@@ -28,11 +34,14 @@ import {
   findActiveResearchSessionByTokenHash,
   getInteractiveExperiment,
   getLatestReplayRunForExperiment,
+  getOwnedReplayRun,
   listInteractiveExperiments,
   persistHistoricalSourceManifest,
   persistReplayDecision,
-  rotateResearchSessionCsrf,
+  persistReplayOutcome,
+  revokeResearchSession,
   startReplayRun,
+  updateReplayProgress,
   upsertPolicyVersion,
   type InteractiveExperimentDetailRecord,
   type ReplayRunDetailRecord,
@@ -53,18 +62,18 @@ import {
   listHistoricalCandles,
   listHistoricalFillsByMarket,
   listHistoricalOrdersByMarket,
+  resolveHistoricalCutoffBlock,
   type DreamDexReadConfig,
   type DreamDexSdkClient,
   type HistoricalDreamDexReadResult,
   type HistoricalDreamDexSdkClient,
-  type HistoricalFillEvidence,
+  type HistoricalCandleEvidence,
   type HistoricalIndexerFetch,
+  type HistoricalRpcFetch,
   type HistoricalMarketEvidence,
   type HistoricalMarketFilters,
-  type HistoricalOrderEvidence,
   type HistoricalPageOptions,
   type HistoricalRowsPage,
-  type HistoricalTimeWindowPageOptions,
   type MainnetHistoricalDreamDexConfig
 } from "@edgelab/dreamdex";
 import { runMetricAssessment } from "@edgelab/evaluate";
@@ -79,7 +88,6 @@ import {
   type PolicyAdapter
 } from "@edgelab/policy-runtime";
 import { buildHistoricalDecisionFrame } from "@edgelab/replay";
-import { reconcileSettlements } from "@edgelab/settle";
 import { z } from "zod";
 
 export interface AppDependencies {
@@ -89,6 +97,7 @@ export interface AppDependencies {
   readonly historicalDreamDexClient?: HistoricalDreamDexSdkClient;
   readonly historicalDreamDexConfig?: MainnetHistoricalDreamDexConfig;
   readonly historicalIndexerFetch?: HistoricalIndexerFetch;
+  readonly historicalRpcFetch?: HistoricalRpcFetch;
   readonly policyAdapters?: readonly PolicyAdapter[];
   readonly consumedNonces?: Set<string>;
   readonly signatureVerifier?: SignatureVerifier;
@@ -101,6 +110,13 @@ const IdempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-
 const ResearchSessionCookie = "edgelab_research_session";
 const CsrfHeader = "x-csrf-token";
 const SessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const PublicReadRateLimit = 240;
+const PublicWriteRateLimit = 60;
+const ResearchSessionCreateRateLimit = 30;
+const RateWindowMs = 60_000;
+const MaxExperimentsPerSession = 20;
+const MaxReplayRunsPerSession = 20;
+const MaxComparisonsPerSession = 10;
 const ModuleDir = dirname(fileURLToPath(import.meta.url));
 const IntervalSecSchema = z.union([z.literal(900), z.literal(3600), z.literal(14400), z.literal(86400)]);
 const ExperimentCreateSchema = z.object({
@@ -120,6 +136,9 @@ const HistoricalMarketQuerySchema = z.object({
   asset: z.enum(["BTC", "ETH"]).optional(),
   intervalSec: z.coerce.number().int().positive().optional(),
   status: z.enum(["Resolved", "Finalized"]).optional(),
+  fromSec: z.coerce.number().int().nonnegative().optional(),
+  toSec: z.coerce.number().int().nonnegative().optional(),
+  frozenAtSec: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().optional(),
   offset: z.coerce.number().int().optional()
 });
@@ -142,10 +161,6 @@ const VerifyRequestSchema = z.object({
   signature: z.string().min(1),
   account: AddressSchema
 });
-const EvaluateRequestSchema = z.object({
-  policyVersionId: z.string().uuid(),
-  ruleVersion: z.string().min(1)
-});
 const ComparisonCreateSchema = z.object({
   name: z.string().trim().min(3).max(80),
   assessmentIds: z.array(z.string().uuid()).min(2).max(4)
@@ -157,6 +172,30 @@ function requireIdempotencyKey(headers: Record<string, string | string[] | undef
     throw new Error("Idempotency-Key header is required");
   }
   return value.trim();
+}
+
+function requestIp(request: FastifyRequest): string {
+  const forwarded = request.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0]?.trim() || request.ip;
+  }
+  return request.ip;
+}
+
+function rateKey(request: FastifyRequest): string {
+  const path = new URL(request.url, "http://localhost").pathname;
+  if (!path.startsWith("/api/")) {
+    return "unlimited-page";
+  }
+  const bucket =
+    request.method === "POST" && path === "/api/v2/research-session"
+      ? "session-create"
+      : ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
+        ? "write"
+        : path.startsWith("/api/")
+          ? "api-read"
+          : "page";
+  return `${bucket}:${requestIp(request)}`;
 }
 
 function sha256(input: string): string {
@@ -178,6 +217,12 @@ function stableJson(input: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(input);
+}
+
+function withoutSource<T extends { readonly source: unknown }>(input: T): Omit<T, "source"> {
+  const { source, ...rest } = input;
+  void source;
+  return rest;
 }
 
 function sessionCookieOptions(config: RuntimeConfig) {
@@ -238,20 +283,13 @@ async function ensureResearchSession(
   config: RuntimeConfig,
   request: FastifyRequest,
   reply: FastifyReply
-): Promise<{ readonly session: ResearchSessionRecord; readonly csrfToken: string; readonly created: boolean }> {
+): Promise<{ readonly session: ResearchSessionRecord; readonly csrfToken?: string; readonly created: boolean }> {
   const rawSessionToken = readSignedSessionToken(request);
   if (rawSessionToken !== null) {
     const existing = await findActiveResearchSessionByTokenHash(pool, sha256(rawSessionToken));
     if (existing !== null) {
-      const csrfToken = randomToken();
-      const rotated = await rotateResearchSessionCsrf(pool, {
-        sessionId: existing.id,
-        csrfHash: sha256(csrfToken)
-      });
-      if (rotated !== null) {
-        reply.setCookie(ResearchSessionCookie, rawSessionToken, sessionCookieOptions(config));
-        return { session: rotated, csrfToken, created: false };
-      }
+      reply.setCookie(ResearchSessionCookie, rawSessionToken, sessionCookieOptions(config));
+      return { session: existing, created: false };
     }
   }
   const created = await createFreshResearchSession(pool, config, reply);
@@ -272,6 +310,29 @@ async function requireResearchSession(
 function requireCsrf(request: FastifyRequest, session: ResearchSessionRecord): boolean {
   const value = request.headers[CsrfHeader];
   return typeof value === "string" && sha256(value) === session.csrfHash;
+}
+
+async function writeAudit(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+    readonly action: string;
+    readonly targetType: string;
+    readonly targetId: string;
+    readonly outcome: string;
+    readonly correlationId: string;
+    readonly safeMetadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  await appendAuditEvent(pool, {
+    actor: `research-session:${input.sessionId}`,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    outcome: input.outcome,
+    correlationId: input.correlationId,
+    ...(input.safeMetadata === undefined ? {} : { safeMetadata: input.safeMetadata })
+  });
 }
 
 function serializeExperiment(record: InteractiveExperimentDetailRecord) {
@@ -395,6 +456,9 @@ function compactHistoricalMarketFilters(input: z.infer<typeof HistoricalMarketQu
     ...(input.asset === undefined ? {} : { asset: input.asset }),
     ...(input.intervalSec === undefined ? {} : { intervalSec: input.intervalSec }),
     ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.fromSec === undefined ? {} : { fromSec: input.fromSec }),
+    ...(input.toSec === undefined ? {} : { toSec: input.toSec }),
+    ...(input.frozenAtSec === undefined ? {} : { frozenAtSec: input.frozenAtSec }),
     ...(input.limit === undefined ? {} : { limit: input.limit }),
     ...(input.offset === undefined ? {} : { offset: input.offset })
   };
@@ -407,21 +471,12 @@ function compactHistoricalPage(input: z.infer<typeof HistoricalPageQuerySchema>)
   };
 }
 
-function compactHistoricalCandleQuery(
-  input: z.infer<typeof HistoricalCandleQuerySchema>
-): Omit<HistoricalTimeWindowPageOptions, "offset"> {
-  return {
-    ...(input.limit === undefined ? {} : { limit: input.limit }),
-    ...(input.fromSec === undefined ? {} : { fromSec: input.fromSec }),
-    ...(input.toSec === undefined ? {} : { toSec: input.toSec })
-  };
-}
-
 const ReplaySourceVersion = "dreamdex-mainnet-history@0.28.1";
-const ReplayQueryVersion = "replay-002-bounded-v1";
-const ReplayMaxMarkets = 12;
+const ReplayQueryVersion = "replay-003-remediation-v2";
+const ReplayDefaultMarkets = 50;
+const ReplayMaxMarkets = 100;
 const ReplayPageLimit = 100;
-const ReplayMaxFills = 1_000;
+const ReplayMaxSourceRows = 10_000;
 
 function serializeReplayRun(record: ReplayRunRecord | ReplayRunDetailRecord) {
   return {
@@ -539,28 +594,6 @@ function minBlock(values: readonly string[]): string | null {
   return min?.toString() ?? null;
 }
 
-function cutoffBlockFromSourceRows(input: {
-  readonly decisionAtSeconds: number;
-  readonly orders: readonly HistoricalOrderEvidence[];
-  readonly fills: readonly HistoricalFillEvidence[];
-}): string {
-  const blocks: string[] = [];
-  for (const fill of input.fills) {
-    if (fill.timestampSeconds < input.decisionAtSeconds) {
-      blocks.push(fill.blockNumber);
-    }
-  }
-  for (const order of input.orders) {
-    if (order.placedAtTimestampSeconds < input.decisionAtSeconds) {
-      blocks.push(order.placedAtBlock);
-    }
-    if (order.lastUpdatedAtTimestampSeconds < input.decisionAtSeconds) {
-      blocks.push(order.lastUpdatedAtBlock);
-    }
-  }
-  return maxBlock(blocks) ?? "0";
-}
-
 async function fetchPagedHistoricalRows<T>(
   readPage: (page: HistoricalPageOptions) => Promise<HistoricalDreamDexReadResult<HistoricalRowsPage<T>>>,
   maxRows: number
@@ -576,6 +609,26 @@ async function fetchPagedHistoricalRows<T>(
     rows.push(...page.value.rows);
     hasMore = page.value.hasMore;
     offset += page.value.page.limit;
+  }
+  return { ok: true, value: { rows, hasMore } };
+}
+
+async function fetchPagedHistoricalCandles(
+  readPage: (page: HistoricalPageOptions) => Promise<HistoricalDreamDexReadResult<readonly HistoricalCandleEvidence[]>>,
+  maxRows: number
+): Promise<HistoricalDreamDexReadResult<{ readonly rows: readonly HistoricalCandleEvidence[]; readonly hasMore: boolean }>> {
+  const rows: HistoricalCandleEvidence[] = [];
+  let offset = 0;
+  let hasMore = true;
+  while (hasMore && rows.length < maxRows) {
+    const limit = Math.min(ReplayPageLimit, maxRows - rows.length);
+    const page = await readPage({ limit, offset });
+    if (!page.ok) {
+      return page;
+    }
+    rows.push(...page.value);
+    hasMore = page.value.length === limit;
+    offset += page.value.length;
   }
   return { ok: true, value: { rows, hasMore } };
 }
@@ -599,7 +652,7 @@ async function selectHistoricalReplayMarkets(input: {
     ...(asset === "BTC" || asset === "ETH" ? { asset } : {}),
     ...(typeof intervalSec === "number" ? { intervalSec } : {}),
     status: "Finalized",
-    limit: ReplayMaxMarkets,
+    limit: ReplayDefaultMarkets,
     offset: 0
   });
   if (!page.ok) {
@@ -630,6 +683,7 @@ async function executeHistoricalReplay(input: {
   readonly historicalDreamDexClient: HistoricalDreamDexSdkClient;
   readonly historicalDreamDexConfig: MainnetHistoricalDreamDexConfig;
   readonly historicalIndexerFetch?: HistoricalIndexerFetch;
+  readonly historicalRpcFetch?: HistoricalRpcFetch;
 }): Promise<ReplayRunRecord> {
   const adapter = historicalPolicyAdapter(input.experiment);
   const policy = candidatePolicy(input.experiment);
@@ -647,23 +701,48 @@ async function executeHistoricalReplay(input: {
   let processedCount = 0;
   let scoredCount = 0;
   const outputItems: unknown[] = [];
-  for (const market of markets.value.slice(0, ReplayMaxMarkets)) {
+  const selectedMarkets = markets.value.slice(0, ReplayMaxMarkets);
+  await updateReplayProgress(input.pool, {
+    replayRunId: input.replayRun.id,
+    selectedCount: selectedMarkets.length,
+    processedCount,
+    scoredCount,
+    excludedCount: 0,
+    checkpoints: { stage: "SOURCE_ACQUISITION", selectedMarketIds: selectedMarkets.map((market) => market.stableMarketId) }
+  });
+  for (const market of selectedMarkets) {
     const decisionLeadSeconds = Math.max(60, Math.abs(input.experiment.configuration.decisionOffsetSec));
     const decisionAtSeconds = Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionLeadSeconds);
     const decisionAt = new Date(decisionAtSeconds * 1000);
-    const candles = await listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
-      fromSec: market.tradingStartSeconds,
-      toSec: decisionAtSeconds,
-      limit: 100
-    });
+    const cutoff = await resolveHistoricalCutoffBlock(
+      input.historicalDreamDexConfig,
+      decisionAtSeconds,
+      input.historicalRpcFetch
+    );
+    if (!cutoff.ok) {
+      throw new Error(`CUTOFF_BLOCK_UNAVAILABLE: ${cutoff.message}`);
+    }
+    const candles = await fetchPagedHistoricalCandles(
+      (page) =>
+        listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
+          fromSec: market.tradingStartSeconds,
+          toSec: decisionAtSeconds,
+          ...page
+        }),
+      500
+    );
     if (!candles.ok) {
       throw new Error(candles.message);
     }
-    const orders = await listHistoricalOrdersByMarket(
-      input.historicalDreamDexConfig,
-      market.stableMarketId,
-      { limit: ReplayPageLimit, offset: 0 },
-      input.historicalIndexerFetch
+    const orders = await fetchPagedHistoricalRows(
+      (page) =>
+        listHistoricalOrdersByMarket(
+          input.historicalDreamDexConfig,
+          market.stableMarketId,
+          page,
+          input.historicalIndexerFetch
+        ),
+      ReplayMaxSourceRows
     );
     if (!orders.ok) {
       throw new Error(orders.message);
@@ -671,68 +750,24 @@ async function executeHistoricalReplay(input: {
     const fills = await fetchPagedHistoricalRows(
       (page) =>
         listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
-      ReplayMaxFills
+      ReplayMaxSourceRows
     );
     if (!fills.ok) {
       throw new Error(fills.message);
     }
-    const cutoffBlock = cutoffBlockFromSourceRows({
-      decisionAtSeconds,
-      orders: orders.value.rows,
-      fills: fills.value.rows
-    });
-    const frameResult = buildHistoricalDecisionFrame({
-      market,
-      decisionAt: decisionAt.toISOString(),
-      cutoffBlock,
-      candles: candles.value,
-      orders: orders.value.rows,
-      fills: fills.value.rows,
-      openingPrice:
-        market.openingPriceRaw === null
-          ? null
-          : {
-              priceRaw: market.openingPriceRaw,
-              availableAtBlock: cutoffBlock
-            },
-      quoteDecimals: market.quoteDecimals
-    });
-    const decision = evaluateHistoricalPolicy(adapter, {
-      frame: frameResult.frame,
-      frameHash: frameResult.frameHash
-    });
-    const outcome = normalizeOutcome(market.winningOutcome);
-    const exclusionReason =
-      decision.action === "ABSTAIN"
-        ? decision.reasonCodes.join("|")
-        : outcome === null
-          ? "OUTCOME_UNAVAILABLE_OR_UNMAPPED"
-          : null;
-    await persistReplayDecision(input.pool, {
-      replayRunId: input.replayRun.id,
-      marketId: market.stableMarketId,
-      policyVersionId: policy.policyVersionId,
-      decisionAt,
-      cutoffBlock,
-      frameHash: frameResult.frameHash,
-      forecastPUp: decision.action === "ABSTAIN" ? null : decision.forecastPUp,
-      action: decision.action,
-      reasonCodes: decision.reasonCodes,
-      outcomeLoadedAt: new Date(),
-      outcomeResult: outcome,
-      exclusionReason
-    });
+    const cutoffBlock = cutoff.value.blockNumber;
     const blocks = [
       ...orders.value.rows.flatMap((order) => [order.placedAtBlock, order.lastUpdatedAtBlock]),
       ...fills.value.rows.map((fill) => fill.blockNumber)
     ];
+    const sourceCompleteness = orders.value.hasMore || fills.value.hasMore || candles.value.hasMore ? "PARTIAL" : "COMPLETE";
     const manifestDigest = sha256(
       stableJson({
         marketId: market.stableMarketId,
-        frameHash: frameResult.frameHash,
-        ordersCount: orders.value.rows.length,
-        fillsCount: fills.value.rows.length,
-        candlesCount: candles.value.length,
+        cutoff: cutoff.value,
+        orders: orders.value.rows.map(withoutSource),
+        fills: fills.value.rows.map(withoutSource),
+        candles: candles.value.rows.map(withoutSource),
         partialOrders: orders.value.hasMore,
         partialFills: fills.value.hasMore
       })
@@ -744,10 +779,10 @@ async function executeHistoricalReplay(input: {
       queryVersion: ReplayQueryVersion,
       ordersCount: orders.value.rows.length,
       fillsCount: fills.value.rows.length,
-      candlesCount: candles.value.length,
+      candlesCount: candles.value.rows.length,
       firstBlock: minBlock(blocks),
       lastBlock: maxBlock(blocks),
-      completeness: orders.value.hasMore || fills.value.hasMore ? "PARTIAL" : "COMPLETE",
+      completeness: sourceCompleteness,
       canonicalDigest: manifestDigest,
       retrievedAt: new Date(),
       sourceMetadata: {
@@ -755,11 +790,67 @@ async function executeHistoricalReplay(input: {
         chainId: SOMNIA_MAINNET_CHAIN_ID,
         marketId: market.stableMarketId,
         cutoffBlock,
-        frameHash: frameResult.frameHash,
-        outcomeLoadedOnlyAfterFrame: true,
+        cutoffBlockHash: cutoff.value.blockHash,
+        cutoffBlockTimestampSeconds: cutoff.value.timestampSeconds,
+        cutoffRule: cutoff.value.rule,
         bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
       }
     });
+    if (sourceCompleteness !== "COMPLETE") {
+      throw new Error(`SOURCE_BLOCKED: ${market.stableMarketId} exceeded a replay source cap`);
+    }
+    const frameResult = buildHistoricalDecisionFrame({
+      market,
+      decisionAt: decisionAt.toISOString(),
+      cutoffBlock,
+      candles: candles.value.rows,
+      orders: orders.value.rows,
+      fills: fills.value.rows,
+      openingPrice: null,
+      quoteDecimals: market.quoteDecimals
+    });
+    const decision = evaluateHistoricalPolicy(adapter, {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+    const decisionExclusionReason = decision.action === "ABSTAIN" ? decision.reasonCodes.join("|") : null;
+    const persistedDecision = await persistReplayDecision(input.pool, {
+      replayRunId: input.replayRun.id,
+      marketId: market.stableMarketId,
+      policyVersionId: policy.policyVersionId,
+      decisionAt,
+      cutoffBlock,
+      frameHash: frameResult.frameHash,
+      forecastPUp: decision.forecastPUp,
+      action: decision.action,
+      reasonCodes: decision.reasonCodes,
+      exclusionReason: decisionExclusionReason
+    });
+    const outcomeMarket = await getHistoricalBinaryMarket(
+      input.historicalDreamDexClient,
+      input.historicalDreamDexConfig,
+      market.stableMarketId
+    );
+    if (!outcomeMarket.ok) {
+      throw new Error(`OUTCOME_SOURCE_UNAVAILABLE: ${outcomeMarket.message}`);
+    }
+    const outcome = normalizeOutcome(outcomeMarket.value?.winningOutcome ?? null);
+    const outcomeExclusionReason = outcome === null ? "OUTCOME_UNAVAILABLE_OR_UNMAPPED" : null;
+    const outcomeLoadedAt = new Date();
+    await persistReplayOutcome(input.pool, {
+      replayDecisionId: persistedDecision.id,
+      outcomeResult: outcome,
+      exclusionReason: outcomeExclusionReason,
+      loadedAt: outcomeLoadedAt,
+      sourceMetadata: {
+        plane: "MAINNET_HISTORICAL",
+        chainId: SOMNIA_MAINNET_CHAIN_ID,
+        marketId: market.stableMarketId,
+        loadedAfterDecisionId: persistedDecision.id,
+        decisionCommittedAt: persistedDecision.createdAt.toISOString()
+      }
+    });
+    const exclusionReason = decisionExclusionReason ?? outcomeExclusionReason;
     processedCount += 1;
     if (decision.action !== "ABSTAIN" && outcome !== null) {
       scoredCount += 1;
@@ -772,11 +863,25 @@ async function executeHistoricalReplay(input: {
       outcome,
       exclusionReason
     });
+    await updateReplayProgress(input.pool, {
+      replayRunId: input.replayRun.id,
+      selectedCount: selectedMarkets.length,
+      processedCount,
+      scoredCount,
+      excludedCount: processedCount - scoredCount,
+      checkpoints: {
+        stage: "OUTCOME_COMMITTED",
+        lastMarketId: market.stableMarketId,
+        lastDecisionId: persistedDecision.id,
+        lastFrameHash: frameResult.frameHash,
+        lastOutcomeLoadedAt: outcomeLoadedAt.toISOString()
+      }
+    });
   }
   const outputHash = sha256(stableJson(outputItems));
   return await completeReplayRun(input.pool, {
     replayRunId: input.replayRun.id,
-    selectedCount: markets.value.length,
+    selectedCount: selectedMarkets.length,
     processedCount,
     scoredCount,
     excludedCount: processedCount - scoredCount,
@@ -1393,8 +1498,42 @@ async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string
   };
 }
 
+async function listComparisons(pool: pg.Pool, input: { readonly sessionId: string; readonly limit?: number }) {
+  const result = await pool.query<{
+    comparison_id: string;
+    name: string;
+    created_at: Date;
+    updated_at: Date;
+    item_count: string;
+  }>(
+    `
+      SELECT
+        cs.id AS comparison_id,
+        cs.name,
+        cs.created_at,
+        cs.updated_at,
+        count(ci.assessment_id)::text AS item_count
+      FROM comparison_sets cs
+      LEFT JOIN comparison_items ci ON ci.comparison_set_id = cs.id
+      WHERE cs.created_by_session_id = $1
+      GROUP BY cs.id
+      ORDER BY cs.updated_at DESC, cs.created_at DESC
+      LIMIT $2
+    `,
+    [input.sessionId, input.limit ?? 20]
+  );
+  return result.rows.map((row) => ({
+    comparisonId: row.comparison_id,
+    name: row.name.replace(/#[A-Za-z0-9._:-]{8,128}$/, ""),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    itemCount: Number(row.item_count)
+  }));
+}
+
 export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   const app = Fastify({
+    bodyLimit: 64 * 1024,
     logger: {
       level: config.LOG_LEVEL,
       redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"]
@@ -1405,6 +1544,97 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   const historicalDreamDexConfig = deps.historicalDreamDexConfig ?? createDefaultHistoricalConfig(config);
   const historicalDreamDexClient =
     deps.historicalDreamDexClient ?? createMainnetHistoricalDreamDexSdkClient(historicalDreamDexConfig);
+  const replayTasks = new Map<string, Promise<void>>();
+  const rateBuckets = new Map<string, { readonly resetAt: number; count: number }>();
+
+  app.addHook("onRequest", async (request, reply) => {
+    const key = rateKey(request);
+    if (key === "unlimited-page") {
+      return;
+    }
+    const now = Date.now();
+    for (const [bucketKey, bucket] of rateBuckets) {
+      if (bucket.resetAt <= now) {
+        rateBuckets.delete(bucketKey);
+      }
+    }
+    const limit =
+      key.startsWith("session-create:")
+        ? ResearchSessionCreateRateLimit
+        : key.startsWith("write:")
+          ? PublicWriteRateLimit
+          : PublicReadRateLimit;
+    const bucket = rateBuckets.get(key);
+    if (bucket === undefined) {
+      rateBuckets.set(key, { resetAt: now + RateWindowMs, count: 1 });
+      return;
+    }
+    bucket.count += 1;
+    if (bucket.count > limit) {
+      reply.header("retry-after", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return v2Error(
+        reply,
+        429,
+        "RATE_LIMITED",
+        "Request rate limit exceeded; retry after the window resets",
+        true,
+        request.id,
+        { windowSeconds: RateWindowMs / 1000, limit }
+      );
+    }
+  });
+
+  function scheduleReplay(replayRun: ReplayRunRecord, experiment: InteractiveExperimentDetailRecord): void {
+    if (replayTasks.has(replayRun.id) || !["QUEUED", "FAILED"].includes(replayRun.status)) {
+      return;
+    }
+    const task = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        resolve();
+      });
+    })
+      .then(async () => {
+        const pool = requirePool(deps);
+        const running = await startReplayRun(pool, replayRun.id);
+        await executeHistoricalReplay({
+          pool,
+          replayRun: running,
+          experiment,
+          historicalDreamDexClient,
+          historicalDreamDexConfig,
+          ...(deps.historicalIndexerFetch === undefined ? {} : { historicalIndexerFetch: deps.historicalIndexerFetch }),
+          ...(deps.historicalRpcFetch === undefined ? {} : { historicalRpcFetch: deps.historicalRpcFetch })
+        });
+      })
+      .catch(async (error: unknown) => {
+        const message = error instanceof Error ? error.message : "REPLAY_FAILED";
+        if (message.includes("REPLAY_CANCELLED_OR_DEADLINE_EXCEEDED")) {
+          return;
+        }
+        const pool = requirePool(deps);
+        if (message.startsWith("SOURCE_BLOCKED:")) {
+          await blockReplayRun(pool, {
+            replayRunId: replayRun.id,
+            errorCode: "SOURCE_BLOCKED",
+            checkpoints: { sourcePlane: "MAINNET_HISTORICAL", reason: message }
+          });
+          return;
+        }
+        await failReplayRun(pool, {
+          replayRunId: replayRun.id,
+          errorCode: message.slice(0, 120),
+          checkpoints: { sourcePlane: "MAINNET_HISTORICAL", failedAt: new Date().toISOString() }
+        });
+      })
+      .finally(() => {
+        replayTasks.delete(replayRun.id);
+      });
+    replayTasks.set(replayRun.id, task);
+  }
+
+  app.addHook("onClose", async () => {
+    await Promise.allSettled([...replayTasks.values()]);
+  });
 
   void app.register(helmet);
   void app.register(cookie, { secret: config.SESSION_SECRET });
@@ -1606,6 +1836,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     try {
       const pool = requirePool(deps);
       const ensured = await ensureResearchSession(pool, config, request, reply);
+      await writeAudit(pool, {
+        sessionId: ensured.session.id,
+        action: "research_session.ensure",
+        targetType: "research_session",
+        targetId: ensured.session.id,
+        outcome: ensured.created ? "CREATED" : "REFRESHED",
+        correlationId: request.id,
+        safeMetadata: { csrfVersion: ensured.session.csrfVersion }
+      });
       return v2Data(
         {
           session: {
@@ -1627,6 +1866,49 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "RESEARCH_SESSION_UNAVAILABLE",
         error instanceof Error ? error.message : "Research session unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/research-session/revoke", async (request, reply) => {
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Active research session is required", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const revoked = await revokeResearchSession(pool, session.id);
+      if (revoked) {
+        await writeAudit(pool, {
+          sessionId: session.id,
+          action: "research_session.revoke",
+          targetType: "research_session",
+          targetId: session.id,
+          outcome: "REVOKED",
+          correlationId: request.id
+        });
+      }
+      reply.clearCookie(ResearchSessionCookie, sessionCookieOptions(config));
+      return v2Data(
+        { revoked },
+        { applicationWrite: true, blockchainWrite: false, ownership: "research-session" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "RESEARCH_SESSION_REVOKE_FAILED",
+        error instanceof Error ? error.message : "Research session revoke failed",
         true,
         request.id
       );
@@ -1712,6 +1994,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           request.id
         );
       }
+      const sessionExperimentCount = await countInteractiveExperiments(pool, { sessionId: session.id });
+      if (sessionExperimentCount >= MaxExperimentsPerSession) {
+        return await v2Error(
+          reply,
+          429,
+          "EXPERIMENT_QUOTA_EXCEEDED",
+          "Research-session experiment quota exceeded",
+          true,
+          request.id,
+          { quota: MaxExperimentsPerSession }
+        );
+      }
       const windowFrom = parsed.data.windowFrom === undefined ? null : new Date(parsed.data.windowFrom);
       const windowTo = parsed.data.windowTo === undefined ? null : new Date(parsed.data.windowTo);
       if (windowFrom !== null && windowTo !== null && windowFrom >= windowTo) {
@@ -1770,6 +2064,20 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (experiment === null) {
         return await v2Error(reply, 500, "EXPERIMENT_CREATE_UNREADABLE", "Created experiment could not be reloaded", true, request.id);
       }
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "experiment.create",
+        targetType: "experiment",
+        targetId: created.experimentId,
+        outcome: created.idempotentReplay ? "IDEMPOTENT_REPLAY" : "CREATED",
+        correlationId: request.id,
+        safeMetadata: {
+          mode: parsed.data.mode,
+          sourcePlane: configPayload.sourcePlane,
+          policyId: policy.policyId,
+          policyVersion: policy.version
+        }
+      });
       return await reply.code(created.idempotentReplay ? 200 : 201).send(
         v2Data(
           {
@@ -1844,6 +2152,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         sessionId: ensured.session.id,
         experimentId: params.data.experimentId
       });
+      if (replay !== null && replay.status === "QUEUED") {
+        const experiment = await getInteractiveExperiment(pool, {
+          sessionId: ensured.session.id,
+          experimentId: params.data.experimentId
+        });
+        if (experiment !== null) {
+          scheduleReplay(replay, experiment);
+        }
+      }
       return v2Data(
         {
           replay: replay === null ? null : serializeReplayRun(replay),
@@ -1861,6 +2178,87 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "REPLAY_STATE_UNAVAILABLE",
         error instanceof Error ? error.message : "Replay state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/replay-runs/:replayRunId", async (request, reply) => {
+    const params = z.object({ replayRunId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "REPLAY_RUN_ID_INVALID", "Replay run ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const replay = await getOwnedReplayRun(pool, {
+        sessionId: ensured.session.id,
+        replayRunId: params.data.replayRunId
+      });
+      if (replay === null) {
+        return await v2Error(reply, 404, "REPLAY_RUN_NOT_FOUND", "Replay run was not found", false, request.id);
+      }
+      return v2Data(
+        { replay: serializeReplayRun(replay), csrfToken: ensured.csrfToken },
+        { ownership: "research-session", sourcePlane: "MAINNET_HISTORICAL", blockchainWrite: false }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "REPLAY_STATE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Replay state unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/replay-runs/:replayRunId/cancel", async (request, reply) => {
+    const params = z.object({ replayRunId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "REPLAY_RUN_ID_INVALID", "Replay run ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const cancelled = await cancelReplayRun(pool, {
+        sessionId: session.id,
+        replayRunId: params.data.replayRunId
+      });
+      if (!cancelled) {
+        return await v2Error(reply, 404, "REPLAY_RUN_NOT_ACTIVE", "Active replay run was not found", false, request.id);
+      }
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "replay.cancel",
+        targetType: "replay_run",
+        targetId: params.data.replayRunId,
+        outcome: "CANCELLED",
+        correlationId: request.id
+      });
+      return v2Data(
+        { replayRunId: params.data.replayRunId, status: "CANCELLED" },
+        { applicationWrite: true, blockchainWrite: false, ownership: "research-session" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "REPLAY_CANCEL_FAILED",
+        error instanceof Error ? error.message : "Replay cancel failed",
         true,
         request.id
       );
@@ -1907,7 +2305,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         experimentId: experiment.experimentId,
         inputHash
       });
-      if (existing !== null && existing.status === "SUCCEEDED") {
+      if (existing !== null && ["COMPLETED", "SUCCEEDED"].includes(existing.status)) {
         const replay = await getLatestReplayRunForExperiment(pool, {
           sessionId: session.id,
           experimentId: experiment.experimentId
@@ -1917,10 +2315,23 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           { applicationWrite: false, blockchainWrite: false, sourcePlane: "MAINNET_HISTORICAL" }
         );
       }
-      if (existing !== null && existing.status === "RUNNING") {
+      if (existing !== null && ["QUEUED", "RUNNING"].includes(existing.status)) {
         return await v2Error(reply, 409, "REPLAY_ALREADY_RUNNING", "Historical qualification is already running", true, request.id);
       }
+      const sessionReplayCount = await countReplayRuns(pool, { sessionId: session.id });
+      if (sessionReplayCount >= MaxReplayRunsPerSession) {
+        return await v2Error(
+          reply,
+          429,
+          "REPLAY_QUOTA_EXCEEDED",
+          "Research-session replay quota exceeded",
+          true,
+          request.id,
+          { quota: MaxReplayRunsPerSession }
+        );
+      }
       const replayRun = await createReplayRun(pool, {
+        sessionId: session.id,
         experimentId: experiment.experimentId,
         configurationId: experiment.configuration.id,
         frozenNow: new Date(),
@@ -1935,41 +2346,25 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
         }
       });
-      const running = await startReplayRun(pool, replayRun.id);
-      let completed: ReplayRunRecord;
-      try {
-        completed = await executeHistoricalReplay({
-          pool,
-          replayRun: running,
-          experiment,
-          historicalDreamDexClient,
-          historicalDreamDexConfig,
-          ...(deps.historicalIndexerFetch === undefined ? {} : { historicalIndexerFetch: deps.historicalIndexerFetch })
-        });
-      } catch (error) {
-        await failReplayRun(pool, {
-          replayRunId: running.id,
-          errorCode: error instanceof Error ? error.message.slice(0, 120) : "REPLAY_FAILED",
-          checkpoints: {
-            sourcePlane: "MAINNET_HISTORICAL",
-            failedAt: new Date().toISOString()
-          }
-        });
-        throw error;
-      }
-      const detail = await getLatestReplayRunForExperiment(pool, {
+      scheduleReplay(replayRun, experiment);
+      await writeAudit(pool, {
         sessionId: session.id,
-        experimentId: experiment.experimentId
+        action: "replay.start",
+        targetType: "replay_run",
+        targetId: replayRun.id,
+        outcome: "QUEUED",
+        correlationId: request.id,
+        safeMetadata: { experimentId: experiment.experimentId, sourcePlane: "MAINNET_HISTORICAL" }
       });
-      return v2Data(
-        { replay: detail === null ? serializeReplayRun(completed) : serializeReplayRun(detail), idempotentReplay: false },
+      return await reply.code(202).send(v2Data(
+        { replay: serializeReplayRun(replayRun), idempotentReplay: false },
         {
           applicationWrite: true,
           blockchainWrite: false,
           sourcePlane: "MAINNET_HISTORICAL",
           outcomeEmbargo: "outcomes persisted only after decision frame hashes"
         }
-      );
+      ));
     } catch (error) {
       return v2Error(
         reply,
@@ -2166,7 +2561,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         sessionId: session.id,
         experimentId: experiment.experimentId
       });
-      if (replay === null || replay.status !== "SUCCEEDED") {
+      if (replay === null || !["COMPLETED", "SUCCEEDED"].includes(replay.status)) {
         return await v2Error(reply, 409, "REPLAY_REQUIRED", "Run historical qualification before evaluating evidence", false, request.id);
       }
       const assessment = await runMetricAssessment({
@@ -2184,6 +2579,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           pnlLabel: "REPLAY_COUNTERFACTUAL_OR_NOT_AVAILABLE",
           bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
         }
+      });
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "evaluation.create",
+        targetType: "experiment",
+        targetId: experiment.experimentId,
+        outcome: assessment.verdict,
+        correlationId: request.id,
+        safeMetadata: { assessmentId: assessment.assessmentId, replayRunId: replay.id }
       });
       return v2Data(
         { assessment },
@@ -2285,6 +2689,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         assets,
         intervals: experiment.configuration.intervals
       });
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "live_shadow.observe",
+        targetType: "experiment",
+        targetId: experiment.experimentId,
+        outcome: "OBSERVED",
+        correlationId: request.id,
+        safeMetadata: { observedMarkets: result.observed.length, sourcePlane: "SHANNON_FORWARD" }
+      });
       return v2Data(
         {
           observation: result,
@@ -2339,6 +2752,33 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     }
   });
 
+  app.get("/api/v2/comparisons", async (request, reply) => {
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const comparisons = await listComparisons(pool, {
+        sessionId: ensured.session.id,
+        limit: 20
+      });
+      return v2Data(
+        {
+          comparisons,
+          csrfToken: ensured.csrfToken
+        },
+        { ownership: "research-session", comparisonSource: "immutable-assessments" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "COMPARISON_LIST_UNAVAILABLE",
+        error instanceof Error ? error.message : "Comparison list unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
   app.post("/api/v2/comparisons", async (request, reply) => {
     const parsed = ComparisonCreateSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -2370,6 +2810,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       });
       if (owned.length !== uniqueIds.length) {
         return await v2Error(reply, 404, "ASSESSMENT_NOT_FOUND", "One or more assessments are unavailable for this session", false, request.id);
+      }
+      const comparisonCount = await countComparisonSets(pool, { sessionId: session.id });
+      if (comparisonCount >= MaxComparisonsPerSession) {
+        return await v2Error(
+          reply,
+          429,
+          "COMPARISON_QUOTA_EXCEEDED",
+          "Research-session comparison quota exceeded",
+          true,
+          request.id,
+          { quota: MaxComparisonsPerSession }
+        );
       }
       const client = await pool.connect();
       let comparisonId: string;
@@ -2417,6 +2869,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         client.release();
       }
       const comparison = await loadComparison(pool, { sessionId: session.id, comparisonId });
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "comparison.create",
+        targetType: "comparison_set",
+        targetId: comparisonId,
+        outcome: "CREATED",
+        correlationId: request.id,
+        safeMetadata: { assessmentCount: uniqueIds.length }
+      });
       return v2Data(
         { comparison },
         { applicationWrite: true, blockchainWrite: false, comparisonSource: "immutable-assessments" }
@@ -2520,6 +2981,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         hasMore: result.value.hasMore,
         excludedMalformedRows: result.value.excludedMalformedRows,
         countRelation: "UNKNOWN",
+        frozenAtSeconds: result.value.frozenAtSeconds,
         source: result.value.source
       }
     );
@@ -2613,7 +3075,11 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       historicalDreamDexConfig,
       market.value.poolAddress,
       query.data.intervalSeconds,
-      compactHistoricalCandleQuery(query.data)
+      {
+        ...(query.data.limit === undefined ? {} : { limit: query.data.limit }),
+        fromSec: Math.max(market.value.tradingStartSeconds, query.data.fromSec ?? market.value.tradingStartSeconds),
+        toSec: Math.min(market.value.expirySeconds, query.data.toSec ?? market.value.expirySeconds)
+      }
     );
     if (!candles.ok) {
       return v2Error(
@@ -2625,7 +3091,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         request.id
       );
     }
-    return v2Data({ candles: candles.value }, { marketId: market.value.stableMarketId, source: market.value.source });
+    return v2Data(
+      { candles: candles.value },
+      {
+        marketId: market.value.stableMarketId,
+        marketWindow: {
+          fromSec: market.value.tradingStartSeconds,
+          toSec: market.value.expirySeconds,
+          poolAddress: market.value.poolAddress
+        },
+        source: market.value.source
+      }
+    );
   });
 
   app.get("/api/v2/mainnet/history/markets/:marketId/orders", async (request, reply) => {
@@ -2839,65 +3316,27 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   });
 
   app.post("/api/v1/experiments/:experimentId/observe", async (request, reply) => {
-    try {
-      const holderId = requireIdempotencyKey(request.headers);
-      const pool = requirePool(deps);
-      const dreamDex = requireDreamDex(deps);
-      const params = z.object({ experimentId: z.string().uuid() }).parse(request.params);
-      return await observeExperiment({
-        pool,
-        dreamDexClient: dreamDex.client,
-        dreamDexConfig: dreamDex.config,
-        experimentId: params.experimentId,
-        policyAdapters,
-        holderId
-      });
-    } catch (error) {
-      return reply.code(400).send({
-        ok: false,
-        reasonCode: "OBSERVE_REQUEST_REJECTED",
-        message: error instanceof Error ? error.message : "Observation request rejected"
-      });
-    }
+    return reply.code(410).send({
+      ok: false,
+      reasonCode: "LEGACY_MUTATION_GONE",
+      message: "Legacy observation mutation is disabled; use the owned v2 live-shadow route"
+    });
   });
 
   app.post("/api/v1/settlements/reconcile", async (request, reply) => {
-    try {
-      const holderId = requireIdempotencyKey(request.headers);
-      const pool = requirePool(deps);
-      const dreamDex = requireDreamDex(deps);
-      return await reconcileSettlements({ pool, dreamDexClient: dreamDex.client, holderId });
-    } catch (error) {
-      return reply.code(400).send({
-        ok: false,
-        reasonCode: "SETTLEMENT_REQUEST_REJECTED",
-        message: error instanceof Error ? error.message : "Settlement request rejected"
-      });
-    }
+    return reply.code(410).send({
+      ok: false,
+      reasonCode: "LEGACY_MUTATION_GONE",
+      message: "Global legacy reconciliation is disabled; use the owned v2 experiment route"
+    });
   });
 
   app.post("/api/v1/experiments/:experimentId/evaluate", async (request, reply) => {
-    try {
-      requireIdempotencyKey(request.headers);
-      const pool = requirePool(deps);
-      const params = z.object({ experimentId: z.string().uuid() }).parse(request.params);
-      const body = EvaluateRequestSchema.parse(request.body);
-      return {
-        ok: true,
-        assessment: await runMetricAssessment({
-          pool,
-          experimentId: params.experimentId,
-          policyVersionId: body.policyVersionId,
-          ruleVersion: body.ruleVersion
-        })
-      };
-    } catch (error) {
-      return reply.code(400).send({
-        ok: false,
-        reasonCode: "EVALUATE_REQUEST_REJECTED",
-        message: error instanceof Error ? error.message : "Evaluation request rejected"
-      });
-    }
+    return reply.code(410).send({
+      ok: false,
+      reasonCode: "LEGACY_MUTATION_GONE",
+      message: "Legacy evaluation mutation is disabled; use the owned v2 evaluation route"
+    });
   });
 
   return app;

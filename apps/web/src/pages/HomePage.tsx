@@ -17,7 +17,7 @@ export default function HomePage() {
             <Link className="primaryAction large" to="/lab">
               Open Strategy Lab
             </Link>
-            <Link className="secondaryAction" to="/markets?plane=historical">
+            <Link className="secondaryAction" to="/markets?plane=mainnet-history">
               Explore DreamDEX History
             </Link>
             <Link className="secondaryAction" to="/lab/proven-experiment">

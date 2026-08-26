@@ -123,12 +123,11 @@ function dateFromSeconds(seconds: number): Date {
 
 export async function registerPolicyVersion(pool: pg.Pool, adapter: PolicyAdapter): Promise<string> {
   const manifest = createPolicyManifest(adapter);
-  const result = await pool.query<{ id: string }>(
+  const inserted = await pool.query<{ id: string }>(
     `
       INSERT INTO policy_versions(policy_id, version, label, adapter_name, source_hash, manifest)
       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-      ON CONFLICT (policy_id, version) DO UPDATE
-      SET policy_id = EXCLUDED.policy_id
+      ON CONFLICT (policy_id, version) DO NOTHING
       RETURNING id
     `,
     [
@@ -140,9 +139,17 @@ export async function registerPolicyVersion(pool: pg.Pool, adapter: PolicyAdapte
       JSON.stringify(manifest)
     ]
   );
-  const row = result.rows[0];
-  if (row === undefined) {
-    throw new Error("Policy registration did not return an id");
+  const insertedRow = inserted.rows[0];
+  if (insertedRow !== undefined) {
+    return insertedRow.id;
+  }
+  const existing = await pool.query<{ readonly id: string; readonly source_hash: string }>(
+    "SELECT id, source_hash FROM policy_versions WHERE policy_id = $1 AND version = $2",
+    [manifest.policyId, manifest.version]
+  );
+  const row = existing.rows[0];
+  if (row === undefined || row.source_hash !== manifest.sourceHash) {
+    throw new Error("POLICY_VERSION_IMMUTABLE_CONFLICT");
   }
   return row.id;
 }

@@ -52,14 +52,8 @@ export const HistoricalFrameOrderSchema = z
     isBid: z.boolean().nullable(),
     priceRaw: z.string(),
     fullQuantityRaw: z.string(),
-    filledQuantityRaw: z.string(),
-    remainingQuantityRaw: z.string(),
-    status: z.string(),
-    rested: z.boolean(),
     placedAtBlock: z.string().regex(/^[0-9]+$/),
-    placedAtTimestampSeconds: z.number().int().nonnegative(),
-    lastUpdatedAtBlock: z.string().regex(/^[0-9]+$/),
-    lastUpdatedAtTimestampSeconds: z.number().int().nonnegative()
+    placedAtTimestampSeconds: z.number().int().nonnegative()
   })
   .strict();
 
@@ -78,6 +72,7 @@ export const HistoricalFrameFillSchema = z
     takerSide: z.string().nullable(),
     takerIsBid: z.boolean().nullable(),
     blockNumber: z.string().regex(/^[0-9]+$/),
+    transactionIndex: z.string().regex(/^[0-9]+$/).nullable(),
     logIndex: z.string().regex(/^[0-9]+$/),
     timestampSeconds: z.number().int().nonnegative()
   })
@@ -215,9 +210,7 @@ export function buildHistoricalDecisionFrame(
     .filter((order) => {
       const included =
         isAtOrBeforeCutoff(order.placedAtBlock, cutoffBlock) &&
-        isAtOrBeforeCutoff(order.lastUpdatedAtBlock, cutoffBlock) &&
-        order.placedAtTimestampSeconds < decisionAtSeconds &&
-        order.lastUpdatedAtTimestampSeconds < decisionAtSeconds;
+        order.placedAtTimestampSeconds < decisionAtSeconds;
       if (!included) {
         exclusions.add("ORDER_AFTER_CUTOFF");
       }
@@ -230,14 +223,8 @@ export function buildHistoricalDecisionFrame(
       isBid: order.isBid,
       priceRaw: order.priceRaw,
       fullQuantityRaw: order.fullQuantityRaw,
-      filledQuantityRaw: order.filledQuantityRaw,
-      remainingQuantityRaw: order.remainingQuantityRaw,
-      status: order.status,
-      rested: order.rested,
       placedAtBlock: order.placedAtBlock,
-      placedAtTimestampSeconds: order.placedAtTimestampSeconds,
-      lastUpdatedAtBlock: order.lastUpdatedAtBlock,
-      lastUpdatedAtTimestampSeconds: order.lastUpdatedAtTimestampSeconds
+      placedAtTimestampSeconds: order.placedAtTimestampSeconds
     }))
     .sort((left, right) => {
       const blockDelta = Number(parseBlock(left.placedAtBlock) - parseBlock(right.placedAtBlock));
@@ -265,13 +252,23 @@ export function buildHistoricalDecisionFrame(
       takerSide: fill.takerSide,
       takerIsBid: fill.takerIsBid,
       blockNumber: fill.blockNumber,
+      transactionIndex: fill.transactionIndex ?? null,
       logIndex: fill.logIndex,
       timestampSeconds: fill.timestampSeconds
     }))
     .sort((left, right) => {
       const blockDelta = Number(parseBlock(left.blockNumber) - parseBlock(right.blockNumber));
+      if (blockDelta !== 0) {
+        return blockDelta;
+      }
+      if (left.transactionIndex !== null && right.transactionIndex !== null) {
+        const transactionDelta = Number(parseBlock(left.transactionIndex) - parseBlock(right.transactionIndex));
+        if (transactionDelta !== 0) {
+          return transactionDelta;
+        }
+      }
       const logDelta = Number(parseBlock(left.logIndex) - parseBlock(right.logIndex));
-      return blockDelta === 0 ? (logDelta === 0 ? left.id.localeCompare(right.id) : logDelta) : blockDelta;
+      return logDelta === 0 ? left.id.localeCompare(right.id) : logDelta;
     });
   const frame = HistoricalDecisionFrameSchema.parse({
     schemaVersion: REPLAY_FRAME_SCHEMA_VERSION,

@@ -94,6 +94,21 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(first.sourceHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("changes policy identity when executable behavior changes under the same metadata", () => {
+    const original = referencePolicies[0];
+    const changed: PolicyAdapter = {
+      ...original,
+      evaluate() {
+        return {
+          forecastPUp: 0.51,
+          action: "WATCH_ONLY",
+          reasonCodes: ["REFERENCE_POLICY", "NEUTRAL_BASELINE"]
+        };
+      }
+    };
+    expect(createPolicyManifest(changed).sourceHash).not.toBe(createPolicyManifest(original).sourceHash);
+  });
+
   it("rejects duplicate policy versions in the registry", () => {
     expect(() => createPolicyRegistry([referencePolicies[0], referencePolicies[0]])).toThrow(
       PolicyRuntimeError
@@ -264,5 +279,27 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(decision.forecastPUp).toBe(0.5);
     expect(decision.action).toBe("ABSTAIN");
     expect(decision.reasonCodes).toContain("NO_PRE_CUTOFF_FILL");
+  });
+
+  it("orders same-block fills by transaction index before log index", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({ id: "earlier-tx", transactionIndex: "3", logIndex: "99", fillPriceRaw: "510000" }),
+        historicalFill({ id: "later-tx", transactionIndex: "4", logIndex: "1", fillPriceRaw: "620000" })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.62);
   });
 });

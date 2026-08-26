@@ -44,6 +44,9 @@ export default function LabPage() {
   const [mode, setMode] = useState<ExperimentCreateInput["mode"]>("HISTORICAL_REPLAY");
   const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>("BTC");
   const [interval, setInterval] = useState("3600");
+  const [windowFrom, setWindowFrom] = useState("");
+  const [windowTo, setWindowTo] = useState("");
+  const [decisionOffsetSec, setDecisionOffsetSec] = useState(0);
   const selectedStrategy = strategyOptions.find((strategy) => strategy.key === strategyKey) ?? strategyOptions[0];
   const experimentsQuery = useQuery({
     queryKey: ["experiments"],
@@ -59,6 +62,9 @@ export default function LabPage() {
         policyId: selectedStrategy.policyId,
         policyVersion: selectedStrategy.policyVersion,
         ...(seededMarketId === null ? {} : { marketId: seededMarketId }),
+        ...(windowFrom.trim() === "" ? {} : { windowFrom: new Date(windowFrom).toISOString() }),
+        ...(windowTo.trim() === "" ? {} : { windowTo: new Date(windowTo).toISOString() }),
+        decisionOffsetSec,
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }),
     onSuccess: async (response) => {
@@ -155,6 +161,49 @@ export default function LabPage() {
               <option value="86400">24 hours</option>
             </select>
           </label>
+          {mode === "HISTORICAL_REPLAY" ? (
+            <>
+              <label>
+                Window from
+                <input
+                  type="datetime-local"
+                  value={windowFrom}
+                  onChange={(event) => {
+                    setWindowFrom(event.target.value);
+                  }}
+                />
+              </label>
+              <label>
+                Window to
+                <input
+                  type="datetime-local"
+                  value={windowTo}
+                  onChange={(event) => {
+                    setWindowTo(event.target.value);
+                  }}
+                />
+              </label>
+            </>
+          ) : null}
+          <label>
+            Decision offset seconds
+            <input
+              type="number"
+              min="-3600"
+              max="3600"
+              step="60"
+              value={decisionOffsetSec}
+              onChange={(event) => {
+                setDecisionOffsetSec(Number(event.target.value));
+              }}
+            />
+          </label>
+          <label>
+            Risk envelope
+            <select value="WATCH_ONLY_BOUNDED" disabled>
+              <option value="WATCH_ONLY_BOUNDED">Research only / watch only</option>
+            </select>
+          </label>
           <button type="submit" aria-describedby="lab-write-status" disabled={createMutation.isPending}>
             {createMutation.isPending ? "Creating..." : "Create Experiment"}
           </button>
@@ -175,6 +224,10 @@ export default function LabPage() {
             <div>
               <dt>Risk envelope</dt>
               <dd>WATCH_ONLY_BOUNDED</dd>
+            </div>
+            <div>
+              <dt>Decision offset</dt>
+              <dd>{decisionOffsetSec}s</dd>
             </div>
             <div>
               <dt>Blockchain write</dt>

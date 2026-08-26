@@ -12,6 +12,15 @@ import {
 } from "../data.js";
 
 const pageSize = 12;
+type RoutePlane = "mainnet-history" | "shannon-live";
+
+function parseRoutePlane(value: string | null): RoutePlane {
+  return value === "shannon-live" ? "shannon-live" : "mainnet-history";
+}
+
+function planeBadge(plane: RoutePlane): "MAINNET_HISTORICAL" | "SHANNON_FORWARD" {
+  return plane === "mainnet-history" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD";
+}
 
 function intervalLabel(seconds: string): string {
   const labels: Record<string, string> = {
@@ -36,7 +45,7 @@ function buildHistoricalPath(asset: string, interval: string, status: string, of
 
 export default function MarketsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const plane = searchParams.get("plane") === "live" ? "live" : "historical";
+  const plane = parseRoutePlane(searchParams.get("plane"));
   const [draftPlane, setDraftPlane] = useState(plane);
   const [asset, setAsset] = useState(searchParams.get("asset") ?? "BTC");
   const [interval, setInterval] = useState(searchParams.get("interval") ?? "3600");
@@ -47,13 +56,13 @@ export default function MarketsPage() {
   const marketsQuery = useQuery({
     queryKey: ["markets", plane, asset, interval, status, safeOffset],
     queryFn: () =>
-      plane === "historical"
+      plane === "mainnet-history"
         ? fetchV2<MarketsResponse, MarketsMeta>(buildHistoricalPath(asset, interval, status, safeOffset))
         : fetchV2<MarketsResponse, MarketsMeta>("/api/v2/shannon/markets/live")
   });
 
   const countQuery = useQuery({
-    enabled: plane === "historical",
+    enabled: plane === "mainnet-history",
     queryKey: ["historical-market-count", asset, interval, status],
     queryFn: () =>
       fetchV2<HistoricalCountResponse>(
@@ -67,7 +76,7 @@ export default function MarketsPage() {
 
   const filteredMarkets = useMemo(() => {
     const rows = marketsQuery.data?.data.markets ?? [];
-    if (plane === "historical") {
+    if (plane === "mainnet-history") {
       return rows;
     }
     return rows.filter(
@@ -82,7 +91,7 @@ export default function MarketsPage() {
       plane: draftPlane,
       asset,
       interval,
-      ...(draftPlane === "historical" ? { status } : {}),
+      ...(draftPlane === "mainnet-history" ? { status } : {}),
       offset: "0"
     });
   }
@@ -92,14 +101,14 @@ export default function MarketsPage() {
       plane,
       asset,
       interval,
-      ...(plane === "historical" ? { status } : {}),
+      ...(plane === "mainnet-history" ? { status } : {}),
       offset: String(Math.max(0, nextOffset))
     });
   }
 
   const source = marketsQuery.data?.meta.source;
   const totalText =
-    plane === "historical"
+    plane === "mainnet-history"
       ? countQuery.data === undefined
         ? "Counting markets..."
         : `${countQuery.data.data.countRelation === "AT_LEAST" ? "At least " : ""}${String(countQuery.data.data.count)} markets`
@@ -126,11 +135,11 @@ export default function MarketsPage() {
             <select
               value={draftPlane}
               onChange={(event) => {
-                setDraftPlane(event.target.value);
+                setDraftPlane(event.target.value as RoutePlane);
               }}
             >
-              <option value="historical">Mainnet historical</option>
-              <option value="live">Shannon live</option>
+              <option value="mainnet-history">Mainnet historical</option>
+              <option value="shannon-live">Shannon live</option>
             </select>
           </label>
           <label>
@@ -159,7 +168,7 @@ export default function MarketsPage() {
               <option value="86400">24 hours</option>
             </select>
           </label>
-          {draftPlane === "historical" ? (
+          {draftPlane === "mainnet-history" ? (
             <label>
               Status
               <select
@@ -178,11 +187,11 @@ export default function MarketsPage() {
 
         <article className="routePanel" aria-label="Market explorer state">
           <div className="sourceBar">
-            <span className="statusPill">{plane === "historical" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD"}</span>
+            <span className="statusPill">{planeBadge(plane)}</span>
             <span className="statusPill">{totalText}</span>
             <span className="statusPill">{marketsQuery.isFetching ? "Refreshing" : "Current response"}</span>
           </div>
-          <h2>{plane === "historical" ? "Historical DreamDEX markets" : "Live Shannon markets"}</h2>
+          <h2>{plane === "mainnet-history" ? "Historical DreamDEX markets" : "Live Shannon markets"}</h2>
           <p>
             These rows come from EdgeLab API routes backed by DreamDEX reads. No raw browser GraphQL,
             no owner rows, no stored historical book snapshot claim.
@@ -190,7 +199,7 @@ export default function MarketsPage() {
           <dl className="factGrid">
             <div>
               <dt>Plane</dt>
-              <dd>{plane === "historical" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD"}</dd>
+              <dd>{planeBadge(plane)}</dd>
             </div>
             <div>
               <dt>Filter</dt>
@@ -239,8 +248,8 @@ export default function MarketsPage() {
                   <span role="cell">{market.status}</span>
                   <span role="cell">{market.tradeCount}</span>
                   <span role="cell">
-                    {plane === "historical" ? (
-                      <Link className="secondaryAction inlineAction" to={`/markets/${market.stableMarketId}?plane=historical`}>
+                    {plane === "mainnet-history" ? (
+                      <Link className="secondaryAction inlineAction" to={`/markets/${market.stableMarketId}?plane=mainnet-history`}>
                         Inspect
                       </Link>
                     ) : (
@@ -254,7 +263,7 @@ export default function MarketsPage() {
             </div>
           ) : null}
 
-          {plane === "historical" ? (
+          {plane === "mainnet-history" ? (
             <div className="paginationRow">
               <button
                 type="button"

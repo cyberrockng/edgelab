@@ -1,17 +1,21 @@
 {
   "evidenceId": "REPLAY-002-SAMPLE",
-  "capturedAt": "2026-08-25T11:54:48.289Z",
+  "capturedAt": "2026-08-26T05:58:14Z",
+  "supersedes": {
+    "capturedAt": "2026-08-25T11:54:48.289Z",
+    "reason": "Previous sample exposed forecastPUp null for ABSTAIN; corrected runtime preserves the exact neutral forecast 0.5 with ABSTAIN/exclusion."
+  },
   "replayDecision": {
     "marketId": "0x0000000000000000000000000000000000000000000000000000000000001bdb",
     "action": "ABSTAIN",
-    "forecastPUp": null,
+    "forecastPUp": 0.5,
     "outcomeResult": "NO",
-    "frameHash": "01ba06e562e0dae82f3894a47d29a71ad2c549ee4449bd648401032343134395",
+    "frameHash": "f6abac86c73493ba2142c7ca76b9a7dbba16ddf7189ed12ef2f55e1c0f88b0a3",
     "reasonCodes": [
       "HISTORICAL_LAST_TRADE",
       "NO_PRE_CUTOFF_FILL"
     ]
   },
-  "interpretation": "The policy received a valid pre-outcome frame but no verified fill in the last 900 seconds before cutoff, so it abstained. EdgeLab treated this as insufficient evidence rather than fabricating a forecast.",
+  "interpretation": "The policy received a valid pre-outcome frame but no verified fill in the last 900 seconds before cutoff, so it returned the exact neutral forecast 0.5 with ABSTAIN. EdgeLab excludes this decision from scored forecast quality instead of fabricating tradeability or PnL evidence.",
   "redaction": "public evidence only"
 }

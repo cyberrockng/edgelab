@@ -1,34 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { DREAMDEX_MARKETS_SDK_VERSION } from "@edgelab/domain";
-import { apiErrorMessage, capturedSummary, fetchExecutionProof, proofRows } from "../data.js";
-
-const lifecycleRows = [
-  {
-    state: "VERIFIED",
-    title: "Exact approval",
-    detail: "0.01 tUSDC approved to the selected DreamDEX pool"
-  },
-  {
-    state: "SUBMITTED",
-    title: "POST_ONLY BUY_YES order",
-    detail: "Price 0.01, quantity 1; order ID remains inspectable below"
-  },
-  {
-    state: "NO FILL",
-    title: "Rested without execution",
-    detail: "No fill was observed; no PnL is inferred"
-  },
-  {
-    state: "EXPIRED",
-    title: "Owner-approved cancel landed after expiry",
-    detail: "DreamDEX emitted OrderExpired, not OrderCancelled"
-  },
-  {
-    state: "RECONCILED",
-    title: "Terminal state verified",
-    detail: "No open order remains and escrow returned"
-  }
-] as const;
+import { apiErrorMessage, fetchExecutionProof } from "../data.js";
 
 export default function ProofPage() {
   const proofQuery = useQuery({
@@ -36,10 +8,7 @@ export default function ProofPage() {
     queryFn: fetchExecutionProof
   });
   const proof = proofQuery.data?.data.proof ?? null;
-  const summary = capturedSummary;
-  const renderedLifecycle = proof?.lifecycle ?? lifecycleRows;
-  const renderedTechnical = proof?.technical ?? proofRows;
-  const terminalState = proof?.order.terminalEvent.toUpperCase().replace("ORDER", "") ?? summary.chain.latestTerminalState ?? "Terminal proof unavailable";
+  const terminalState = proof?.order.terminalEvent.toUpperCase().replace("ORDER", "") ?? "Proof unavailable";
   return (
     <div className="pageStack">
       <section className="routeHero">
@@ -62,17 +31,22 @@ export default function ProofPage() {
           <h2>Approval to terminal reconciliation.</h2>
           <p>Mainnet research data is not mixed with Shannon execution evidence.</p>
         </div>
-        <ol className="lifecycleRail">
-          {renderedLifecycle.map((row) => (
-            <li key={row.title}>
-              <span>{row.state}</span>
-              <div>
-                <strong>{row.title}</strong>
-                <p>{row.detail}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
+        {proof === null && !proofQuery.isLoading ? (
+          <div className="stateBox statusWarning">Proof source is unavailable; no captured lifecycle is substituted.</div>
+        ) : null}
+        {proof === null ? null : (
+          <ol className="lifecycleRail">
+            {proof.lifecycle.map((row) => (
+              <li key={row.title}>
+                <span>{row.state}</span>
+                <div>
+                  <strong>{row.title}</strong>
+                  <p>{row.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
       </section>
       <section className="proofSection" aria-label="Technical proof details">
         <div className="sectionIntro compact">
@@ -86,25 +60,29 @@ export default function ProofPage() {
             PnL {proof.reconciliation.pnlStatus}.
           </div>
         )}
-        <div className="proofGrid">
-          {renderedTechnical.map((row) =>
-            row.href === null ? (
-              <div key={row.label}>
-                <span>{row.label}</span>
-                <strong>{row.value}</strong>
-              </div>
-            ) : (
-              <a href={row.href} target="_blank" rel="noreferrer" key={row.label}>
-                <span>{row.label}</span>
-                <strong>{row.value}</strong>
-              </a>
-            )
-          )}
-          <div>
-            <span>SDK</span>
-            <strong>{DREAMDEX_MARKETS_SDK_VERSION}</strong>
+        {proof === null ? (
+          <div className="stateBox">Public chain references load only from the proof API.</div>
+        ) : (
+          <div className="proofGrid">
+            {proof.technical.map((row) =>
+              row.href === null ? (
+                <div key={row.label}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </div>
+              ) : (
+                <a href={row.href} target="_blank" rel="noreferrer" key={row.label}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </a>
+              )
+            )}
+            <div>
+              <span>SDK</span>
+              <strong>{DREAMDEX_MARKETS_SDK_VERSION}</strong>
+            </div>
           </div>
-        </div>
+        )}
       </section>
     </div>
   );

@@ -1,7 +1,11 @@
 {
   "evidenceId": "PROVEN-001",
   "task": "ARTIFACT-001",
-  "capturedAt": "2026-08-25T13:58:00+01:00",
+  "capturedAt": "2026-08-26T05:58:14Z",
+  "supersedes": {
+    "capturedAt": "2026-08-25T13:58:00+01:00",
+    "reason": "Previous public manifest repeated anti-look-ahead and no-fill claims contradicted by System 3 AUD-001/AUD-007. This manifest is regenerated for the remediation SHA and keeps the insufficient-evidence result truthful."
+  },
   "title": "Proven replay: historical last-trade abstention",
   "status": "PUBLIC_PROVEN",
   "selectionDisclosure": "Representative single-market captured run selected for reproducibility and completeness, not favorability.",
@@ -19,25 +23,26 @@
     "normalizedOutcome": "NO"
   },
   "experiment": {
-    "experimentId": "68598888-768d-4aa4-82ae-3b3962813e68",
+    "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
     "mode": "HISTORICAL_REPLAY",
     "policy": "historical-last-trade@1.0.0",
     "riskEnvelope": "WATCH_ONLY_BOUNDED"
   },
   "replay": {
-    "status": "SUCCEEDED",
+    "status": "COMPLETED",
     "selectedCount": 1,
     "processedCount": 1,
     "scoredCount": 0,
     "excludedCount": 1,
-    "outputHash": "b6111d9f4b829abf27cea6e547d4a4575f5a3f27ffc2a9c7c6645809e8442ac4",
-    "frameHash": "01ba06e562e0dae82f3894a47d29a71ad2c549ee4449bd648401032343134395",
+    "inputHash": "feb7e589b7ed49039c8c4cebf395ccab5d984ac19e72f3c89a6b8a13800fdb5d",
+    "outputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
+    "frameHash": "f6abac86c73493ba2142c7ca76b9a7dbba16ddf7189ed12ef2f55e1c0f88b0a3",
     "bookReconstruction": "SOURCE_INCOMPLETE",
     "blockchainWrite": false
   },
   "decision": {
     "action": "ABSTAIN",
-    "forecastPUp": null,
+    "forecastPUp": 0.5,
     "outcomeResult": "NO",
     "reasonCodes": [
       "HISTORICAL_LAST_TRADE",
@@ -60,7 +65,7 @@
   },
   "antiLookahead": {
     "decisionFrames": "STRICTLY_BEFORE_DECISION_AT",
-    "outcomeEmbargo": "outcome persisted after decision frame hash",
+    "outcomeEmbargo": "decision frame and replay decision persist before the separate replay_outcomes stage",
     "futureCandlesExcluded": true,
     "futureFillsExcluded": true,
     "resolutionEmbargoedFromPolicy": true
@@ -71,8 +76,8 @@
     "evidence/evaluate/eval-002-report.json"
   ],
   "hashes": {
-    "inputHash": "7ffbda85a2649c0457b09859202adde8b033593f16bc75859b1be54747c41cb5",
-    "assessmentHash": "cb45f64b36a4352ec9a0e4055b31e25267f3388b3fbba365a1d959dfce475ab4"
+    "inputHash": "12bd8d730924b4fc323181284091b8e148d2c69c9197cd3e8cc21c70a8380adb",
+    "assessmentHash": "a79d66c4051c67db621a259283d740ca228f09c89a3a79e361f2e0465592f82a"
   },
   "redaction": "Public market IDs, replay hashes, reason codes, and evaluation outputs only"
 }

@@ -57,6 +57,9 @@ export interface HistoricalMarketFilters extends HistoricalPageOptions {
   readonly asset?: HistoricalAsset;
   readonly intervalSec?: number;
   readonly status?: HistoricalMarketStatus;
+  readonly fromSec?: number;
+  readonly toSec?: number;
+  readonly frozenAtSec?: number;
 }
 
 export interface HistoricalTimeWindowPageOptions extends HistoricalPageOptions {
@@ -105,6 +108,7 @@ export interface HistoricalMarketPage {
   readonly page: NormalizedHistoricalPage;
   readonly hasMore: boolean;
   readonly excludedMalformedRows: number;
+  readonly frozenAtSeconds: number;
   readonly source: HistoricalDreamDexSourceMeta;
 }
 
@@ -177,6 +181,7 @@ export interface HistoricalFillEvidence {
   readonly takerIsBid: boolean | null;
   readonly timestampSeconds: number;
   readonly blockNumber: string;
+  readonly transactionIndex?: string | null;
   readonly logIndex: string;
   readonly txHash: string;
   readonly source: HistoricalDreamDexSourceMeta;
@@ -417,11 +422,63 @@ export interface HistoricalDreamDexSdkClient {
 
 export type HistoricalIndexerFetch = (
   input: string,
-  init: { readonly method: "POST"; readonly headers: Record<string, string>; readonly body: string }
+  init: {
+    readonly method: "POST";
+    readonly headers: Record<string, string>;
+    readonly body: string;
+    readonly signal: AbortSignal;
+  }
 ) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown> }>;
+
+export type HistoricalRpcFetch = (
+  input: string,
+  init: {
+    readonly method: "POST";
+    readonly headers: Record<string, string>;
+    readonly body: string;
+    readonly signal: AbortSignal;
+  }
+) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown> }>;
+
+export interface HistoricalCutoffBlock {
+  readonly blockNumber: string;
+  readonly blockHash: string;
+  readonly timestampSeconds: number;
+  readonly decisionAtSeconds: number;
+  readonly finalityTag: "finalized";
+  readonly rule: "GREATEST_FINALIZED_BLOCK_STRICTLY_BEFORE_DECISION_AT";
+}
+
+export const HISTORICAL_READ_DEADLINE_MS = 10_000 as const;
+const HistoricalRetryDelaysMs = [500, 1_500] as const;
+
+class HistoricalReadFailure extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "HistoricalReadFailure";
+  }
+}
 
 const GraphQlErrorSchema = z.object({
   message: z.string().min(1)
+});
+
+const JsonRpcBlockSchema = z.object({
+  jsonrpc: z.literal("2.0"),
+  id: z.number(),
+  result: z
+    .object({
+      number: z.string().regex(/^0x[0-9a-fA-F]+$/),
+      hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+      timestamp: z.string().regex(/^0x[0-9a-fA-F]+$/)
+    })
+    .nullable(),
+  error: z
+    .object({
+      code: z.number(),
+      message: z.string()
+    })
+    .optional()
 });
 
 const HistoricalOrderRowSchema = z.object({
@@ -587,6 +644,62 @@ function ensureHistoricalConfig(
   }
 }
 
+function wait(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+export async function executeBoundedHistoricalRead<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  options: {
+    readonly deadlineMs?: number;
+    readonly retryDelaysMs?: readonly number[];
+  } = {}
+): Promise<T> {
+  const deadlineMs = options.deadlineMs ?? HISTORICAL_READ_DEADLINE_MS;
+  const retryDelaysMs = options.retryDelaysMs ?? HistoricalRetryDelaysMs;
+  const deadlineAt = Date.now() + deadlineMs;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error("DreamDEX historical read deadline exceeded"));
+    }, remainingMs);
+    try {
+      return await Promise.race([
+        operation(controller.signal),
+        new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener(
+            "abort",
+            () => {
+              reject(new HistoricalReadFailure("DreamDEX historical read deadline exceeded", false));
+            },
+            { once: true }
+          );
+        })
+      ]);
+    } catch (error) {
+      lastError = error;
+      const retryable = !(error instanceof HistoricalReadFailure) || error.retryable;
+      const delayMs = retryDelaysMs[attempt];
+      if (!retryable || delayMs === undefined || Date.now() + delayMs >= deadlineAt) {
+        break;
+      }
+      await wait(delayMs);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new HistoricalReadFailure("DreamDEX historical read deadline exceeded", false);
+}
+
 function historicalSourceMeta(
   config: MainnetHistoricalDreamDexConfig,
   retrievedAt: string
@@ -600,6 +713,130 @@ function historicalSourceMeta(
     evidenceClass: "LIVE",
     retrievedAt,
     writePolicy: "read-only-no-mainnet-signer"
+  };
+}
+
+async function readHistoricalRpcBlock(
+  config: MainnetHistoricalDreamDexConfig,
+  blockTag: string,
+  requestId: number,
+  fetchImpl: HistoricalRpcFetch
+): Promise<HistoricalDreamDexReadResult<{ readonly number: bigint; readonly hash: string; readonly timestampSeconds: number }>> {
+  try {
+    const response = await fetchImpl(config.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: requestId,
+        method: "eth_getBlockByNumber",
+        params: [blockTag, false]
+      }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+        message: `Somnia mainnet RPC returned HTTP ${String(response.status)}`
+      };
+    }
+    const parsed = JsonRpcBlockSchema.safeParse(await response.json());
+    if (!parsed.success || parsed.data.error !== undefined || parsed.data.result === null) {
+      return {
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+        message: parsed.success && parsed.data.error !== undefined
+          ? `Somnia mainnet RPC error: ${parsed.data.error.message}`
+          : "Somnia mainnet RPC block response was invalid"
+      };
+    }
+    const timestampSeconds = Number(BigInt(parsed.data.result.timestamp));
+    if (!Number.isSafeInteger(timestampSeconds)) {
+      return {
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+        message: "Somnia mainnet RPC block timestamp exceeded the safe integer range"
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        number: BigInt(parsed.data.result.number),
+        hash: parsed.data.result.hash.toLowerCase(),
+        timestampSeconds
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+      message: error instanceof Error ? error.message : "Somnia mainnet RPC block read failed"
+    };
+  }
+}
+
+export async function resolveHistoricalCutoffBlock(
+  config: MainnetHistoricalDreamDexConfig,
+  decisionAtSeconds: number,
+  fetchImpl: HistoricalRpcFetch = fetch
+): Promise<HistoricalDreamDexReadResult<HistoricalCutoffBlock>> {
+  const validated = ensureHistoricalConfig(config);
+  if (!validated.ok) {
+    return validated;
+  }
+  if (!Number.isSafeInteger(decisionAtSeconds) || decisionAtSeconds <= 0) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+      message: "Historical decision time must be a positive integer epoch second"
+    };
+  }
+  let requestId = 1;
+  const finalized = await readHistoricalRpcBlock(validated.value, "finalized", requestId, fetchImpl);
+  requestId += 1;
+  if (!finalized.ok) {
+    return finalized;
+  }
+  let selected = finalized.value.timestampSeconds < decisionAtSeconds ? finalized.value : null;
+  let low = 0n;
+  let high = selected === null ? finalized.value.number - 1n : -1n;
+  while (low <= high) {
+    const midpoint = low + (high - low) / 2n;
+    const candidate = await readHistoricalRpcBlock(
+      validated.value,
+      `0x${midpoint.toString(16)}`,
+      requestId,
+      fetchImpl
+    );
+    requestId += 1;
+    if (!candidate.ok) {
+      return candidate;
+    }
+    if (candidate.value.timestampSeconds < decisionAtSeconds) {
+      selected = candidate.value;
+      low = midpoint + 1n;
+    } else {
+      high = midpoint - 1n;
+    }
+  }
+  if (selected === null) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+      message: "No finalized Somnia mainnet block exists strictly before the decision time"
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      blockNumber: selected.number.toString(),
+      blockHash: selected.hash,
+      timestampSeconds: selected.timestampSeconds,
+      decisionAtSeconds,
+      finalityTag: "finalized",
+      rule: "GREATEST_FINALIZED_BLOCK_STRICTLY_BEFORE_DECISION_AT"
+    }
   };
 }
 
@@ -804,7 +1041,7 @@ export async function countHistoricalBinaryMarkets(
       ...(filters.intervalSec === undefined ? {} : { intervalSec: filters.intervalSec }),
       ...(filters.status === undefined ? {} : { status: filters.status })
     };
-    const count = await client.countBinaryMarkets(countFilters);
+    const count = await executeBoundedHistoricalRead(() => client.countBinaryMarkets(countFilters));
     if (!Number.isInteger(count) || count < 0) {
       return {
         ok: false,
@@ -836,6 +1073,20 @@ export async function listHistoricalBinaryMarkets(
   if (!page.ok) {
     return page;
   }
+  const frozenAtSeconds = filters.frozenAtSec ?? Math.floor(Date.now() / 1000);
+  if (
+    !Number.isSafeInteger(frozenAtSeconds) ||
+    frozenAtSeconds <= 0 ||
+    (filters.fromSec !== undefined && (!Number.isSafeInteger(filters.fromSec) || filters.fromSec < 0)) ||
+    (filters.toSec !== undefined && (!Number.isSafeInteger(filters.toSec) || filters.toSec < 0)) ||
+    (filters.fromSec !== undefined && filters.toSec !== undefined && filters.fromSec > filters.toSec)
+  ) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+      message: "Historical market date/frozen-page bounds are invalid"
+    };
+  }
 
   try {
     const queryLimit = page.value.limit + 1;
@@ -846,26 +1097,37 @@ export async function listHistoricalBinaryMarkets(
       ...(filters.intervalSec === undefined ? {} : { intervalSec: filters.intervalSec }),
       ...(filters.status === undefined ? {} : { status: filters.status })
     };
-    const rows = await client.listPastBinaryMarkets(query);
-    const pageRows = rows.slice(0, page.value.limit);
+    const rows = await executeBoundedHistoricalRead(() => client.listPastBinaryMarkets(query));
+    const pageRows = rows.slice(0, queryLimit);
     const openingPrices =
       pageRows.length > 0
-        ? await client.getOpeningPrices(pageRows.map((row) => row.marketId.toLowerCase()))
+        ? await executeBoundedHistoricalRead(() =>
+            client.getOpeningPrices(pageRows.map((row) => row.marketId.toLowerCase()))
+          )
         : {};
     const retrievedAt = new Date().toISOString();
     const normalized = pageRows.map((row) =>
       normalizeHistoricalBinaryMarket(row, validated.value, retrievedAt, openingPrices[row.marketId.toLowerCase()] ?? null)
     );
-    const validRows = normalized
+    const normalizedRows = normalized
       .filter((result): result is { readonly ok: true; readonly value: HistoricalMarketEvidence } => result.ok)
       .map((result) => result.value);
+    const validRows = normalizedRows
+      .filter(
+        (market) =>
+          market.expirySeconds <= frozenAtSeconds &&
+          (filters.fromSec === undefined || market.expirySeconds >= filters.fromSec) &&
+          (filters.toSec === undefined || market.tradingStartSeconds <= filters.toSec)
+      )
+      .slice(0, page.value.limit);
     return {
       ok: true,
       value: {
         rows: validRows,
         page: page.value,
         hasMore: rows.length > page.value.limit,
-        excludedMalformedRows: normalized.length - validRows.length,
+        excludedMalformedRows: normalized.length - normalizedRows.length,
+        frozenAtSeconds,
         source: historicalSourceMeta(validated.value, retrievedAt)
       }
     };
@@ -888,11 +1150,13 @@ export async function getHistoricalBinaryMarket(
     return validated;
   }
   try {
-    const row = await client.getBinaryMarket(marketId);
+    const row = await executeBoundedHistoricalRead(() => client.getBinaryMarket(marketId));
     if (row === null) {
       return { ok: true, value: null };
     }
-    const openingPrices = await client.getOpeningPrices([row.marketId.toLowerCase()]);
+    const openingPrices = await executeBoundedHistoricalRead(() =>
+      client.getOpeningPrices([row.marketId.toLowerCase()])
+    );
     return normalizeHistoricalBinaryMarket(
       row,
       validated.value,
@@ -919,7 +1183,7 @@ export async function getHistoricalMarketResolution(
   }
   try {
     const retrievedAt = new Date().toISOString();
-    const resolution = await client.getMarketResolution(marketId);
+    const resolution = await executeBoundedHistoricalRead(() => client.getMarketResolution(marketId));
     return {
       ok: true,
       value: {
@@ -951,7 +1215,7 @@ export async function getHistoricalMarketStatusHistory(
   }
   try {
     const retrievedAt = new Date().toISOString();
-    const rows = await client.getMarketStatusHistory(marketId);
+    const rows = await executeBoundedHistoricalRead(() => client.getMarketStatusHistory(marketId));
     return {
       ok: true,
       value: rows.map((row) => ({
@@ -1002,10 +1266,10 @@ export async function listHistoricalCandles(
       ...(bounded.value.fromSec === undefined ? {} : { from: bounded.value.fromSec }),
       ...(bounded.value.toSec === undefined ? {} : { to: bounded.value.toSec })
     };
-    const rows = await client.getCandles(poolAddress, intervalSeconds, candleOptions);
-    return {
-      ok: true,
-      value: rows.map((row) => ({
+    const rows = await executeBoundedHistoricalRead(() =>
+      client.getCandles(poolAddress, intervalSeconds, candleOptions)
+    );
+    const normalizedRows = rows.map((row) => ({
         bucketStartSeconds: Number(row.bucketStart),
         intervalSeconds,
         openPriceRaw: row.openPrice,
@@ -1016,7 +1280,14 @@ export async function listHistoricalCandles(
         quoteVolumeRaw: row.quoteVolume,
         tradeCount: row.tradeCount,
         source: historicalSourceMeta(validated.value, retrievedAt)
-      }))
+      }));
+    return {
+      ok: true,
+      value: normalizedRows.filter(
+        (row) =>
+          (bounded.value.fromSec === undefined || row.bucketStartSeconds >= bounded.value.fromSec) &&
+          (bounded.value.toSec === undefined || row.bucketStartSeconds < bounded.value.toSec)
+      )
     };
   } catch (error) {
     return {
@@ -1035,18 +1306,21 @@ async function executeHistoricalGraphQl<Schema extends z.ZodType>(
   schema: Schema
 ): Promise<HistoricalDreamDexReadResult<z.infer<Schema>>> {
   try {
-    const response = await fetchImpl(config.indexerUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, variables })
+    const response = await executeBoundedHistoricalRead(async (signal) => {
+      const current = await fetchImpl(config.indexerUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, variables }),
+        signal
+      });
+      if (!current.ok) {
+        throw new HistoricalReadFailure(
+          `DreamDEX historical indexer returned HTTP ${String(current.status)}`,
+          current.status === 429 || current.status >= 500
+        );
+      }
+      return current;
     });
-    if (!response.ok) {
-      return {
-        ok: false,
-        reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
-        message: `DreamDEX historical indexer returned HTTP ${String(response.status)}`
-      };
-    }
     const payload = await response.json();
     const errorPayload = z.object({ errors: z.array(GraphQlErrorSchema).optional() }).passthrough().safeParse(payload);
     if (errorPayload.success && errorPayload.data.errors !== undefined && errorPayload.data.errors.length > 0) {
@@ -1186,6 +1460,7 @@ export async function listHistoricalFillsByMarket(
     takerIsBid: row.takerIsBid,
     timestampSeconds: Number(row.timestamp),
     blockNumber: row.blockNumber,
+    transactionIndex: null,
     logIndex: row.logIndex,
     txHash: row.txHash,
     source: historicalSourceMeta(validated.value, retrievedAt)

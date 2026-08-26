@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   apiErrorMessage,
@@ -18,28 +18,38 @@ function UnknownValue() {
   return <span className="mutedCell">Not available</span>;
 }
 
+function routePlane(value: string | null): "mainnet-history" | "shannon-live" | null {
+  if (value === "mainnet-history" || value === "shannon-live") {
+    return value;
+  }
+  return null;
+}
+
 export default function MarketDetailPage() {
   const { marketId } = useParams();
+  const [searchParams] = useSearchParams();
   const validMarketId = /^0x[a-fA-F0-9]{64}$/.test(marketId ?? "");
+  const plane = routePlane(searchParams.get("plane"));
+  const mainnetDetail = validMarketId && plane === "mainnet-history";
 
   const detailQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-detail", marketId],
     queryFn: () => fetchV2<HistoricalDetailResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}`)
   });
   const resolutionQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-resolution", marketId],
     queryFn: () => fetchV2<HistoricalResolutionResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/resolution`)
   });
   const statusQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-status", marketId],
     queryFn: () =>
       fetchV2<HistoricalStatusHistoryResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/status-history`)
   });
   const candlesQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-candles", marketId],
     queryFn: () =>
       fetchV2<HistoricalCandlesResponse>(
@@ -47,29 +57,36 @@ export default function MarketDetailPage() {
       )
   });
   const ordersQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-orders", marketId],
     queryFn: () => fetchV2<HistoricalOrdersResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/orders?limit=12`)
   });
   const fillsQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     queryKey: ["historical-market-fills", marketId],
     queryFn: () => fetchV2<HistoricalFillsResponse>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/fills?limit=12`)
   });
   const bookQuery = useQuery({
-    enabled: validMarketId,
+    enabled: mainnetDetail,
     retry: false,
     queryKey: ["historical-market-book", marketId],
-    queryFn: () => fetchV2<unknown>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/reconstructed-book?atBlock=latest`)
+    queryFn: async () => {
+      try {
+        await fetchV2<unknown>(`/api/v2/mainnet/history/markets/${marketId ?? ""}/reconstructed-book?atBlock=latest`);
+        return "AVAILABLE";
+      } catch (error) {
+        if (error instanceof ApiError && error.statusCode === 409) {
+          return "SOURCE_INCOMPLETE";
+        }
+        throw error;
+      }
+    }
   });
 
   const market = detailQuery.data?.data.market;
-  const bookError = bookQuery.error instanceof ApiError ? bookQuery.error.body?.error : null;
   const bookCapabilityMessage = bookQuery.isLoading
     ? "Checking reconstruction capability..."
-    : bookError?.details !== undefined
-      ? "SOURCE_INCOMPLETE"
-      : apiErrorMessage(bookQuery.error);
+    : bookQuery.data ?? (bookQuery.isError ? apiErrorMessage(bookQuery.error) : "SOURCE_INCOMPLETE");
 
   return (
     <div className="pageStack">
@@ -90,7 +107,39 @@ export default function MarketDetailPage() {
         </section>
       ) : null}
 
-      {validMarketId ? (
+      {validMarketId && plane === null ? (
+        <section className="routePanel" aria-label="Market plane required">
+          <span className="statusPill statusWarning">Plane required</span>
+          <h2>Choose the market evidence plane before loading detail.</h2>
+          <p>Market identifiers can exist on different chains, so EdgeLab will not infer one from the URL.</p>
+          <div className="actionRow">
+            <Link className="primaryAction" to={`/markets/${marketId ?? ""}?plane=mainnet-history`}>
+              Mainnet Historical
+            </Link>
+            <Link className="secondaryAction" to={`/markets?plane=shannon-live`}>
+              Shannon Live
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {validMarketId && plane === "shannon-live" ? (
+        <section className="routePanel" aria-label="Shannon market detail unavailable">
+          <span className="statusPill">SHANNON_FORWARD</span>
+          <h2>Shannon live market detail is not served by the mainnet history route.</h2>
+          <p>Use the live market list or Strategy Lab for forward observation. No mainnet historical request was made for this URL.</p>
+          <div className="actionRow">
+            <Link className="primaryAction" to={`/lab?market=${encodeURIComponent(marketId ?? "")}`}>
+              Use in Strategy Lab
+            </Link>
+            <Link className="secondaryAction" to="/markets?plane=shannon-live">
+              Back to Live Markets
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {mainnetDetail ? (
         <>
           <section className="routePanel" aria-label="Market detail state">
             <div className="sourceBar">
@@ -144,7 +193,7 @@ export default function MarketDetailPage() {
                   <Link className="primaryAction" to={`/lab?market=${encodeURIComponent(market.stableMarketId)}`}>
                     Use in Strategy Lab
                   </Link>
-                  <Link className="secondaryAction" to="/markets?plane=historical">
+                  <Link className="secondaryAction" to="/markets?plane=mainnet-history">
                     Back to Markets
                   </Link>
                 </div>

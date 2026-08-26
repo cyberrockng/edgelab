@@ -5,7 +5,7 @@ const sampleHistoricalMarketId = ["0x", "0".repeat(60), "1bb7"].join("");
 const productRoutes = [
   { path: "/", heading: "Test a DreamDEX strategy before putting capital behind it." },
   { path: "/markets", heading: "Browse historical and live Event Contract markets without mixing networks." },
-  { path: `/markets/${sampleHistoricalMarketId}`, heading: "Inspect one DreamDEX market with source provenance." },
+  { path: `/markets/${sampleHistoricalMarketId}?plane=mainnet-history`, heading: "Inspect one DreamDEX market with source provenance." },
   { path: "/lab", heading: "Create an evidence-backed strategy experiment." },
   { path: "/lab/demo-experiment", heading: "Run replay, observe forward decisions, and evaluate evidence." },
   { path: "/compare", heading: "Compare evidence dimensions, not vanity scores." },
@@ -31,7 +31,7 @@ test("homepage explains the interactive product and links to real routes", async
   await expect(page.getByRole("link", { name: "Open Strategy Lab" })).toHaveAttribute("href", "/lab");
   await expect(page.getByRole("link", { name: "Explore DreamDEX History" })).toHaveAttribute(
     "href",
-    "/markets?plane=historical"
+    "/markets?plane=mainnet-history"
   );
   await expect(page.getByRole("link", { name: "Open Proven Experiment" })).toHaveAttribute(
     "href",
@@ -54,6 +54,22 @@ test("homepage explains the interactive product and links to real routes", async
     body: JSON.stringify({ navigationDurationMs, viewport: testInfo.project.name }, null, 2),
     contentType: "application/json"
   });
+});
+
+test("market detail requires an explicit canonical plane", async ({ page }) => {
+  await page.goto(`/markets/${sampleHistoricalMarketId}`, { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Choose the market evidence plane before loading detail." })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Mainnet Historical" })).toHaveAttribute(
+    "href",
+    `/markets/${sampleHistoricalMarketId}?plane=mainnet-history`
+  );
+
+  await page.goto(`/markets/${sampleHistoricalMarketId}?plane=bogus`, { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Choose the market evidence plane before loading detail." })).toBeVisible();
+
+  await page.goto(`/markets/${sampleHistoricalMarketId}?plane=shannon-live`, { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Shannon live market detail is not served by the mainnet history route." })).toBeVisible();
+  await expect(page.getByLabel("Shannon market detail unavailable")).toContainText("SHANNON_FORWARD");
 });
 
 test("every product route mounts by direct navigation without horizontal overflow", async ({ page }) => {

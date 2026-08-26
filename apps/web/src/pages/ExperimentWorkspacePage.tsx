@@ -75,7 +75,7 @@ export default function ExperimentWorkspacePage() {
     liveShadowMutation.data?.data.liveShadow ?? liveShadowQuery.data?.data.liveShadow ?? null;
   const assessment =
     evaluationMutation.data?.data.assessment ?? evaluationQuery.data?.data.assessment ?? null;
-  const replayReady = replay?.status === "SUCCEEDED";
+  const replayReady = replay?.status === "COMPLETED" || replay?.status === "SUCCEEDED";
   const isHistoricalReplay = experiment?.configuration.mode === "HISTORICAL_REPLAY";
   const isLiveShadow = experiment?.configuration.mode === "LIVE_SHADOW";
 

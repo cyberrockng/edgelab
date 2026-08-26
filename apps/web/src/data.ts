@@ -293,7 +293,7 @@ export interface ReplayRunRecord {
   readonly experimentId: string;
   readonly configurationId: string;
   readonly plane: "MAINNET_HISTORICAL";
-  readonly status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  readonly status: "QUEUED" | "RUNNING" | "COMPLETED" | "SOURCE_BLOCKED" | "SUCCEEDED" | "FAILED" | "CANCELLED";
   readonly frozenNow: string;
   readonly selectedCount: number;
   readonly processedCount: number;
@@ -399,7 +399,7 @@ export interface ProvenExperimentRecord extends ProvenExperimentSummary {
     readonly riskEnvelope: string;
   };
   readonly replay: {
-    readonly status: "SUCCEEDED";
+    readonly status: "COMPLETED" | "SUCCEEDED";
     readonly selectedCount: number;
     readonly processedCount: number;
     readonly scoredCount: number;
@@ -492,6 +492,19 @@ export interface ComparisonRecord {
   readonly items: readonly (AssessmentSummaryRecord & { readonly displayOrder: number })[];
 }
 
+export interface ComparisonSummaryRecord {
+  readonly comparisonId: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly itemCount: number;
+}
+
+export interface ComparisonListResponse {
+  readonly comparisons: readonly ComparisonSummaryRecord[];
+  readonly csrfToken?: string;
+}
+
 export interface ComparisonResponse {
   readonly comparison: ComparisonRecord | null;
   readonly csrfToken?: string;
@@ -505,6 +518,9 @@ export interface ExperimentCreateInput {
   readonly policyId: string;
   readonly policyVersion: string;
   readonly marketId?: string;
+  readonly windowFrom?: string;
+  readonly windowTo?: string;
+  readonly decisionOffsetSec?: number;
   readonly riskEnvelopeId: "WATCH_ONLY_BOUNDED";
 }
 
@@ -710,6 +726,40 @@ export async function createComparison(input: {
     },
     body: JSON.stringify(input)
   });
+}
+
+export async function fetchComparisons(): Promise<V2Envelope<ComparisonListResponse>> {
+  const response = await fetchV2Request<ComparisonListResponse>("/api/v2/comparisons");
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function fetchComparison(comparisonId: string): Promise<V2Envelope<ComparisonResponse>> {
+  const response = await fetchV2Request<ComparisonResponse>(`/api/v2/comparisons/${comparisonId}`);
+  if (response.data.csrfToken !== undefined) {
+    storeCsrfToken(response.data.csrfToken);
+  }
+  return response;
+}
+
+export async function revokeResearchSession(): Promise<V2Envelope<{ readonly revoked: boolean }>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  const response = await fetchV2Request<{ readonly revoked: boolean }>("/api/v2/research-session/revoke", {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `session-revoke-${globalThis.crypto.randomUUID()}`
+    }
+  });
+  if (typeof globalThis.localStorage !== "undefined") {
+    globalThis.localStorage.removeItem(csrfStorageKey);
+  }
+  return response;
 }
 
 export function apiErrorMessage(error: unknown): string {

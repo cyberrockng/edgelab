@@ -8,7 +8,8 @@ import {
   createInteractiveExperiment,
   createPool,
   createResearchSession,
-  runMigrations
+  runMigrations,
+  upsertPolicyVersion
 } from "@edgelab/db";
 
 const connectionString =
@@ -111,7 +112,7 @@ describe("DB-001 schema and recovery controls", () => {
 
   it("runs migrations idempotently and records hashes", async () => {
     const rerun = await runMigrations(pool);
-    expect(rerun).toHaveLength(4);
+    expect(rerun).toHaveLength(8);
     expect(rerun[0]?.applied).toBe(false);
     expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(rerun[1]?.applied).toBe(false);
@@ -120,6 +121,39 @@ describe("DB-001 schema and recovery controls", () => {
     expect(rerun[2]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(rerun[3]?.applied).toBe(false);
     expect(rerun[3]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[4]?.applied).toBe(false);
+    expect(rerun[4]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[5]?.applied).toBe(false);
+    expect(rerun[5]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[6]?.applied).toBe(false);
+    expect(rerun[6]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[7]?.applied).toBe(false);
+    expect(rerun[7]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("rejects same-version policy identity mutation", async () => {
+    const manifest = { policyId: "immutable-test", version: "1.0.0", behavior: "neutral" };
+    const id = await upsertPolicyVersion(pool, {
+      policyId: "immutable-test",
+      version: "1.0.0",
+      label: "Immutable test",
+      adapterName: "immutableTest",
+      sourceHash: "9".repeat(64),
+      manifest
+    });
+    await expect(
+      upsertPolicyVersion(pool, {
+        policyId: "immutable-test",
+        version: "1.0.0",
+        label: "Immutable test",
+        adapterName: "immutableTest",
+        sourceHash: "8".repeat(64),
+        manifest: { ...manifest, behavior: "changed" }
+      })
+    ).rejects.toThrow("POLICY_VERSION_IMMUTABLE_CONFLICT");
+    await expect(pool.query("UPDATE policy_versions SET label = 'changed' WHERE id = $1", [id])).rejects.toThrow(
+      /append-only/
+    );
   });
 
   it("enforces chain and wallet identity constraints", async () => {

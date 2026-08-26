@@ -4,7 +4,12 @@ import { createPool, runMigrations } from "@edgelab/db";
 import type { RuntimeConfig } from "@edgelab/config";
 import { LoginChallengeSchema, type SignatureVerifier } from "@edgelab/auth";
 import type { BinaryMarket } from "@somnia-chain/markets-sdk";
-import type { DreamDexSdkClient, HistoricalDreamDexSdkClient, HistoricalIndexerFetch } from "@edgelab/dreamdex";
+import type {
+  DreamDexSdkClient,
+  HistoricalDreamDexSdkClient,
+  HistoricalIndexerFetch,
+  HistoricalRpcFetch
+} from "@edgelab/dreamdex";
 import { z } from "zod";
 
 const connectionString =
@@ -103,7 +108,7 @@ const V2ProvenExperimentSchema = z.object({
         writePolicy: z.literal("read-only-no-mainnet-signer")
       }),
       replay: z.object({
-        status: z.literal("SUCCEEDED"),
+        status: z.enum(["COMPLETED", "SUCCEEDED"]),
         processedCount: z.number(),
         scoredCount: z.number(),
         excludedCount: z.number(),
@@ -322,6 +327,18 @@ const V2ComparisonSchema = z.object({
     })
   })
 });
+const V2ComparisonListSchema = z.object({
+  data: z.object({
+    comparisons: z.array(
+      z.object({
+        comparisonId: z.string().uuid(),
+        name: z.string(),
+        itemCount: z.number()
+      })
+    ),
+    csrfToken: z.string().optional()
+  })
+});
 const apiMarketId = `0x${"9".repeat(61)}abc`;
 
 const binaryMarket: BinaryMarket = {
@@ -513,6 +530,24 @@ const historicalIndexerFetch: HistoricalIndexerFetch = () =>
       })
   });
 
+const historicalRpcFetch: HistoricalRpcFetch = (_input, init) => {
+  const request = JSON.parse(init.body) as { readonly id: number };
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () =>
+      Promise.resolve({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          number: "0x64",
+          hash: `0x${"a".repeat(64)}`,
+          timestamp: `0x${(1787569940 - 1).toString(16)}`
+        }
+      })
+  });
+};
+
 function v2Deps() {
   return {
     dreamDexClient: liveClient(),
@@ -530,7 +565,8 @@ function v2Deps() {
       chainId: config.SOMNIA_MAINNET_CHAIN_ID,
       sdkVersion: config.MARKETS_SDK_VERSION
     },
-    historicalIndexerFetch
+    historicalIndexerFetch,
+    historicalRpcFetch
   };
 }
 
@@ -600,7 +636,7 @@ describe("API-001 server contracts", () => {
     expect(replayVerify.json()).toMatchObject({ reasonCode: "NONCE_REPLAYED" });
   });
 
-  it("requires idempotency keys for mutating workflow endpoints", async () => {
+  it("disables the obsolete global settlement mutation", async () => {
     const app = buildApp(config);
     const response = await app.inject({
       method: "POST",
@@ -608,10 +644,10 @@ describe("API-001 server contracts", () => {
     });
     await app.close();
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(410);
     expect(response.json()).toMatchObject({
       ok: false,
-      reasonCode: "SETTLEMENT_REQUEST_REJECTED"
+      reasonCode: "LEGACY_MUTATION_GONE"
     });
   });
 
@@ -925,7 +961,29 @@ describe("API-001 server contracts", () => {
         "idempotency-key": "api-run-replay-002"
       }
     });
+    expect(replay.statusCode, JSON.stringify(replay.json())).toBe(202);
     const replayBody = V2ReplaySchema.parse(replay.json());
+    let replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: { cookie: cookies }
+    });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = V2ReplaySchema.parse(replayReload.json()).data.replay;
+      if (current?.status === "COMPLETED") {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      replayReload = await app.inject({
+        method: "GET",
+        url: `/api/v2/experiments/${experimentId}/replay`,
+        headers: { cookie: cookies }
+      });
+    }
+    const completedReplayBody = V2ReplaySchema.parse(replayReload.json());
+    expect(completedReplayBody.data.replay?.status).toBe("COMPLETED");
     const evaluate = await app.inject({
       method: "POST",
       url: `/api/v2/experiments/${experimentId}/evaluate`,
@@ -935,12 +993,8 @@ describe("API-001 server contracts", () => {
         "idempotency-key": "api-evaluate-replay-002"
       }
     });
+    expect(evaluate.statusCode, JSON.stringify(evaluate.json())).toBe(200);
     const assessmentBody = V2AssessmentSchema.parse(evaluate.json());
-    const replayReload = await app.inject({
-      method: "GET",
-      url: `/api/v2/experiments/${experimentId}/replay`,
-      headers: { cookie: cookies }
-    });
     const latest = await app.inject({
       method: "GET",
       url: `/api/v2/experiments/${experimentId}/evaluation/latest`,
@@ -952,27 +1006,61 @@ describe("API-001 server contracts", () => {
       headers: { cookie: cookies }
     });
     const evidenceBody = V2EvidenceGateSchema.parse(evidence.json());
+    const replayBarrier = await pool.query<{
+      readonly decision_id: string;
+      readonly decision_created_at: Date;
+      readonly outcome_loaded_at: Date;
+      readonly outcome_result: string;
+      readonly legacy_outcome_loaded_at: Date | null;
+      readonly legacy_outcome_result: string | null;
+    }>(
+      `
+        SELECT rd.id AS decision_id, rd.created_at AS decision_created_at,
+          ro.loaded_at AS outcome_loaded_at, ro.outcome_result,
+          rd.outcome_loaded_at AS legacy_outcome_loaded_at,
+          rd.outcome_result AS legacy_outcome_result
+        FROM replay_decisions rd
+        JOIN replay_outcomes ro ON ro.replay_decision_id = rd.id
+        WHERE rd.replay_run_id = $1
+      `,
+      [completedReplayBody.data.replay?.id]
+    );
+    const barrierRow = replayBarrier.rows[0];
+    await expect(
+      pool.query("UPDATE replay_decisions SET frame_hash = $2 WHERE id = $1", [
+        barrierRow?.decision_id,
+        "f".repeat(64)
+      ])
+    ).rejects.toThrow(/append-only/);
     await app.close();
 
     expect(create.statusCode).toBe(201);
-    expect(replay.statusCode).toBe(200);
-    expect(replayBody.data.replay).toMatchObject({
-      status: "SUCCEEDED",
+    expect(replay.statusCode).toBe(202);
+    expect(replayBody.data.replay?.status).toBe("QUEUED");
+    expect(completedReplayBody.data.replay).toMatchObject({
+      status: "COMPLETED",
       selectedCount: 1,
       processedCount: 1,
       scoredCount: 1,
       excludedCount: 0
     });
-    expect(replayBody.data.replay?.outputHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(replayBody.data.replay?.decisions?.[0]).toMatchObject({
+    expect(completedReplayBody.data.replay?.outputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(completedReplayBody.data.replay?.decisions?.[0]).toMatchObject({
       marketId: apiMarketId.toLowerCase(),
       action: "WATCH_ONLY",
       outcomeResult: "YES"
     });
-    expect(replayBody.data.replay?.decisions?.[0]?.frameHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.stringify(replayBody)).not.toContain("closingAnswer");
+    expect(completedReplayBody.data.replay?.decisions?.[0]?.frameHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(completedReplayBody.data.replay?.decisions?.[0]?.forecastPUp).toBeGreaterThanOrEqual(0.05);
+    expect(barrierRow?.legacy_outcome_loaded_at).toBeNull();
+    expect(barrierRow?.legacy_outcome_result).toBeNull();
+    expect(barrierRow?.outcome_result).toBe("YES");
+    expect(barrierRow?.outcome_loaded_at.getTime()).toBeGreaterThanOrEqual(
+      barrierRow?.decision_created_at.getTime() ?? Number.POSITIVE_INFINITY
+    );
+    expect(JSON.stringify(completedReplayBody)).not.toContain("closingAnswer");
     expect(replayReload.statusCode).toBe(200);
-    expect(V2ReplaySchema.parse(replayReload.json()).data.replay?.status).toBe("SUCCEEDED");
+    expect(completedReplayBody.data.replay?.status).toBe("COMPLETED");
     expect(evaluate.statusCode).toBe(200);
     expect(assessmentBody.data.assessment.verdict).toBe("INSUFFICIENT_EVIDENCE");
     expect(assessmentBody.data.assessment.reasonCodes).toContain("MIN_SAMPLE_NOT_MET");
@@ -1081,7 +1169,7 @@ describe("API-001 server contracts", () => {
         }
       });
       const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
-      await app.inject({
+      const replay = await app.inject({
         method: "POST",
         url: `/api/v2/experiments/${experimentId}/replay`,
         headers: {
@@ -1090,6 +1178,23 @@ describe("API-001 server contracts", () => {
           "idempotency-key": `api-comparison-replay-${key}`
         }
       });
+      expect(replay.statusCode, JSON.stringify(replay.json())).toBe(202);
+      const replayRunId = V2ReplaySchema.parse(replay.json()).data.replay?.id;
+      expect(replayRunId).toBeTypeOf("string");
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const current = await app.inject({
+          method: "GET",
+          url: `/api/v2/replay-runs/${String(replayRunId)}`,
+          headers: { cookie: cookies }
+        });
+        const status = V2ReplaySchema.parse(current.json()).data.replay?.status;
+        if (status === "COMPLETED") {
+          break;
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
       const evaluate = await app.inject({
         method: "POST",
         url: `/api/v2/experiments/${experimentId}/evaluate`,
@@ -1099,6 +1204,7 @@ describe("API-001 server contracts", () => {
           "idempotency-key": `api-comparison-evaluate-${key}`
         }
       });
+      expect(evaluate.statusCode, JSON.stringify(evaluate.json())).toBe(200);
       return V2AssessmentSchema.parse(evaluate.json()).data.assessment.assessmentId;
     }
 
@@ -1124,6 +1230,11 @@ describe("API-001 server contracts", () => {
       }
     });
     const comparisonBody = V2ComparisonSchema.parse(compare.json());
+    const comparisonList = await app.inject({
+      method: "GET",
+      url: "/api/v2/comparisons",
+      headers: { cookie: cookies }
+    });
     const reload = await app.inject({
       method: "GET",
       url: `/api/v2/comparisons/${comparisonBody.data.comparison.comparisonId}`,
@@ -1146,22 +1257,59 @@ describe("API-001 server contracts", () => {
       evidencePlane: "MAINNET_HISTORICAL",
       pnlStatus: "NOT_AVAILABLE"
     });
+    expect(comparisonList.statusCode).toBe(200);
+    expect(V2ComparisonListSchema.parse(comparisonList.json()).data.comparisons).toContainEqual(
+      expect.objectContaining({
+        comparisonId: comparisonBody.data.comparison.comparisonId,
+        name: "API comparison",
+        itemCount: 2
+      })
+    );
     expect(reload.statusCode).toBe(200);
     expect(V2ComparisonSchema.parse(reload.json()).data.comparison.items).toHaveLength(2);
   });
 
-  it("rejects experiment writes without the current research-session csrf token", async () => {
+  it("rejects experiment writes without the current research-session csrf token and after session revocation", async () => {
     const app = buildApp(config, { ...v2Deps(), pool });
     const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
     const rejected = await app.inject({
       method: "POST",
       url: "/api/v2/experiments",
       headers: {
-        cookie: cookieHeader(session),
+        cookie: cookies,
         "idempotency-key": "api-create-missing-csrf"
       },
       payload: {
         name: "Missing csrf replay",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "reference-neutral",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const revoke = await app.inject({
+      method: "POST",
+      url: "/api/v2/research-session/revoke",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-revoke-session"
+      }
+    });
+    const afterRevoke = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-after-revoke"
+      },
+      payload: {
+        name: "Revoked csrf replay",
         mode: "HISTORICAL_REPLAY",
         asset: "BTC",
         intervalSec: 3600,
@@ -1175,6 +1323,89 @@ describe("API-001 server contracts", () => {
     expect(rejected.statusCode).toBe(403);
     expect(rejected.json()).toMatchObject({
       error: { code: "CSRF_TOKEN_INVALID", retryable: false }
+    });
+    expect(revoke.statusCode).toBe(200);
+    expect(revoke.json()).toMatchObject({ data: { revoked: true } });
+    expect(afterRevoke.statusCode).toBe(401);
+    expect(afterRevoke.json()).toMatchObject({
+      error: { code: "RESEARCH_SESSION_REQUIRED", retryable: false }
+    });
+  });
+
+  it("enforces public write rate limits before route work", async () => {
+    const app = buildApp(config, { consumedNonces: new Set(), signatureVerifier: verifier });
+    let finalResponseStatus = 0;
+    let finalBody: unknown = null;
+    for (let index = 0; index < 61; index += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/challenge",
+        remoteAddress: "198.51.100.9",
+        payload: { purpose: "login", account }
+      });
+      finalResponseStatus = response.statusCode;
+      finalBody = response.json();
+    }
+    await app.close();
+
+    expect(finalResponseStatus).toBe(429);
+    expect(finalBody).toMatchObject({
+      error: { code: "RATE_LIMITED", retryable: true }
+    });
+  });
+
+  it("enforces the per-session experiment quota", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    for (let index = 0; index < 20; index += 1) {
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/v2/experiments",
+        headers: {
+          cookie: cookies,
+          "x-csrf-token": sessionBody.data.csrfToken,
+          "idempotency-key": `api-quota-create-${String(index)}`
+        },
+        payload: {
+          name: `Quota replay ${String(index)}`,
+          mode: "HISTORICAL_REPLAY",
+          asset: "BTC",
+          intervalSec: 3600,
+          policyId: "reference-neutral",
+          policyVersion: "1.0.0",
+          riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+        }
+      });
+      expect(create.statusCode, JSON.stringify(create.json())).toBe(201);
+    }
+    const overQuota = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-quota-create-over"
+      },
+      payload: {
+        name: "Quota replay over",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "reference-neutral",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    await app.close();
+
+    expect(overQuota.statusCode).toBe(429);
+    expect(overQuota.json()).toMatchObject({
+      error: {
+        code: "EXPERIMENT_QUOTA_EXCEEDED",
+        details: { quota: 20 }
+      }
     });
   });
 });

@@ -84,7 +84,14 @@ export interface InteractiveExperimentDetailRecord {
   }[];
 }
 
-export type ReplayRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export type ReplayRunStatus =
+  | "QUEUED"
+  | "RUNNING"
+  | "COMPLETED"
+  | "SOURCE_BLOCKED"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELLED";
 
 export interface ReplayRunRecord {
   readonly id: string;
@@ -164,7 +171,11 @@ export const migrations = [
   "0001_initial_schema",
   "0002_interactive_product",
   "0003_book_reconstruction_source_incomplete",
-  "0004_experiment_create_idempotency"
+  "0004_experiment_create_idempotency",
+  "0005_replay_outcome_embargo",
+  "0006_replay_job_controls",
+  "0007_policy_version_immutability",
+  "0008_evaluation_integrity"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
@@ -361,6 +372,20 @@ export async function findActiveResearchSessionByTokenHash(
   };
 }
 
+export async function revokeResearchSession(pool: pg.Pool, sessionId: string): Promise<boolean> {
+  const result = await pool.query(
+    `
+      UPDATE research_sessions
+      SET revoked_at = now(), last_seen_at = now()
+      WHERE id = $1
+        AND revoked_at IS NULL
+        AND expires_at > now()
+    `,
+    [sessionId]
+  );
+  return result.rowCount === 1;
+}
+
 export async function rotateResearchSessionCsrf(
   pool: pg.Pool,
   input: {
@@ -411,15 +436,11 @@ export async function upsertPolicyVersion(
     readonly manifest: Record<string, unknown>;
   }
 ): Promise<string> {
-  const result = await pool.query<{ id: string }>(
+  const inserted = await pool.query<{ id: string }>(
     `
       INSERT INTO policy_versions(policy_id, version, label, adapter_name, source_hash, manifest)
       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-      ON CONFLICT (policy_id, version) DO UPDATE
-      SET label = EXCLUDED.label,
-          adapter_name = EXCLUDED.adapter_name,
-          source_hash = EXCLUDED.source_hash,
-          manifest = EXCLUDED.manifest
+      ON CONFLICT (policy_id, version) DO NOTHING
       RETURNING id
     `,
     [
@@ -431,9 +452,33 @@ export async function upsertPolicyVersion(
       JSON.stringify(input.manifest)
     ]
   );
-  const row = result.rows[0];
-  if (row === undefined) {
-    throw new Error("policy version was not upserted");
+  const insertedRow = inserted.rows[0];
+  if (insertedRow !== undefined) {
+    return insertedRow.id;
+  }
+  const existing = await pool.query<{
+    readonly id: string;
+    readonly label: string;
+    readonly adapter_name: string;
+    readonly source_hash: string;
+    readonly manifest_matches: boolean;
+  }>(
+    `
+      SELECT id, label, adapter_name, source_hash, manifest = $3::jsonb AS manifest_matches
+      FROM policy_versions
+      WHERE policy_id = $1 AND version = $2
+    `,
+    [input.policyId, input.version, JSON.stringify(input.manifest)]
+  );
+  const row = existing.rows[0];
+  if (
+    row === undefined ||
+    row.label !== input.label ||
+    row.adapter_name !== input.adapterName ||
+    row.source_hash !== input.sourceHash ||
+    !row.manifest_matches
+  ) {
+    throw new Error("POLICY_VERSION_IMMUTABLE_CONFLICT");
   }
   return row.id;
 }
@@ -678,6 +723,23 @@ export async function listInteractiveExperiments(
   return result.rows.map(mapExperimentRow);
 }
 
+export async function countInteractiveExperiments(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+  }
+): Promise<number> {
+  const result = await pool.query<{ readonly count: string }>(
+    `
+      SELECT count(*)::text AS count
+      FROM experiments
+      WHERE created_by_session_id = $1
+    `,
+    [input.sessionId]
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
 export async function getInteractiveExperiment(
   pool: pg.Pool,
   input: {
@@ -792,6 +854,7 @@ const replayRunSelect = `SELECT ${replayRunColumns} FROM replay_runs`;
 export async function createReplayRun(
   pool: pg.Pool,
   input: {
+    readonly sessionId: string;
     readonly experimentId: string;
     readonly configurationId: string;
     readonly frozenNow: Date;
@@ -803,34 +866,91 @@ export async function createReplayRun(
     readonly checkpoints?: Record<string, unknown>;
   }
 ): Promise<ReplayRunRecord> {
-  const result = await pool.query<Parameters<typeof mapReplayRunRow>[0]>(
-    `
-      INSERT INTO replay_runs(
-        experiment_id, configuration_id, plane, status, frozen_now, capability,
-        source_version, query_version, input_hash, idempotency_key, checkpoints
-      )
-      VALUES ($1, $2, 'MAINNET_HISTORICAL', 'QUEUED', $3, $4, $5, $6, $7, $8, $9::jsonb)
-      ON CONFLICT (idempotency_key) DO UPDATE
-      SET idempotency_key = EXCLUDED.idempotency_key
-      RETURNING ${replayRunColumns}
-    `,
-    [
-      input.experimentId,
-      input.configurationId,
-      input.frozenNow,
-      input.capability,
-      input.sourceVersion,
-      input.queryVersion,
-      input.inputHash,
-      input.idempotencyKey,
-      JSON.stringify(input.checkpoints ?? {})
-    ]
-  );
-  const row = result.rows[0];
-  if (row === undefined) {
-    throw new Error("replay run was not created");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('edgelab-replay-admission'))");
+    const existing = await client.query<Parameters<typeof mapReplayRunRow>[0]>(
+      `
+        ${replayRunSelect}
+        WHERE created_by_session_id = $1 AND idempotency_key = $2
+        LIMIT 1
+      `,
+      [input.sessionId, input.idempotencyKey]
+    );
+    if (existing.rows[0] !== undefined) {
+      await client.query("COMMIT");
+      return mapReplayRunRow(existing.rows[0]);
+    }
+    const active = await client.query<{ readonly session_active: string; readonly system_active: string }>(
+      `
+        SELECT
+          count(*) FILTER (WHERE created_by_session_id = $1)::text AS session_active,
+          count(*)::text AS system_active
+        FROM replay_runs
+        WHERE status IN ('QUEUED', 'RUNNING')
+      `,
+      [input.sessionId]
+    );
+    if (Number(active.rows[0]?.session_active ?? 0) >= 1) {
+      throw new Error("REPLAY_SESSION_ACTIVE_LIMIT");
+    }
+    if (Number(active.rows[0]?.system_active ?? 0) >= 2) {
+      throw new Error("REPLAY_SYSTEM_ACTIVE_LIMIT");
+    }
+    const result = await client.query<Parameters<typeof mapReplayRunRow>[0]>(
+      `
+        INSERT INTO replay_runs(
+          experiment_id, configuration_id, created_by_session_id, plane, status,
+          frozen_now, deadline_at, capability, source_version, query_version,
+          input_hash, idempotency_key, checkpoints
+        )
+        VALUES ($1, $2, $3, 'MAINNET_HISTORICAL', 'QUEUED', $4::timestamptz, $4::timestamptz + interval '5 minutes',
+          $5, $6, $7, $8, $9, $10::jsonb)
+        RETURNING ${replayRunColumns}
+      `,
+      [
+        input.experimentId,
+        input.configurationId,
+        input.sessionId,
+        input.frozenNow,
+        input.capability,
+        input.sourceVersion,
+        input.queryVersion,
+        input.inputHash,
+        input.idempotencyKey,
+        JSON.stringify(input.checkpoints ?? {})
+      ]
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new Error("replay run was not created");
+    }
+    await client.query("COMMIT");
+    return mapReplayRunRow(row);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  return mapReplayRunRow(row);
+}
+
+export async function countReplayRuns(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+  }
+): Promise<number> {
+  const result = await pool.query<{ readonly count: string }>(
+    `
+      SELECT count(*)::text AS count
+      FROM replay_runs
+      WHERE created_by_session_id = $1
+    `,
+    [input.sessionId]
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function findReplayRunByInputHash(
@@ -846,6 +966,7 @@ export async function findReplayRunByInputHash(
       ${replayRunSelect}
       WHERE experiment_id = $1
         AND input_hash = $2
+        AND invalidated_at IS NULL
         AND EXISTS (
           SELECT 1 FROM experiments
           WHERE experiments.id = replay_runs.experiment_id
@@ -860,16 +981,36 @@ export async function findReplayRunByInputHash(
   return row === undefined ? null : mapReplayRunRow(row);
 }
 
+export async function countComparisonSets(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+  }
+): Promise<number> {
+  const result = await pool.query<{ readonly count: string }>(
+    `
+      SELECT count(*)::text AS count
+      FROM comparison_sets
+      WHERE created_by_session_id = $1
+    `,
+    [input.sessionId]
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
 export async function startReplayRun(pool: pg.Pool, replayRunId: string): Promise<ReplayRunRecord> {
   const result = await pool.query<Parameters<typeof mapReplayRunRow>[0]>(
     `
       UPDATE replay_runs
       SET status = 'RUNNING',
           started_at = COALESCE(started_at, now()),
+          last_heartbeat_at = now(),
           completed_at = NULL,
           error_code = NULL
       WHERE id = $1
         AND status IN ('QUEUED', 'FAILED')
+        AND cancel_requested_at IS NULL
+        AND (deadline_at IS NULL OR deadline_at > now())
       RETURNING ${replayRunColumns}
     `,
     [replayRunId]
@@ -900,13 +1041,14 @@ export async function completeReplayRun(
   const result = await pool.query<Parameters<typeof mapReplayRunRow>[0]>(
     `
       UPDATE replay_runs
-      SET status = 'SUCCEEDED',
+      SET status = 'COMPLETED',
           selected_count = $2,
           processed_count = $3,
           scored_count = $4,
           excluded_count = $5,
           output_hash = $6,
           checkpoints = $7::jsonb,
+          last_heartbeat_at = now(),
           completed_at = now(),
           error_code = NULL
       WHERE id = $1
@@ -931,6 +1073,89 @@ export async function completeReplayRun(
     [row.experiment_id]
   );
   return mapReplayRunRow(row);
+}
+
+export async function updateReplayProgress(
+  pool: pg.Pool,
+  input: {
+    readonly replayRunId: string;
+    readonly selectedCount: number;
+    readonly processedCount: number;
+    readonly scoredCount: number;
+    readonly excludedCount: number;
+    readonly checkpoints: Record<string, unknown>;
+  }
+): Promise<void> {
+  const result = await pool.query(
+    `
+      UPDATE replay_runs
+      SET selected_count = $2,
+          processed_count = $3,
+          scored_count = $4,
+          excluded_count = $5,
+          checkpoints = $6::jsonb,
+          last_heartbeat_at = now()
+      WHERE id = $1
+        AND status = 'RUNNING'
+        AND cancel_requested_at IS NULL
+        AND (deadline_at IS NULL OR deadline_at > now())
+    `,
+    [
+      input.replayRunId,
+      input.selectedCount,
+      input.processedCount,
+      input.scoredCount,
+      input.excludedCount,
+      JSON.stringify(input.checkpoints)
+    ]
+  );
+  if (result.rowCount !== 1) {
+    throw new Error("REPLAY_CANCELLED_OR_DEADLINE_EXCEEDED");
+  }
+}
+
+export async function blockReplayRun(
+  pool: pg.Pool,
+  input: {
+    readonly replayRunId: string;
+    readonly errorCode: string;
+    readonly checkpoints: Record<string, unknown>;
+  }
+): Promise<ReplayRunRecord> {
+  const result = await pool.query<Parameters<typeof mapReplayRunRow>[0]>(
+    `
+      UPDATE replay_runs
+      SET status = 'SOURCE_BLOCKED', error_code = $2, checkpoints = $3::jsonb,
+          completed_at = now(), last_heartbeat_at = now()
+      WHERE id = $1
+      RETURNING ${replayRunColumns}
+    `,
+    [input.replayRunId, input.errorCode, JSON.stringify(input.checkpoints)]
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new Error("replay run could not be source-blocked");
+  }
+  await pool.query("UPDATE experiments SET status = 'FAILED', updated_at = now() WHERE id = $1", [row.experiment_id]);
+  return mapReplayRunRow(row);
+}
+
+export async function cancelReplayRun(
+  pool: pg.Pool,
+  input: { readonly sessionId: string; readonly replayRunId: string }
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      UPDATE replay_runs
+      SET cancel_requested_at = now(), status = 'CANCELLED', completed_at = now(),
+          error_code = 'CANCELLED_BY_OWNER'
+      WHERE id = $1
+        AND created_by_session_id = $2
+        AND status IN ('QUEUED', 'RUNNING')
+    `,
+    [input.replayRunId, input.sessionId]
+  );
+  return result.rowCount === 1;
 }
 
 export async function failReplayRun(
@@ -972,34 +1197,20 @@ export async function persistReplayDecision(
     readonly decisionAt: Date;
     readonly cutoffBlock: string;
     readonly frameHash: string;
-    readonly forecastPUp: number | null;
+    readonly forecastPUp: number;
     readonly action: string;
     readonly reasonCodes: readonly string[];
-    readonly outcomeLoadedAt?: Date | null;
-    readonly outcomeResult?: string | null;
     readonly exclusionReason?: string | null;
   }
 ): Promise<ReplayDecisionRecord> {
-  const result = await pool.query<Parameters<typeof mapReplayDecisionRow>[0]>(
+  await pool.query(
     `
       INSERT INTO replay_decisions(
         replay_run_id, market_id, policy_version_id, decision_at, cutoff_block, frame_hash,
-        forecast_p_up, action, reason_codes, outcome_loaded_at, outcome_result, exclusion_reason
+        forecast_p_up, action, reason_codes, exclusion_reason
       )
-      VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9, $10, $11, $12)
-      ON CONFLICT (replay_run_id, market_id, policy_version_id) DO UPDATE
-      SET decision_at = EXCLUDED.decision_at,
-          cutoff_block = EXCLUDED.cutoff_block,
-          frame_hash = EXCLUDED.frame_hash,
-          forecast_p_up = EXCLUDED.forecast_p_up,
-          action = EXCLUDED.action,
-          reason_codes = EXCLUDED.reason_codes,
-          outcome_loaded_at = EXCLUDED.outcome_loaded_at,
-          outcome_result = EXCLUDED.outcome_result,
-          exclusion_reason = EXCLUDED.exclusion_reason
-      RETURNING id, replay_run_id, market_id, policy_version_id, decision_at,
-        cutoff_block::text, frame_hash, forecast_p_up, action, reason_codes,
-        outcome_loaded_at, outcome_result, exclusion_reason, created_at
+      VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9, $10)
+      ON CONFLICT (replay_run_id, market_id, policy_version_id) DO NOTHING
     `,
     [
       input.replayRunId,
@@ -1011,16 +1222,87 @@ export async function persistReplayDecision(
       input.forecastPUp,
       input.action,
       [...input.reasonCodes],
-      input.outcomeLoadedAt ?? null,
-      input.outcomeResult ?? null,
       input.exclusionReason ?? null
     ]
+  );
+  const result = await pool.query<Parameters<typeof mapReplayDecisionRow>[0]>(
+    `
+      SELECT id, replay_run_id, market_id, policy_version_id, decision_at,
+        cutoff_block::text, frame_hash, forecast_p_up, action, reason_codes,
+        NULL::timestamptz AS outcome_loaded_at, NULL::text AS outcome_result,
+        exclusion_reason, created_at
+      FROM replay_decisions
+      WHERE replay_run_id = $1 AND market_id = $2 AND policy_version_id = $3
+    `,
+    [input.replayRunId, input.marketId, input.policyVersionId]
   );
   const row = result.rows[0];
   if (row === undefined) {
     throw new Error("replay decision was not persisted");
   }
+  const idempotentMatch =
+    row.decision_at.getTime() === input.decisionAt.getTime() &&
+    row.cutoff_block === input.cutoffBlock &&
+    row.frame_hash === input.frameHash &&
+    row.forecast_p_up === input.forecastPUp &&
+    row.action === input.action &&
+    JSON.stringify(row.reason_codes) === JSON.stringify(input.reasonCodes) &&
+    row.exclusion_reason === (input.exclusionReason ?? null);
+  if (!idempotentMatch) {
+    throw new Error("immutable replay decision conflicts with the persisted record");
+  }
   return mapReplayDecisionRow(row);
+}
+
+export async function persistReplayOutcome(
+  pool: pg.Pool,
+  input: {
+    readonly replayDecisionId: string;
+    readonly outcomeResult?: "YES" | "NO" | null;
+    readonly exclusionReason?: string | null;
+    readonly loadedAt: Date;
+    readonly sourceMetadata: Record<string, unknown>;
+  }
+): Promise<void> {
+  await pool.query(
+    `
+      INSERT INTO replay_outcomes(
+        replay_decision_id, outcome_result, exclusion_reason, loaded_at, source_metadata
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb)
+      ON CONFLICT (replay_decision_id) DO NOTHING
+    `,
+    [
+      input.replayDecisionId,
+      input.outcomeResult ?? null,
+      input.exclusionReason ?? null,
+      input.loadedAt,
+      JSON.stringify(input.sourceMetadata)
+    ]
+  );
+  const result = await pool.query<{
+    readonly outcome_result: string | null;
+    readonly exclusion_reason: string | null;
+    readonly loaded_at: Date;
+    readonly metadata_matches: boolean;
+  }>(
+    `
+      SELECT outcome_result, exclusion_reason, loaded_at, source_metadata = $2::jsonb AS metadata_matches
+      FROM replay_outcomes
+      WHERE replay_decision_id = $1
+    `,
+    [input.replayDecisionId, JSON.stringify(input.sourceMetadata)]
+  );
+  const row = result.rows[0];
+  if (
+    row === undefined ||
+    row.outcome_result !== (input.outcomeResult ?? null) ||
+    row.exclusion_reason !== (input.exclusionReason ?? null) ||
+    row.loaded_at.getTime() !== input.loadedAt.getTime() ||
+    !row.metadata_matches
+  ) {
+    throw new Error("immutable replay outcome conflicts with the persisted record");
+  }
 }
 
 export async function persistHistoricalSourceManifest(
@@ -1041,23 +1323,15 @@ export async function persistHistoricalSourceManifest(
     readonly sourceMetadata: Record<string, unknown>;
   }
 ): Promise<void> {
-  await pool.query(
+  const inserted = await pool.query<{ readonly id: string }>(
     `
       INSERT INTO historical_source_manifests(
         replay_run_id, market_id, source_version, query_version, orders_count, fills_count,
         candles_count, first_block, last_block, completeness, canonical_digest, retrieved_at, source_metadata
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric, $10, $11, $12, $13::jsonb)
-      ON CONFLICT (replay_run_id, market_id) DO UPDATE
-      SET orders_count = EXCLUDED.orders_count,
-          fills_count = EXCLUDED.fills_count,
-          candles_count = EXCLUDED.candles_count,
-          first_block = EXCLUDED.first_block,
-          last_block = EXCLUDED.last_block,
-          completeness = EXCLUDED.completeness,
-          canonical_digest = EXCLUDED.canonical_digest,
-          retrieved_at = EXCLUDED.retrieved_at,
-          source_metadata = EXCLUDED.source_metadata
+      ON CONFLICT (replay_run_id, market_id) DO NOTHING
+      RETURNING id
     `,
     [
       input.replayRunId,
@@ -1075,6 +1349,38 @@ export async function persistHistoricalSourceManifest(
       JSON.stringify(input.sourceMetadata)
     ]
   );
+  if (inserted.rows[0] !== undefined) {
+    return;
+  }
+  const existing = await pool.query<{ readonly matches: boolean }>(
+    `
+      SELECT
+        source_version = $3 AND query_version = $4 AND orders_count = $5 AND fills_count = $6
+        AND candles_count = $7 AND first_block IS NOT DISTINCT FROM $8::numeric
+        AND last_block IS NOT DISTINCT FROM $9::numeric AND completeness = $10
+        AND canonical_digest = $11 AND retrieved_at = $12 AND source_metadata = $13::jsonb AS matches
+      FROM historical_source_manifests
+      WHERE replay_run_id = $1 AND market_id = $2
+    `,
+    [
+      input.replayRunId,
+      input.marketId,
+      input.sourceVersion,
+      input.queryVersion,
+      input.ordersCount,
+      input.fillsCount,
+      input.candlesCount,
+      input.firstBlock ?? null,
+      input.lastBlock ?? null,
+      input.completeness,
+      input.canonicalDigest,
+      input.retrievedAt,
+      JSON.stringify(input.sourceMetadata)
+    ]
+  );
+  if (existing.rows[0]?.matches !== true) {
+    throw new Error("HISTORICAL_SOURCE_MANIFEST_IMMUTABLE_CONFLICT");
+  }
 }
 
 export async function getLatestReplayRunForExperiment(
@@ -1088,6 +1394,7 @@ export async function getLatestReplayRunForExperiment(
     `
       ${replayRunSelect}
       WHERE experiment_id = $1
+        AND invalidated_at IS NULL
         AND EXISTS (
           SELECT 1 FROM experiments
           WHERE experiments.id = replay_runs.experiment_id
@@ -1104,12 +1411,14 @@ export async function getLatestReplayRunForExperiment(
   }
   const decisions = await pool.query<Parameters<typeof mapReplayDecisionRow>[0]>(
     `
-      SELECT id, replay_run_id, market_id, policy_version_id, decision_at,
-        cutoff_block::text, frame_hash, forecast_p_up, action, reason_codes,
-        outcome_loaded_at, outcome_result, exclusion_reason, created_at
-      FROM replay_decisions
-      WHERE replay_run_id = $1
-      ORDER BY decision_at ASC, market_id ASC
+      SELECT rd.id, rd.replay_run_id, rd.market_id, rd.policy_version_id, rd.decision_at,
+        rd.cutoff_block::text, rd.frame_hash, rd.forecast_p_up, rd.action, rd.reason_codes,
+        ro.loaded_at AS outcome_loaded_at, ro.outcome_result,
+        COALESCE(rd.exclusion_reason, ro.exclusion_reason) AS exclusion_reason, rd.created_at
+      FROM replay_decisions rd
+      LEFT JOIN replay_outcomes ro ON ro.replay_decision_id = rd.id
+      WHERE rd.replay_run_id = $1
+      ORDER BY rd.decision_at ASC, rd.market_id ASC
       LIMIT 100
     `,
     [runRow.id]
@@ -1118,4 +1427,22 @@ export async function getLatestReplayRunForExperiment(
     ...mapReplayRunRow(runRow),
     decisions: decisions.rows.map(mapReplayDecisionRow)
   };
+}
+
+export async function getOwnedReplayRun(
+  pool: pg.Pool,
+  input: { readonly sessionId: string; readonly replayRunId: string }
+): Promise<ReplayRunRecord | null> {
+  const result = await pool.query<Parameters<typeof mapReplayRunRow>[0]>(
+    `
+      ${replayRunSelect}
+      WHERE id = $1
+        AND created_by_session_id = $2
+        AND invalidated_at IS NULL
+      LIMIT 1
+    `,
+    [input.replayRunId, input.sessionId]
+  );
+  const row = result.rows[0];
+  return row === undefined ? null : mapReplayRunRow(row);
 }

@@ -1,11 +1,15 @@
 {
   "evidenceId": "EVAL-002",
-  "capturedAt": "2026-08-25T11:54:48.289Z",
+  "capturedAt": "2026-08-26T05:58:14Z",
+  "supersedes": {
+    "capturedAt": "2026-08-25T11:54:48.289Z",
+    "reason": "Previous assessment hash omitted decision-defining provenance. Evaluation identity now binds canonical forecasts, actions, reasons, frame/policy/config/source hashes, outcomes, thresholds, scope, and evaluation version."
+  },
   "producer": "EdgeLab local execution agent",
   "task": "EVAL-002 persisted historical replay evaluation",
-  "experimentId": "68598888-768d-4aa4-82ae-3b3962813e68",
-  "metricRunId": "b63d9339-07c9-49ef-8378-ac56249c0e7b",
-  "assessmentId": "428a411f-93fa-45f8-a803-24f01be2e6c1",
+  "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
+  "metricRunId": "13aad28c-eea2-48d7-8736-f15f5cc23703",
+  "assessmentId": "f68aaf48-2a38-4542-b096-22485a789750",
   "verdict": "INSUFFICIENT_EVIDENCE",
   "reasonCodes": [
     "MIN_SAMPLE_NOT_MET",
@@ -22,16 +26,17 @@
   },
   "provenance": {
     "sourcePlane": "MAINNET_HISTORICAL",
-    "replayOutputHash": "b6111d9f4b829abf27cea6e547d4a4575f5a3f27ffc2a9c7c6645809e8442ac4",
-    "inputHash": "7ffbda85a2649c0457b09859202adde8b033593f16bc75859b1be54747c41cb5",
-    "assessmentHash": "cb45f64b36a4352ec9a0e4055b31e25267f3388b3fbba365a1d959dfce475ab4",
+    "replayOutputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
+    "inputHash": "12bd8d730924b4fc323181284091b8e148d2c69c9197cd3e8cc21c70a8380adb",
+    "assessmentHash": "a79d66c4051c67db621a259283d740ca228f09c89a3a79e361f2e0465592f82a",
+    "evaluationVersion": "edgelab-evaluation-v2",
     "verdictAuthority": "server-evaluation-engine"
   },
   "verdictFixtures": {
-    "PROMOTE": "covered by tests/unit/metrics.test.ts",
-    "HOLD": "covered by tests/unit/metrics.test.ts",
-    "REJECT": "covered by tests/unit/metrics.test.ts",
-    "INSUFFICIENT_EVIDENCE": "covered by tests/unit/metrics.test.ts and tests/integration/api.test.ts"
+    "PROMOTE": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
+    "HOLD": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
+    "REJECT": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
+    "INSUFFICIENT_EVIDENCE": "covered by tests/unit/metrics.test.ts, tests/integration/evaluate.test.ts, and tests/integration/api.test.ts"
   },
   "redaction": "public/non-secret hashes and UUIDs only"
 }

@@ -1,13 +1,17 @@
 # EdgeLab
 
-EdgeLab is a forward-testing, live-shadow, recent-window DreamDEX Event Contract strategy evidence and calibration laboratory for Somnia Shannon testnet.
+EdgeLab is a DreamDEX Event Contract strategy evidence and calibration laboratory spanning three separated evidence planes:
+
+- Somnia mainnet `5031` historical research, read-only.
+- Somnia Shannon `50312` forward/live-shadow observation, read-only plus scoped application writes.
+- Somnia Shannon `50312` execution proof, browser-wallet and human-authorized only.
 
 It compares immutable reference policies using pre-outcome decisions, separated forecast/tradeability/PnL evidence, deterministic sufficiency rules, and human-authorized testnet execution proof. `INSUFFICIENT_EVIDENCE` is a first-class valid outcome.
 
 ## Current Status
 
 - GitHub repository: https://github.com/cyberrockng/edgelab
-- Network: Somnia Shannon testnet, chain `50312`
+- Networks: Somnia mainnet `5031` for read-only historical research; Somnia Shannon testnet `50312` for forward observation and execution proof.
 - DreamDEX SDK: `@somnia-chain/markets-sdk` `0.28.1`
 - EXG-002 wallet funding proof: passed with public chain evidence.
 - EXG-003 approval, order, and terminal lifecycle: passed with a real no-fill DreamDEX order lifecycle.
@@ -17,9 +21,10 @@ It compares immutable reference policies using pre-outcome decisions, separated 
 
 ## Product Boundaries
 
-EdgeLab is not a historical CLOB backtester, generic trading bot, guaranteed-alpha finder, or autonomous profit machine.
+EdgeLab is not a generic CLOB backtester, trading bot, guaranteed-alpha finder, or autonomous profit machine.
 
-- Somnia Shannon testnet only.
+- Mainnet access is read-only historical research. There is no mainnet signer, transaction builder, or write route.
+- Shannon forward observation is separate from Shannon human-authorized execution proof.
 - DreamDEX Event Contracts are load-bearing.
 - The service never signs transactions and never receives wallet credential material.
 - Consequential DreamDEX writes require explicit human wallet approval.
@@ -29,11 +34,11 @@ EdgeLab is not a historical CLOB backtester, generic trading bot, guaranteed-alp
 
 ## Architecture
 
-- `apps/web`: React decision-first review UI.
-- `apps/server`: Fastify API, health/readiness, auth challenges, evidence summary, DreamDEX read endpoints.
+- `apps/web`: React multi-route Strategy Lab, market explorer, comparison, Evidence Gate, and proof UI.
+- `apps/server`: Fastify API, health/readiness, research sessions, historical reads, replay jobs, evaluation, comparison, proof, and legacy v1 compatibility reads.
 - `packages/domain`: shared IDs, schemas, constants, and evidence states.
 - `packages/db`: Postgres migrations, leases, audit events.
-- `packages/dreamdex`: Somnia/DreamDEX read adapter.
+- `packages/dreamdex`: separated Shannon and mainnet read adapters with fixed bounded queries.
 - `packages/policy-runtime`: immutable reference policy adapter runtime.
 - `packages/observe`: live-shadow pre-outcome snapshot and decision pipeline.
 - `packages/metrics`: forecast, execution, PnL, and sufficiency metrics.
@@ -44,10 +49,11 @@ EdgeLab is not a historical CLOB backtester, generic trading bot, guaranteed-alp
 
 ## State Model
 
-The database stores experiments, market episodes, pre-outcome snapshots, shadow decisions, metric runs, evidence assessments, wallet identities, execution intents, chain transactions, order evidence, fill evidence, settlement records, evidence artifacts, leases, and audit events.
+The database stores experiments, configuration versions, replay runs, historical source manifests, replay decisions/outcomes, market episodes, pre-outcome snapshots, shadow decisions, metric runs, evidence assessments, comparison sets, wallet identities, execution intents, chain transactions, order evidence, fill evidence, settlement records, evidence artifacts, leases, and audit events.
 
 Important invariants:
 
+- historical replay decisions are committed before the separate outcome stage;
 - shadow decisions are written before outcomes are known;
 - outcome-bearing or expired markets are rejected before observation writes;
 - order submitted, fill, terminal, and settlement states are not collapsed into a single PnL claim;
@@ -80,8 +86,11 @@ Required runtime values:
 - `SOMNIA_RPC_URL`
 - `SOMNIA_WS_RPC_URL`
 - `DREAMDEX_INDEXER_URL`
+- `SOMNIA_MAINNET_CHAIN_ID=5031`
+- `SOMNIA_MAINNET_RPC_URL`
+- `DREAMDEX_MAINNET_INDEXER_URL`
 - `MARKETS_SDK_VERSION=0.28.1`
-- `WORKER_ENABLED=false`
+- `WORKER_ENABLED=true` for deployed replay workers after remediation tests pass; local on-demand testing may run either mode.
 
 ## Commands
 
@@ -158,7 +167,8 @@ Rollback for the local deployment is to stop the smoke container and return to t
 
 ## Limitations
 
-- Current policy evidence intentionally remains insufficient for promotion.
+- Public Proven Experiment evidence remains truthful if it evaluates to `INSUFFICIENT_EVIDENCE`.
+- Historical reconstructed resting-book state remains `SOURCE_INCOMPLETE / FAIL-CLOSED`; no stored book snapshot is claimed.
 - The EXG-003 order lifecycle had no fill; this is valid tradeability evidence, not PnL evidence.
 - The terminal event was `OrderExpired` after an owner-approved `cancelOrder` call landed post-expiry.
 - Final narrated video and submission-form receipt remain SHIP-001 owner-controlled steps after independent audit.

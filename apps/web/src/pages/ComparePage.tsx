@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   apiErrorMessage,
   createComparison,
   fetchAssessments,
+  fetchComparison,
+  fetchComparisons,
   type AssessmentSummaryRecord,
   type ComparisonRecord
 } from "../data.js";
@@ -28,20 +31,38 @@ function AssessmentRow({ item }: { readonly item: AssessmentSummaryRecord & { re
 }
 
 export default function ComparePage() {
+  const navigate = useNavigate();
+  const { comparisonId } = useParams();
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
   const assessmentsQuery = useQuery({
     queryKey: ["assessments"],
     queryFn: fetchAssessments
+  });
+  const comparisonsQuery = useQuery({
+    queryKey: ["comparisons"],
+    queryFn: fetchComparisons
+  });
+  const comparisonDetailQuery = useQuery({
+    enabled: comparisonId !== undefined,
+    queryKey: ["comparison", comparisonId],
+    queryFn: () => fetchComparison(comparisonId ?? "")
   });
   const comparisonMutation = useMutation({
     mutationFn: () =>
       createComparison({
         name: "Judge evidence comparison",
         assessmentIds: selectedIds
-      })
+      }),
+    onSuccess: async (response) => {
+      const id = response.data.comparison?.comparisonId;
+      if (id !== undefined) {
+        await navigate(`/compare/${id}`);
+      }
+    }
   });
   const assessments = assessmentsQuery.data?.data.assessments ?? [];
-  const savedComparison: ComparisonRecord | null = comparisonMutation.data?.data.comparison ?? null;
+  const savedComparison: ComparisonRecord | null =
+    comparisonDetailQuery.data?.data.comparison ?? comparisonMutation.data?.data.comparison ?? null;
   const canSave = selectedIds.length >= 2 && selectedIds.length <= 4;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -65,6 +86,22 @@ export default function ComparePage() {
         <p>Choose two to four persisted assessments. EdgeLab preserves source plane, sample size, forecast metrics, and PnL availability.</p>
       </section>
       <section className="routePanel" aria-label="Strategy comparison">
+        {comparisonsQuery.isLoading ? <div className="stateBox">Loading saved comparisons...</div> : null}
+        {comparisonsQuery.isError ? (
+          <div className="stateBox errorState" role="alert">
+            {apiErrorMessage(comparisonsQuery.error)}
+          </div>
+        ) : null}
+        {comparisonsQuery.data?.data.comparisons.length ? (
+          <div className="selectionList" aria-label="Saved comparison list">
+            {comparisonsQuery.data.data.comparisons.map((comparison) => (
+              <Link className="checkRow savedComparisonRow" to={`/compare/${comparison.comparisonId}`} key={comparison.comparisonId}>
+                <span>{comparison.name}</span>
+                <span className="statusPill">{comparison.itemCount} assessments</span>
+              </Link>
+            ))}
+          </div>
+        ) : null}
         {assessmentsQuery.isLoading ? <div className="stateBox">Loading persisted assessments...</div> : null}
         {assessmentsQuery.isError ? (
           <div className="stateBox errorState" role="alert">
@@ -118,8 +155,13 @@ export default function ComparePage() {
             <p className="eyebrow">Immutable Comparison</p>
             <h2>{savedComparison?.name ?? "Latest selected evidence"}</h2>
           </div>
-          <span className="statusPill">No composite score</span>
+          <span className="statusPill">{comparisonDetailQuery.isFetching ? "Reloading" : "No composite score"}</span>
         </div>
+        {comparisonDetailQuery.isError ? (
+          <div className="stateBox errorState" role="alert">
+            {apiErrorMessage(comparisonDetailQuery.error)}
+          </div>
+        ) : null}
         <div className="policyMatrix" role="table" aria-label="Policy evidence comparison">
           <div role="row">
             <span role="columnheader">Experiment</span>

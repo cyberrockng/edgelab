@@ -3,6 +3,7 @@ import {
   captureMarketSnapshot,
   countHistoricalBinaryMarkets,
   discoverSuccessorMarkets,
+  executeBoundedHistoricalRead,
   getHistoricalMarketResolution,
   getHistoricalReconstructedBookCapability,
   HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
@@ -16,10 +17,12 @@ import {
   listHistoricalOrdersByMarket,
   normalizeHistoricalPagination,
   normalizeBinaryMarket,
+  resolveHistoricalCutoffBlock,
   validateMainnetHistoricalDreamDexConfig,
   validateDreamDexReadConfig,
   type DreamDexReadConfig,
   type HistoricalDreamDexSdkClient,
+  type HistoricalRpcFetch,
   type MainnetHistoricalDreamDexConfig,
   type DreamDexSdkClient
 } from "@edgelab/dreamdex";
@@ -315,6 +318,39 @@ describe("HIST-001 DreamDEX historical source contract", () => {
     expect(HISTORICAL_MARKET_FILLS_QUERY).toContain("logIndex");
     expect(HISTORICAL_MARKET_FILLS_QUERY).not.toMatch(/\bowner\b/);
   });
+
+  it("resolves the greatest finalized block strictly before T across T-1, T, and T+1", async () => {
+    const rpcFetch: HistoricalRpcFetch = (_input, init) => {
+      const request = JSON.parse(init.body) as {
+        readonly id: number;
+        readonly params: readonly [string, boolean];
+      };
+      const tag = request.params[0];
+      const blockNumber = tag === "finalized" ? 10 : Number(BigInt(tag));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              number: `0x${blockNumber.toString(16)}`,
+              hash: `0x${blockNumber.toString(16).padStart(64, "0")}`,
+              timestamp: `0x${(100 + blockNumber).toString(16)}`
+            }
+          })
+      });
+    };
+
+    const beforeT = await resolveHistoricalCutoffBlock(mainnetHistoricalConfig, 105, rpcFetch);
+    const atNextT = await resolveHistoricalCutoffBlock(mainnetHistoricalConfig, 106, rpcFetch);
+    const afterT = await resolveHistoricalCutoffBlock(mainnetHistoricalConfig, 107, rpcFetch);
+
+    expect(beforeT).toMatchObject({ ok: true, value: { blockNumber: "4", timestampSeconds: 104 } });
+    expect(atNextT).toMatchObject({ ok: true, value: { blockNumber: "5", timestampSeconds: 105 } });
+    expect(afterT).toMatchObject({ ok: true, value: { blockNumber: "6", timestampSeconds: 106 } });
+  });
 });
 
 describe("HIST-002 read-only historical adapter", () => {
@@ -406,6 +442,78 @@ describe("HIST-002 read-only historical adapter", () => {
       throw new Error("expected unsupported candle interval to fail");
     }
     expect(invalid.reasonCode).toBe("DREAMDEX_HISTORICAL_BOUNDS_INVALID");
+  });
+
+  it("filters recycled-pool candle rows to the immutable market window", async () => {
+    const { client } = historicalClientWith([historicalMarket]);
+    const boundedClient: HistoricalDreamDexSdkClient = {
+      ...client,
+      getCandles() {
+        return Promise.resolve([
+          {
+            bucketStart: "1787306400",
+            openPrice: "1",
+            high: "1",
+            low: "1",
+            closePrice: "1",
+            baseVolume: "1",
+            quoteVolume: "1",
+            tradeCount: 1
+          },
+          {
+            bucketStart: "1787566400",
+            openPrice: "100",
+            high: "110",
+            low: "90",
+            closePrice: "105",
+            baseVolume: "25",
+            quoteVolume: "2500",
+            tradeCount: 2
+          },
+          {
+            bucketStart: "1787652000",
+            openPrice: "2",
+            high: "2",
+            low: "2",
+            closePrice: "2",
+            baseVolume: "2",
+            quoteVolume: "2",
+            tradeCount: 1
+          }
+        ]);
+      }
+    };
+    const result = await listHistoricalCandles(
+      boundedClient,
+      mainnetHistoricalConfig,
+      historicalMarket.poolAddress,
+      3600,
+      { fromSec: 1787566400, toSec: 1787570000, limit: 10 }
+    );
+
+    expect(result).toMatchObject({ ok: true, value: [{ bucketStartSeconds: 1787566400 }] });
+  });
+
+  it("bounds and retries historical reads inside one deterministic deadline", async () => {
+    let attempts = 0;
+    const retried = await executeBoundedHistoricalRead(
+      () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(new Error("temporary upstream failure")) : Promise.resolve("ok");
+      },
+      { deadlineMs: 100, retryDelaysMs: [1] }
+    );
+    const startedAt = Date.now();
+    await expect(
+      executeBoundedHistoricalRead(() => new Promise<never>(() => undefined), {
+        deadlineMs: 20,
+        retryDelaysMs: []
+      })
+    ).rejects.toThrow(/deadline exceeded/);
+
+    expect(retried).toBe("ok");
+    expect(attempts).toBe(2);
+    expect(Date.now() - startedAt).toBeLessThan(100);
   });
 
   it("parses bounded market-wide historical order pages through raw GraphQL", async () => {

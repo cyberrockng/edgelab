@@ -1,7 +1,11 @@
 {
   "task": "REPLAY-001",
   "title": "Anti-look-ahead historical decision frame boundary",
-  "capturedAt": "2026-08-25T11:17:01Z",
+  "capturedAt": "2026-08-26T05:42:38Z",
+  "supersedes": {
+    "capturedAt": "2026-08-25T11:17:01Z",
+    "reason": "System 3 AUD-001 reproduced future lifecycle leakage in the previous replay path; this artifact was regenerated after structural cutoff, strict DTO, and outcome-embargo remediation."
+  },
   "implementation": {
     "package": "@edgelab/replay",
     "schemaVersion": "historical-decision-frame-v1",
@@ -25,9 +29,14 @@
   },
   "tests": {
     "targeted": "PASS - pnpm --filter @edgelab/replay typecheck && pnpm vitest run tests/unit/replay.test.ts",
-    "adversarialFutureMutation": "PASS - mutating future candles/orders/fills and market outcome fields leaves frame hash identical",
-    "strictBoundary": "PASS - data at the decision second is excluded",
+    "adversarialFutureMutation": "PASS - tests/integration/audit-remediation.test.ts mutates future candles, future fills, future order lifecycle, winningOutcome, resolution, and closingPriceRaw; frame hash remains identical",
+    "strictBoundary": "PASS - boundary fixtures exclude records after the authoritative cutoff tuple and reject outcome fields in the strict runtime schema",
     "runtimeSchema": "PASS - extra winningOutcome, closingPriceRaw, and resolution fields are rejected"
+  },
+  "remediationTests": {
+    "targeted": "PASS - pnpm exec vitest run tests/integration/audit-remediation.test.ts tests/unit/replay.test.ts tests/unit/policy-runtime.test.ts",
+    "api": "PASS - pnpm exec vitest run tests/integration/api.test.ts tests/integration/evaluate.test.ts",
+    "e2e": "PASS - E2E_BASE_URL=http://localhost:3011 pnpm test:e2e"
   },
   "security": {
     "networkAccess": false,

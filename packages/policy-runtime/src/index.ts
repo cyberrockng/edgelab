@@ -11,6 +11,9 @@ export interface PolicyManifest {
   readonly label: string;
   readonly sourceHash: string;
   readonly adapterName: string;
+  readonly implementationHash: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly supportedPlanes: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
 }
 
 export interface PolicyEvaluationInput {
@@ -29,6 +32,8 @@ export interface PolicyAdapter {
   readonly version: string;
   readonly label: string;
   readonly adapterName: string;
+  readonly parameters?: Readonly<Record<string, unknown>>;
+  readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
   evaluate(input: PolicyEvaluationInput): Omit<
     PolicyDecision,
     "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
@@ -40,6 +45,8 @@ export interface HistoricalPolicyAdapter {
   readonly version: string;
   readonly label: string;
   readonly adapterName: string;
+  readonly parameters?: Readonly<Record<string, unknown>>;
+  readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
   evaluate(input: HistoricalPolicyEvaluationInput): Omit<
     PolicyDecision,
     "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
@@ -56,17 +63,50 @@ export class PolicyRuntimeError extends Error {
   }
 }
 
-function canonicalJson(input: unknown): string {
-  return JSON.stringify(input, Object.keys(input as Record<string, unknown>).sort());
+function canonicalize(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input.map(canonicalize);
+  }
+  if (input !== null && typeof input === "object") {
+    return Object.fromEntries(
+      Object.entries(input as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => [key, canonicalize(value)])
+    );
+  }
+  return input;
 }
 
-export function hashManifest(adapter: Pick<PolicyAdapter, "policyId" | "version" | "label" | "adapterName">): string {
+function canonicalJson(input: unknown): string {
+  return JSON.stringify(canonicalize(input));
+}
+
+interface PolicyIdentityInput {
+  readonly policyId: string;
+  readonly version: string;
+  readonly label: string;
+  readonly adapterName: string;
+  readonly parameters?: Readonly<Record<string, unknown>>;
+  readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  readonly evaluate: { toString(): string };
+}
+
+function implementationHash(adapter: Pick<PolicyIdentityInput, "evaluate">): string {
+  return createHash("sha256").update(adapter.evaluate.toString().replace(/\s+/g, " ").trim()).digest("hex");
+}
+
+export function hashManifest(
+  adapter: PolicyIdentityInput
+): string {
   return createHash("sha256")
     .update(
       canonicalJson({
         adapterName: adapter.adapterName,
+        implementationHash: implementationHash(adapter),
         label: adapter.label,
+        parameters: adapter.parameters ?? {},
         policyId: adapter.policyId,
+        supportedPlanes: adapter.supportedPlanes ?? [],
         version: adapter.version
       })
     )
@@ -79,7 +119,10 @@ export function createPolicyManifest(adapter: PolicyAdapter): PolicyManifest {
     version: adapter.version,
     label: adapter.label,
     adapterName: adapter.adapterName,
-    sourceHash: hashManifest(adapter)
+    sourceHash: hashManifest(adapter),
+    implementationHash: implementationHash(adapter),
+    parameters: adapter.parameters ?? {},
+    supportedPlanes: adapter.supportedPlanes ?? []
   };
 }
 
@@ -89,7 +132,10 @@ export function createHistoricalPolicyManifest(adapter: HistoricalPolicyAdapter)
     version: adapter.version,
     label: adapter.label,
     adapterName: adapter.adapterName,
-    sourceHash: hashManifest(adapter)
+    sourceHash: hashManifest(adapter),
+    implementationHash: implementationHash(adapter),
+    parameters: adapter.parameters ?? {},
+    supportedPlanes: adapter.supportedPlanes ?? []
   };
 }
 
@@ -183,6 +229,12 @@ function compareHistoricalFills(
   if (blockDelta !== 0n) {
     return blockDelta > 0n ? 1 : -1;
   }
+  if (left.transactionIndex !== null && right.transactionIndex !== null) {
+    const transactionDelta = BigInt(left.transactionIndex) - BigInt(right.transactionIndex);
+    if (transactionDelta !== 0n) {
+      return transactionDelta > 0n ? 1 : -1;
+    }
+  }
   const logDelta = BigInt(left.logIndex) - BigInt(right.logIndex);
   if (logDelta !== 0n) {
     return logDelta > 0n ? 1 : -1;
@@ -217,6 +269,8 @@ export const referencePolicies: readonly PolicyAdapter[] = [
     version: "1.0.0",
     label: "Educational neutral baseline",
     adapterName: "referenceNeutralPolicy",
+    parameters: { forecastPUp: 0.5, action: "WATCH_ONLY" },
+    supportedPlanes: ["MAINNET_HISTORICAL", "SHANNON_FORWARD"],
     evaluate() {
       return {
         forecastPUp: 0.5,
@@ -230,6 +284,8 @@ export const referencePolicies: readonly PolicyAdapter[] = [
     version: "1.0.0",
     label: "Educational captured-book tilt",
     adapterName: "referenceBookTiltPolicy",
+    parameters: { neutralForecastPUp: 0.5, tilt: 0.04 },
+    supportedPlanes: ["SHANNON_FORWARD"],
     evaluate(input) {
       const bidDepth = input.snapshot.book.bids.length;
       const askDepth = input.snapshot.book.asks.length;
@@ -249,6 +305,14 @@ export const historicalPolicies: readonly HistoricalPolicyAdapter[] = [
     version: "1.0.0",
     label: "Last-Trade Probability",
     adapterName: "historicalLastTradeProbabilityPolicy",
+    parameters: {
+      lookbackSeconds: 900,
+      targetOutcome: "YES_UP",
+      priceScale: "fillPriceRaw / 10^quoteDecimals",
+      probabilityClamp: [0.05, 0.95],
+      fillOrder: ["timestampSeconds", "blockNumber", "transactionIndex", "logIndex", "id"]
+    },
+    supportedPlanes: ["MAINNET_HISTORICAL"],
     evaluate(input) {
       const windowStartSeconds = Math.max(
         input.frame.market.tradingStartSeconds,

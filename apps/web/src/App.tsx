@@ -126,6 +126,7 @@ export const router = createBrowserRouter([
       { path: "lab", element: <LabPage />, handle: { title: "Strategy Lab" } },
       { path: "lab/:experimentId", element: <ExperimentWorkspacePage />, handle: { title: "Experiment Workspace" } },
       { path: "compare", element: <ComparePage />, handle: { title: "Compare" } },
+      { path: "compare/:comparisonId", element: <ComparePage />, handle: { title: "Compare" } },
       { path: "evidence", element: <EvidencePage />, handle: { title: "Evidence Gate" } },
       { path: "evidence/:experimentId", element: <EvidencePage />, handle: { title: "Evidence Gate" } },
       { path: "proof", element: <ProofPage />, handle: { title: "DreamDEX Proof" } },
