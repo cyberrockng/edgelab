@@ -1,0 +1,75 @@
+{
+  "artifact": "fresh-audit-production-remediation-report",
+  "capturedAt": "2026-08-26T22:20:11Z",
+  "productionUrl": "https://api-production-bd986.up.railway.app/",
+  "repository": "https://github.com/cyberrockng/edgelab",
+  "branch": "main",
+  "verifiedCommitSha": "8aa8b9dd15705faa1b001ff0e784fb84ceffa4da",
+  "railway": {
+    "project": "edgelab",
+    "environment": "production",
+    "service": "api",
+    "deploymentId": "4bdaa3d7-5a16-49aa-ae9e-a7b939902cd4",
+    "status": "ONLINE"
+  },
+  "health": {
+    "status": "PASS",
+    "buildCommit": "8aa8b9dd15705faa1b001ff0e784fb84ceffa4da"
+  },
+  "readiness": {
+    "status": "PASS",
+    "database": "ok",
+    "workerEnabled": true,
+    "chainId": 50312,
+    "marketsSdkVersion": "0.28.1"
+  },
+  "routes": {
+    "/": "PASS",
+    "/markets": "PASS",
+    "/lab": "PASS",
+    "/compare": "PASS",
+    "/evidence/proven-experiment": "PASS",
+    "/lab/proven-experiment": "PASS",
+    "/proof": "PASS",
+    "/how-it-works": "PASS"
+  },
+  "semanticRetest": {
+    "policy110Active": "PASS",
+    "policy100RetainedSuperseded": "PASS",
+    "policy110SourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+    "policy110ImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
+    "provenExperimentPolicy": "historical-last-trade@1.1.0",
+    "provenExperimentVerdict": "INSUFFICIENT_EVIDENCE",
+    "provenTradeabilityRow": {
+      "dimension": "Tradeability / execution quality",
+      "status": "NOT_AVAILABLE",
+      "value": "NOT_AVAILABLE"
+    }
+  },
+  "networkBoundaries": {
+    "mainnet5031": "READ_ONLY_HISTORICAL_RESEARCH",
+    "shannon50312": "FORWARD_LIVE_SHADOW_AND_HUMAN_AUTHORIZED_TESTNET_EXECUTION",
+    "blockchainWriteDuringRemediation": false
+  },
+  "productionE2e": {
+    "command": "E2E_BASE_URL=https://api-production-bd986.up.railway.app pnpm test:e2e",
+    "status": "PASS",
+    "passed": 40,
+    "failed": 0,
+    "viewports": ["desktop-1440", "desktop-1366", "desktop-1280", "mobile-pixel-5"]
+  },
+  "localChecks": {
+    "pnpmCheck": "PASS",
+    "pnpmBuild": "PASS",
+    "pnpmTestE2eLocal": "PASS",
+    "pnpmSecretScan": "PASS",
+    "pnpmEvidenceManifest": "PASS"
+  },
+  "security": {
+    "secretScan": "PASS",
+    "railwayVariablesListed": false,
+    "walletSecretsRequested": false,
+    "mainnetSignerPresent": false
+  },
+  "status": "READY_FOR_FRESH_SYSTEM_3_RE_AUDIT"
+}
