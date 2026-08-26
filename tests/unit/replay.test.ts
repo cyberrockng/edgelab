@@ -154,10 +154,11 @@ describe("REPLAY-001 anti-look-ahead frame boundary", () => {
     });
 
     expect(first.frameHash).toBe(mutatedFuture.frameHash);
-    expect(first.frame.candles).toHaveLength(1);
+    expect(first.frame.candles).toHaveLength(0);
     expect(first.frame.orders).toHaveLength(1);
     expect(first.frame.fills).toHaveLength(1);
     expect(first.frame.exclusions).toEqual([
+      "CANDLE_LINEAGE_UNAVAILABLE_CONTEXT_ONLY",
       "FILL_AFTER_CUTOFF",
       "INCOMPLETE_OR_FUTURE_CANDLE",
       "ORDER_AFTER_CUTOFF"

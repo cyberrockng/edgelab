@@ -176,7 +176,9 @@ export const migrations = [
   "0006_replay_job_controls",
   "0007_policy_version_immutability",
   "0008_evaluation_integrity",
-  "0009_builtin_policy_manifest_backfill"
+  "0009_builtin_policy_manifest_backfill",
+  "0010_scoped_historical_promotion",
+  "0011_body_bound_idempotency"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
@@ -490,6 +492,7 @@ export async function createInteractiveExperiment(
     readonly sessionId: string;
     readonly name: string;
     readonly createIdempotencyKey: string;
+    readonly createIdempotencyHash: string;
     readonly visibility?: "PRIVATE" | "PUBLIC_PROVEN" | "SHARED_LINK";
     readonly configuration: ExperimentConfigurationInput;
     readonly policyVersions?: readonly {
@@ -501,9 +504,15 @@ export async function createInteractiveExperiment(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const existing = await client.query<{ id: string; active_configuration_id: string; version: number }>(
+    const existing = await client.query<{
+      readonly id: string;
+      readonly active_configuration_id: string;
+      readonly version: number;
+      readonly create_idempotency_hash: string | null;
+    }>(
       `
-        SELECT experiments.id, experiments.active_configuration_id, experiment_configuration_versions.version
+        SELECT experiments.id, experiments.active_configuration_id, experiment_configuration_versions.version,
+          experiments.create_idempotency_hash
         FROM experiments
         JOIN experiment_configuration_versions
           ON experiment_configuration_versions.id = experiments.active_configuration_id
@@ -515,6 +524,9 @@ export async function createInteractiveExperiment(
     );
     const existingRow = existing.rows[0];
     if (existingRow !== undefined) {
+      if (existingRow.create_idempotency_hash !== null && existingRow.create_idempotency_hash !== input.createIdempotencyHash) {
+        throw new Error("IDEMPOTENCY_BODY_MISMATCH");
+      }
       await client.query("COMMIT");
       return {
         experimentId: existingRow.id,
@@ -525,8 +537,11 @@ export async function createInteractiveExperiment(
     }
     const experiment = await client.query<{ id: string }>(
       `
-        INSERT INTO experiments(created_by_session_id, name, visibility, decision_offset_sec, status, create_idempotency_key)
-        VALUES ($1, $2, $3, $4, 'DRAFT', $5)
+        INSERT INTO experiments(
+          created_by_session_id, name, visibility, decision_offset_sec, status,
+          create_idempotency_key, create_idempotency_hash
+        )
+        VALUES ($1, $2, $3, $4, 'DRAFT', $5, $6)
         RETURNING id
       `,
       [
@@ -534,7 +549,8 @@ export async function createInteractiveExperiment(
         input.name,
         input.visibility ?? "PRIVATE",
         input.configuration.decisionOffsetSec,
-        input.createIdempotencyKey
+        input.createIdempotencyKey,
+        input.createIdempotencyHash
       ]
     );
     const experimentId = experiment.rows[0]?.id;
@@ -863,6 +879,7 @@ export async function createReplayRun(
     readonly queryVersion: string;
     readonly inputHash: string;
     readonly idempotencyKey: string;
+    readonly idempotencyHash: string;
     readonly capability: string;
     readonly checkpoints?: Record<string, unknown>;
   }
@@ -871,15 +888,19 @@ export async function createReplayRun(
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext('edgelab-replay-admission'))");
-    const existing = await client.query<Parameters<typeof mapReplayRunRow>[0]>(
+    const existing = await client.query<Parameters<typeof mapReplayRunRow>[0] & { readonly idempotency_hash: string | null }>(
       `
-        ${replayRunSelect}
+        SELECT ${replayRunColumns}, idempotency_hash
+        FROM replay_runs
         WHERE created_by_session_id = $1 AND idempotency_key = $2
         LIMIT 1
       `,
       [input.sessionId, input.idempotencyKey]
     );
     if (existing.rows[0] !== undefined) {
+      if (existing.rows[0].idempotency_hash !== null && existing.rows[0].idempotency_hash !== input.idempotencyHash) {
+        throw new Error("IDEMPOTENCY_BODY_MISMATCH");
+      }
       await client.query("COMMIT");
       return mapReplayRunRow(existing.rows[0]);
     }
@@ -904,10 +925,10 @@ export async function createReplayRun(
         INSERT INTO replay_runs(
           experiment_id, configuration_id, created_by_session_id, plane, status,
           frozen_now, deadline_at, capability, source_version, query_version,
-          input_hash, idempotency_key, checkpoints
+          input_hash, idempotency_key, idempotency_hash, checkpoints
         )
         VALUES ($1, $2, $3, 'MAINNET_HISTORICAL', 'QUEUED', $4::timestamptz, $4::timestamptz + interval '5 minutes',
-          $5, $6, $7, $8, $9, $10::jsonb)
+          $5, $6, $7, $8, $9, $10, $11::jsonb)
         RETURNING ${replayRunColumns}
       `,
       [
@@ -920,6 +941,7 @@ export async function createReplayRun(
         input.queryVersion,
         input.inputHash,
         input.idempotencyKey,
+        input.idempotencyHash,
         JSON.stringify(input.checkpoints ?? {})
       ]
     );

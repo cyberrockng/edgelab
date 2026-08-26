@@ -38,7 +38,7 @@ export default function HowItWorksPage() {
         <article>
           <span className="label">6. Evidence Gate</span>
           <h2>The verdict is earned.</h2>
-          <p>PROMOTE, HOLD, REJECT, and INSUFFICIENT EVIDENCE come from server evaluation, not local UI decoration.</p>
+          <p>PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, and INSUFFICIENT EVIDENCE come from server evaluation, not local UI decoration.</p>
         </article>
       </section>
     </div>

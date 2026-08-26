@@ -186,26 +186,11 @@ export function buildHistoricalDecisionFrame(
   if (input.openingPrice !== undefined && input.openingPrice !== null && openingPrice === null) {
     exclusions.add("OPENING_PRICE_AFTER_CUTOFF");
   }
-  const candles = input.candles
-    .filter((candle) => {
-      const complete = candle.bucketStartSeconds + candle.intervalSeconds <= decisionAtSeconds;
-      if (!complete) {
-        exclusions.add("INCOMPLETE_OR_FUTURE_CANDLE");
-      }
-      return complete;
-    })
-    .map((candle) => ({
-      bucketStartSeconds: candle.bucketStartSeconds,
-      intervalSeconds: candle.intervalSeconds,
-      openPriceRaw: candle.openPriceRaw,
-      highPriceRaw: candle.highPriceRaw,
-      lowPriceRaw: candle.lowPriceRaw,
-      closePriceRaw: candle.closePriceRaw,
-      baseVolumeRaw: candle.baseVolumeRaw,
-      quoteVolumeRaw: candle.quoteVolumeRaw,
-      tradeCount: candle.tradeCount
-    }))
-    .sort((left, right) => left.bucketStartSeconds - right.bucketStartSeconds || left.intervalSeconds - right.intervalSeconds);
+  for (const candle of input.candles) {
+    const complete = candle.bucketStartSeconds + candle.intervalSeconds <= decisionAtSeconds;
+    exclusions.add(complete ? "CANDLE_LINEAGE_UNAVAILABLE_CONTEXT_ONLY" : "INCOMPLETE_OR_FUTURE_CANDLE");
+  }
+  const candles: HistoricalDecisionFrame["candles"] = [];
   const orders = input.orders
     .filter((order) => {
       const included =

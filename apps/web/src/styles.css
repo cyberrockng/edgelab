@@ -726,7 +726,7 @@ dd {
 
 .policyMatrix [role="row"] {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 0.88fr 0.9fr 1.06fr 1.08fr 0.9fr 0.92fr;
+  grid-template-columns: 1.18fr 1fr 0.74fr 0.84fr 0.78fr 0.94fr 0.92fr 0.78fr 0.9fr;
 }
 
 .policyMatrix [role="row"] + [role="row"] {

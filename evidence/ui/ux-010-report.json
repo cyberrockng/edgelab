@@ -46,7 +46,7 @@
   },
   "truthPreserved": [
     "Homepage no longer leads with a fabricated or browser-derived final verdict.",
-    "Evidence route states that the browser does not manufacture PROMOTE, HOLD, REJECT, or INSUFFICIENT EVIDENCE.",
+    "Evidence route states that the browser does not manufacture PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, or INSUFFICIENT EVIDENCE.",
     "Market routes show no fabricated rows while historical APIs are pending.",
     "Proof route preserves OrderExpired and no-fill truth.",
     "Mainnet historical research and Shannon execution labels remain separate."

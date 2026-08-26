@@ -321,13 +321,14 @@ export interface ReplayResponse {
 export interface EvaluationAssessmentRecord {
   readonly assessmentId: string;
   readonly metricRunId: string;
-  readonly verdict: "PROMOTE" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
+  readonly verdict: "PROMOTE_TO_FORWARD_OBSERVATION" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
   readonly reasonCodes: readonly string[];
   readonly sampleSize: number;
   readonly exclusionCount: number;
   readonly brierScore: number | null;
   readonly calibrationBias: number | null;
   readonly neutralBaselineDelta: number | null;
+  readonly tradeabilityStatus: string;
   readonly pnlStatus: "NOT_AVAILABLE" | "AVAILABLE";
   readonly evidencePlane: string;
   readonly replayRunId: string | null;
@@ -514,7 +515,7 @@ export interface ExperimentCreateInput {
   readonly name: string;
   readonly mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW";
   readonly asset: "BTC" | "ETH";
-  readonly intervalSec: 900 | 3600 | 14400 | 86400;
+  readonly intervalSec: 900 | 3600;
   readonly policyId: string;
   readonly policyVersion: string;
   readonly marketId?: string;

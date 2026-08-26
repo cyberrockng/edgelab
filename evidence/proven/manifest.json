@@ -1,10 +1,10 @@
 {
   "evidenceId": "PROVEN-001",
   "task": "ARTIFACT-001",
-  "capturedAt": "2026-08-26T05:58:14Z",
+  "capturedAt": "2026-08-26T17:47:18Z",
   "supersedes": {
     "capturedAt": "2026-08-25T13:58:00+01:00",
-    "reason": "Previous public manifest repeated anti-look-ahead and no-fill claims contradicted by System 3 AUD-001/AUD-007. This manifest is regenerated for the remediation SHA and keeps the insufficient-evidence result truthful."
+    "reason": "Fresh audit invalidated active historical-last-trade@1.0.0 semantics. This manifest records the corrected historical-last-trade@1.1.0 active policy identity and keeps the insufficient-evidence result truthful."
   },
   "title": "Proven replay: historical last-trade abstention",
   "status": "PUBLIC_PROVEN",
@@ -25,7 +25,10 @@
   "experiment": {
     "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
     "mode": "HISTORICAL_REPLAY",
-    "policy": "historical-last-trade@1.0.0",
+    "policy": "historical-last-trade@1.1.0",
+    "supersededPolicy": "historical-last-trade@1.0.0",
+    "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+    "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
     "riskEnvelope": "WATCH_ONLY_BOUNDED"
   },
   "replay": {
@@ -36,6 +39,7 @@
     "excludedCount": 1,
     "inputHash": "feb7e589b7ed49039c8c4cebf395ccab5d984ac19e72f3c89a6b8a13800fdb5d",
     "outputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
+    "outputHashNote": "Legacy output hash retained for the captured no-fill abstention artifact; active policy identity and public semantics are superseded to 1.1.0.",
     "frameHash": "f6abac86c73493ba2142c7ca76b9a7dbba16ddf7189ed12ef2f55e1c0f88b0a3",
     "bookReconstruction": "SOURCE_INCOMPLETE",
     "blockchainWrite": false
@@ -62,6 +66,12 @@
     "calibrationBias": null,
     "pnlStatus": "NOT_AVAILABLE",
     "pnlLabel": "not realized wallet PnL"
+  },
+  "progression": {
+    "historicalSuccessScope": "PROMOTE_TO_FORWARD_OBSERVATION",
+    "currentNextAction": "COLLECT_MORE_EVIDENCE",
+    "boundedShannonReview": "NOT_AUTHORIZED_BY_THIS_HISTORICAL_RESULT",
+    "thresholdChanged": false
   },
   "antiLookahead": {
     "decisionFrames": "STRICTLY_BEFORE_DECISION_AT",

@@ -8,6 +8,7 @@ import {
   createInteractiveExperiment,
   createPool,
   createResearchSession,
+  migrations,
   runMigrations,
   upsertPolicyVersion
 } from "@edgelab/db";
@@ -112,25 +113,11 @@ describe("DB-001 schema and recovery controls", () => {
 
   it("runs migrations idempotently and records hashes", async () => {
     const rerun = await runMigrations(pool);
-    expect(rerun).toHaveLength(9);
-    expect(rerun[0]?.applied).toBe(false);
-    expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[1]?.applied).toBe(false);
-    expect(rerun[1]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[2]?.applied).toBe(false);
-    expect(rerun[2]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[3]?.applied).toBe(false);
-    expect(rerun[3]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[4]?.applied).toBe(false);
-    expect(rerun[4]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[5]?.applied).toBe(false);
-    expect(rerun[5]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[6]?.applied).toBe(false);
-    expect(rerun[6]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[7]?.applied).toBe(false);
-    expect(rerun[7]?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(rerun[8]?.applied).toBe(false);
-    expect(rerun[8]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun).toHaveLength(migrations.length);
+    for (const migration of rerun) {
+      expect(migration.applied).toBe(false);
+      expect(migration.sha256).toMatch(/^[a-f0-9]{64}$/);
+    }
   });
 
   it("rejects same-version policy identity mutation", async () => {

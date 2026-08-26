@@ -131,7 +131,7 @@ describe("METRIC-001 persisted assessment", () => {
       }
     });
 
-    expect(result.verdict).toBe("PROMOTE");
+    expect(result.verdict).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
     expect(result.sampleSize).toBe(3);
     expect(result.exclusionCount).toBe(1);
     expect(result.pnlStatus).toBe("NOT_AVAILABLE");
@@ -153,7 +153,7 @@ describe("METRIC-001 persisted assessment", () => {
     );
     expect(rows.rows[0]?.brier_score).toBeCloseTo(0.12, 12);
     expect(rows.rows[0]?.pnl_status).toBe("NOT_AVAILABLE");
-    expect(rows.rows[0]?.verdict).toBe("PROMOTE");
+    expect(rows.rows[0]?.verdict).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
     expect(rows.rows[0]?.evaluation_version).toBe("edgelab-evaluation-v2");
     expect(rows.rows[0]?.canonical_input.rows?.map((row) => row.forecastPUp)).toContain(0.8);
     expect(rows.rows[0]?.canonical_input.rows?.every((row) => row.action === "WATCH_ONLY")).toBe(true);
@@ -216,7 +216,7 @@ describe("METRIC-001 persisted assessment", () => {
       sourceCompleteness: "COMPLETE",
       winner: "YES",
       thresholds: { minSampleSize: 30 },
-      promotionScope: "HISTORICAL_REPLAY_ONLY",
+      promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
       evaluationVersion: "edgelab-evaluation-v2"
     };
     const changes: Record<string, unknown> = {

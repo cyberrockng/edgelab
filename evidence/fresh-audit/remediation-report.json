@@ -1,0 +1,86 @@
+{
+  "evidenceId": "FRESH-AUDIT-REMEDIATION-001",
+  "capturedAt": "2026-08-26T17:47:18Z",
+  "failedAuditSha": "f597267c47cb52eb7f5c4e01a8f32237167e19cf",
+  "handoff": "FRESH_AUDIT_REMEDIATION_HANDOFF.md",
+  "findingMatrix": {
+    "S3F-001": {
+      "status": "REMEDIATED",
+      "correction": "Added historical-last-trade@1.1.0 using DreamDEX YES-term fillPriceRaw / 10^quoteDecimals without NO-tag inversion; MINT_A_PAIR and BURN_A_PAIR are eligible when source-complete.",
+      "regression": "Initial targeted test failed on the audited baseline with forecastPUp 0.5 instead of canonical 0.7 for MINT_A_PAIR.",
+      "tests": [
+        "tests/unit/policy-runtime.test.ts"
+      ]
+    },
+    "S3F-002": {
+      "status": "REMEDIATED",
+      "correction": "Policy 1.1.0 identitySource binds helper logic, fill ordering, clamp bounds, supported fill kinds, and DreamDEX data semantics.",
+      "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+      "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff"
+    },
+    "S3F-003": {
+      "status": "REMEDIATED",
+      "correction": "Lab defaults to historical-last-trade@1.1.0 and validated 15m/1h experiment intervals; server rejects superseded historical-last-trade@1.0.0 and unsupported historical neutral combinations."
+    },
+    "S3F-004": {
+      "status": "REMEDIATED_FOR_REAUDIT",
+      "correction": "Evidence Gate copy and data separate historical replay, missing forward observation, and global Shannon execution proof; historical success scope is PROMOTE_TO_FORWARD_OBSERVATION only."
+    },
+    "S3F-005": {
+      "status": "REMEDIATED",
+      "correction": "Metric engine emits PROMOTE_TO_FORWARD_OBSERVATION instead of bare PROMOTE; thresholds unchanged."
+    },
+    "S3F-006": {
+      "status": "REMEDIATED_WITH_LIMITATION",
+      "correction": "Public proven artifacts identify historical-last-trade@1.1.0 and supersede 1.0.0. The captured public sample remains a truthful no-qualifying-fill abstention with INSUFFICIENT_EVIDENCE."
+    },
+    "S3F-007": {
+      "status": "REMEDIATED",
+      "correction": "Compare separates evidence plane, linked execution/tradeability status, PnL availability, sample size, forecast metrics, and scope."
+    },
+    "S3F-008": {
+      "status": "REMEDIATED",
+      "correction": "Evidence Gate fallback no longer uses global EXG-003 counts as experiment-specific tradeability evidence."
+    },
+    "S3F-009": {
+      "status": "REMEDIATED",
+      "correction": "Experiment, replay, and comparison idempotency paths bind keys to canonical request hashes and return 409 on mismatched bodies."
+    },
+    "S3F-010": {
+      "status": "REMEDIATED",
+      "correction": "Rate limit bucket identity ignores arbitrary X-Forwarded-For values and uses Fastify request.ip."
+    },
+    "S3F-011": {
+      "status": "REMEDIATED",
+      "correction": "Replay decision frames exclude candles until source lineage is proven; candles remain context-only outside policy input."
+    },
+    "S3F-014": {
+      "status": "REMEDIATED",
+      "correction": "docs/POLICY_ADAPTERS.md documents historical-last-trade@1.1.0 semantics and 1.0.0 supersession."
+    }
+  },
+  "targetedTestResult": {
+    "command": "pnpm exec vitest run tests/unit/policy-runtime.test.ts tests/unit/replay.test.ts tests/unit/metrics.test.ts tests/integration/evaluate.test.ts tests/integration/api.test.ts",
+    "status": "PASS",
+    "testFiles": 5,
+    "tests": 47
+  },
+  "semanticChecklist": {
+    "canonicalFillPrice": "PASS",
+    "noTagNoInversion": "PASS",
+    "mintAPair": "PASS",
+    "burnAPair": "PASS",
+    "window900Seconds": "PASS",
+    "latestQualifyingFill": "PASS",
+    "sameBlockLogIndex": "PASS",
+    "futureFillExclusion": "PASS",
+    "outcomeEmbargo": "PASS",
+    "policy110Identity": "PASS",
+    "evaluationRecomputation": "PASS",
+    "thresholdUnchanged": "PASS",
+    "evidenceInvalidation": "PASS",
+    "evidenceRegeneration": "PASS",
+    "progressionScope": "PASS"
+  },
+  "redaction": "No secrets, cookies, tokens, private keys, or credentials. Public hashes and repository evidence only."
+}

@@ -112,7 +112,7 @@ test("market filters update URL state and keep source provenance visible", async
 test("strategy lab creates a persisted research-session experiment", async ({ page }) => {
   await page.goto("/lab", { waitUntil: "networkidle" });
   await page.getByLabel("Experiment name").fill(`E2E replay ${String(Date.now())}`);
-  await page.getByLabel("Strategy").selectOption("historical-last-trade@1.0.0");
+  await page.getByLabel("Strategy").selectOption("historical-last-trade@1.1.0");
   await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
   await page.getByLabel("Asset universe").selectOption("BTC");
   await page.getByLabel("Interval").selectOption("3600");

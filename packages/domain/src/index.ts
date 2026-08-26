@@ -22,7 +22,7 @@ export const EvidencePlaneSchema = z.enum([
 export type EvidencePlane = z.infer<typeof EvidencePlaneSchema>;
 
 export const VerdictSchema = z.enum([
-  "PROMOTE",
+  "PROMOTE_TO_FORWARD_OBSERVATION",
   "HOLD",
   "REJECT",
   "INSUFFICIENT_EVIDENCE"

@@ -1,9 +1,9 @@
 {
   "evidenceId": "REPLAY-002",
-  "capturedAt": "2026-08-26T05:58:14Z",
+  "capturedAt": "2026-08-26T17:47:18Z",
   "supersedes": {
     "capturedAt": "2026-08-25T11:54:48.289Z",
-    "reason": "Previous report was generated through the replay path failed by System 3 AUD-001/AUD-007. This report records corrected replay semantics and targeted remediation proof."
+    "reason": "Fresh System 3 S3F-001 found historical-last-trade@1.0.0 fill semantics invalid. This report supersedes the public active metadata with historical-last-trade@1.1.0 semantics. The captured sample remains an abstention because no qualifying pre-cutoff fill existed in its 900-second window."
   },
   "producer": "EdgeLab local execution agent",
   "task": "REPLAY-002 real historical replay vertical slice",
@@ -25,7 +25,10 @@
   "experiment": {
     "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
     "mode": "HISTORICAL_REPLAY",
-    "policy": "historical-last-trade@1.0.0",
+    "policy": "historical-last-trade@1.1.0",
+    "supersededPolicy": "historical-last-trade@1.0.0",
+    "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+    "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
     "riskEnvelope": "WATCH_ONLY_BOUNDED"
   },
   "replay": {
@@ -36,6 +39,7 @@
     "excludedCount": 1,
     "inputHash": "feb7e589b7ed49039c8c4cebf395ccab5d984ac19e72f3c89a6b8a13800fdb5d",
     "outputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
+    "outputHashNote": "Legacy output hash retained for the captured no-fill abstention artifact; active policy identity and public semantics are superseded to 1.1.0.",
     "bookReconstruction": "SOURCE_INCOMPLETE",
     "blockchainWrite": false
   },
@@ -50,7 +54,7 @@
     "pnpmCheck": "PASS - pnpm check",
     "pnpmBuild": "PASS - pnpm build",
     "pnpmTestE2E": "PASS - E2E_BASE_URL=http://localhost:3011 pnpm test:e2e",
-    "targetedAuditRemediation": "PASS - pnpm exec vitest run tests/integration/audit-remediation.test.ts tests/integration/api.test.ts tests/integration/evaluate.test.ts"
+    "targetedFreshAuditRemediation": "PASS - pnpm exec vitest run tests/unit/policy-runtime.test.ts tests/unit/replay.test.ts tests/unit/metrics.test.ts tests/integration/evaluate.test.ts tests/integration/api.test.ts"
   },
   "redaction": "public market ids and hashes only; no cookies, tokens, wallet secrets, or private credentials"
 }

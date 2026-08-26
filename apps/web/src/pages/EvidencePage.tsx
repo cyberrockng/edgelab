@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { apiErrorMessage, capturedSummary, fetchEvidenceGate, fetchProvenExperiment, minimumSample } from "../data.js";
+import { apiErrorMessage, fetchEvidenceGate, fetchProvenExperiment, minimumSample } from "../data.js";
 
 function normalizeStatus(status: string): string {
   return status.replaceAll("_", "-").replaceAll(" ", "-").toLowerCase();
@@ -25,14 +25,12 @@ export default function EvidencePage() {
     queryFn: () => fetchProvenExperiment("proven-experiment")
   });
   const evidence = evidenceQuery.data?.data.evidence ?? provenQuery.data?.data.provenExperiment.evidenceGate ?? null;
-  const summary = capturedSummary;
-  const sampleSize = summary.counts.decisions;
+  const sampleSize = 0;
   const remainingSamples = Math.max(0, minimumSample - sampleSize);
-  const chain = summary.chain;
   const placeholderRows = [
     {
       dimension: "Forecast sample",
-      status: sampleSize >= minimumSample ? "READY FOR EVALUATION" : "INSUFFICIENT",
+      status: "INSUFFICIENT",
       value: `${String(sampleSize)}/${String(minimumSample)} observations`,
       detail: `${String(remainingSamples)} additional pre-outcome observations required before promotion can be considered.`
     },
@@ -43,15 +41,15 @@ export default function EvidencePage() {
       detail: "Calibration is returned by the evaluation engine, not inferred in the browser."
     },
     {
-      dimension: "DreamDEX tradeability",
-      status: chain.tradeabilityStatus === "EVALUATED" ? "VERIFIED" : "NOT EVALUATED",
-      value: `${String(chain.submittedOrderCount)} submitted / ${String(chain.terminalOrderCount)} terminal / ${String(chain.openOrderCount)} open`,
-      detail: "Tradeability proof is separate from forecast quality and profitability."
+      dimension: "Linked DreamDEX execution proof",
+      status: "NOT AVAILABLE",
+      value: "no experiment-linked proof",
+      detail: "Global EXG-003 proof remains available on the Proof route, but it is not counted as this experiment's tradeability evidence."
     },
     {
       dimension: "Realized PnL",
       status: "NOT AVAILABLE",
-      value: `${String(chain.fillCount)} fills`,
+      value: "no experiment-linked fills",
       detail: "Replay PnL and realized wallet PnL remain separate; no fill means no realized PnL claim."
     }
   ] as const;
@@ -59,7 +57,7 @@ export default function EvidencePage() {
   const gateVerdict = evidence?.assessment.verdict.replaceAll("_", " ") ?? "AWAITING SERVER EVALUATION";
   const gateDetail =
     evidence === null
-      ? "The browser does not manufacture PROMOTE, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
+      ? "The browser does not manufacture PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
       : evidence.verdictReasons.map((reason) => reason.replaceAll("_", " ")).join(" / ");
 
   return (

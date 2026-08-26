@@ -9,14 +9,15 @@ const strategyOptions = [
     policyId: "reference-neutral",
     policyVersion: "1.0.0",
     label: "Educational neutral baseline",
-    description: "Watch-only 50 percent forecast baseline. Valid for historical replay and live shadow."
+    description: "Watch-only 50 percent forecast baseline for Shannon live-shadow workflow validation."
   },
   {
-    key: "historical-last-trade@1.0.0",
+    key: "historical-last-trade@1.1.0",
     policyId: "historical-last-trade",
-    policyVersion: "1.0.0",
+    policyVersion: "1.1.0",
     label: "Last-Trade Probability",
-    description: "Historical-only strategy using the latest verified pre-cutoff fill; abstains when no qualifying fill exists."
+    description:
+      "Historical-only strategy using DreamDEX canonical YES-term fill prices from the latest verified pre-cutoff fill."
   },
   {
     key: "reference-book-tilt@1.0.0",
@@ -28,7 +29,7 @@ const strategyOptions = [
 ] as const;
 
 function intervalValue(value: string): ExperimentCreateInput["intervalSec"] {
-  if (value === "900" || value === "3600" || value === "14400" || value === "86400") {
+  if (value === "900" || value === "3600") {
     return Number(value) as ExperimentCreateInput["intervalSec"];
   }
   return 3600;
@@ -40,7 +41,7 @@ export default function LabPage() {
   const [searchParams] = useSearchParams();
   const seededMarketId = searchParams.get("market");
   const [name, setName] = useState(seededMarketId === null ? "Judge historical replay" : "Market-selected replay");
-  const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>("reference-neutral@1.0.0");
+  const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>("historical-last-trade@1.1.0");
   const [mode, setMode] = useState<ExperimentCreateInput["mode"]>("HISTORICAL_REPLAY");
   const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>("BTC");
   const [interval, setInterval] = useState("3600");
@@ -111,7 +112,7 @@ export default function LabPage() {
                 if (next === "reference-book-tilt@1.0.0") {
                   setMode("LIVE_SHADOW");
                 }
-                if (next === "historical-last-trade@1.0.0") {
+                if (next === "historical-last-trade@1.1.0") {
                   setMode("HISTORICAL_REPLAY");
                 }
               }}
@@ -157,8 +158,6 @@ export default function LabPage() {
             >
               <option value="900">15 minutes</option>
               <option value="3600">1 hour</option>
-              <option value="14400">4 hours</option>
-              <option value="86400">24 hours</option>
             </select>
           </label>
           {mode === "HISTORICAL_REPLAY" ? (

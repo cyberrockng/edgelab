@@ -118,12 +118,12 @@ const MaxExperimentsPerSession = 20;
 const MaxReplayRunsPerSession = 20;
 const MaxComparisonsPerSession = 10;
 const ModuleDir = dirname(fileURLToPath(import.meta.url));
-const IntervalSecSchema = z.union([z.literal(900), z.literal(3600), z.literal(14400), z.literal(86400)]);
+const ExperimentIntervalSecSchema = z.union([z.literal(900), z.literal(3600)]);
 const ExperimentCreateSchema = z.object({
   name: z.string().trim().min(3).max(80),
   mode: z.enum(["HISTORICAL_REPLAY", "LIVE_SHADOW"]),
   asset: z.enum(["BTC", "ETH"]),
-  intervalSec: IntervalSecSchema,
+  intervalSec: ExperimentIntervalSecSchema,
   policyId: z.string().min(1),
   policyVersion: z.string().min(1),
   marketId: MarketIdSchema.optional(),
@@ -175,10 +175,6 @@ function requireIdempotencyKey(headers: Record<string, string | string[] | undef
 }
 
 function requestIp(request: FastifyRequest): string {
-  const forwarded = request.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0]?.trim() || request.ip;
-  }
   return request.ip;
 }
 
@@ -356,13 +352,23 @@ function policySupportedPlanes(policyId: string): readonly ("MAINNET_HISTORICAL"
   if (policyId === "reference-book-tilt") {
     return ["SHANNON_FORWARD"];
   }
+  if (policyId === "reference-neutral") {
+    return ["SHANNON_FORWARD"];
+  }
   if (policyId === "historical-last-trade") {
     return ["MAINNET_HISTORICAL"];
   }
   return ["MAINNET_HISTORICAL", "SHANNON_FORWARD"];
 }
 
-function policySupportedInMode(policyId: string, mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW"): boolean {
+function policySupportedInMode(
+  policyId: string,
+  version: string,
+  mode: "HISTORICAL_REPLAY" | "LIVE_SHADOW"
+): boolean {
+  if (policyId === "historical-last-trade" && version === "1.0.0") {
+    return false;
+  }
   const requiredPlane = mode === "HISTORICAL_REPLAY" ? "MAINNET_HISTORICAL" : "SHANNON_FORWARD";
   return policySupportedPlanes(policyId).includes(requiredPlane);
 }
@@ -392,7 +398,9 @@ function policyCatalog(
     ...createHistoricalPolicyManifest(adapter),
     supportedPlanes: policySupportedPlanes(adapter.policyId),
     description:
-      "Uses only the latest verified pre-cutoff fill in the last 15 minutes; abstains when no qualifying fill exists."
+      adapter.version === "1.0.0"
+        ? "Superseded historical identity retained for reproducibility only. New evidence must use 1.1.0."
+        : "Uses only the latest verified pre-cutoff DreamDEX YES-term fill in the last 15 minutes; abstains when no qualifying fill exists."
   }));
   return [...livePolicies, ...replayPolicies];
 }
@@ -949,6 +957,7 @@ interface AssessmentSummaryRow {
   readonly brier_score: number | null;
   readonly calibration_bias: number | null;
   readonly neutral_baseline_delta: number | null;
+  readonly execution_metrics: Record<string, unknown>;
   readonly pnl_status: string;
   readonly evidence_plane: string;
   readonly promotion_scope: string;
@@ -974,6 +983,10 @@ function serializeAssessmentSummary(row: AssessmentSummaryRow) {
     brierScore: row.brier_score,
     calibrationBias: row.calibration_bias,
     neutralBaselineDelta: row.neutral_baseline_delta,
+    tradeabilityStatus:
+      typeof row.execution_metrics.tradeabilityStatus === "string"
+        ? row.execution_metrics.tradeabilityStatus
+        : "NOT_EVALUATED",
     pnlStatus: row.pnl_status,
     evidencePlane: row.evidence_plane,
     promotionScope: row.promotion_scope,
@@ -999,6 +1012,7 @@ async function loadOwnedAssessmentSummaries(
         mr.brier_score,
         mr.calibration_bias,
         mr.neutral_baseline_delta,
+        mr.execution_metrics,
         mr.pnl_status,
         mr.evidence_plane,
         mr.promotion_scope,
@@ -1101,8 +1115,8 @@ function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; re
       missingEvidence: rows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
       verdictReasons: input.row.reason_codes,
       nextPermittedAction:
-        input.row.verdict === "PROMOTE"
-          ? "PROMOTION_REVIEW_REQUIRED"
+        input.row.verdict === "PROMOTE_TO_FORWARD_OBSERVATION"
+          ? "START_FORWARD_OBSERVATION"
           : input.row.verdict === "INSUFFICIENT_EVIDENCE"
             ? "COLLECT_MORE_EVIDENCE"
             : "KEEP_IN_RESEARCH",
@@ -1285,7 +1299,7 @@ function provenGateRows(input: {
     {
       dimension: "Tradeability / execution quality",
       status: "NOT_AVAILABLE",
-      value: "HISTORICAL_REPLAY_ONLY",
+      value: "PROMOTE_TO_FORWARD_OBSERVATION",
       detail: "Historical replay does not prove live fillability or realized execution quality."
     },
     {
@@ -1344,7 +1358,7 @@ function buildProvenExperiment() {
     pnlStatus,
     evidencePlane: "MAINNET_HISTORICAL",
     replayRunId: null,
-    promotionScope: "HISTORICAL_REPLAY_ONLY",
+    promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
     createdAt: stringField(evalReport, "capturedAt")
   };
   const gateRows = provenGateRows({
@@ -1695,7 +1709,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
 
   app.get("/api/v1/invariants", () => ({
     product: "forward-testing-live-shadow-recent-window-dreamdex-lab",
-    verdicts: ["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"],
+    verdicts: ["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"],
     boundaries: {
       serviceSignsTransactions: false,
       historicalClobBacktest: false,
@@ -1986,7 +2000,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (policy === undefined) {
         return await v2Error(reply, 400, "POLICY_VERSION_UNSUPPORTED", "Selected policy version is not supported", false, request.id);
       }
-      if (!policySupportedInMode(policy.policyId, parsed.data.mode)) {
+      if (!policySupportedInMode(policy.policyId, policy.version, parsed.data.mode)) {
         return await v2Error(
           reply,
           400,
@@ -2044,10 +2058,17 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         historicalBookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
         pnlStatus: "NOT_AVAILABLE"
       };
+      const createIdempotencyHash = sha256(
+        stableJson({
+          route: "POST /api/v2/experiments",
+          body: parsed.data
+        })
+      );
       const created = await createInteractiveExperiment(pool, {
         sessionId: session.id,
         name: parsed.data.name,
         createIdempotencyKey: idempotencyKey,
+        createIdempotencyHash,
         configuration: {
           mode: parsed.data.mode,
           assets: [parsed.data.asset],
@@ -2096,6 +2117,16 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         )
       );
     } catch (error) {
+      if (error instanceof Error && error.message === "IDEMPOTENCY_BODY_MISMATCH") {
+        return await v2Error(
+          reply,
+          409,
+          "IDEMPOTENCY_BODY_MISMATCH",
+          "Idempotency-Key was already used with a different canonical request body",
+          false,
+          request.id
+        );
+      }
       return v2Error(
         reply,
         503,
@@ -2343,6 +2374,13 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         queryVersion: ReplayQueryVersion,
         inputHash,
         idempotencyKey,
+        idempotencyHash: sha256(
+          stableJson({
+            route: "POST /api/v2/experiments/:experimentId/replay",
+            experimentId: experiment.experimentId,
+            inputHash
+          })
+        ),
         capability: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
         checkpoints: {
           sourcePlane: "MAINNET_HISTORICAL",
@@ -2370,6 +2408,16 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         }
       ));
     } catch (error) {
+      if (error instanceof Error && error.message === "IDEMPOTENCY_BODY_MISMATCH") {
+        return await v2Error(
+          reply,
+          409,
+          "IDEMPOTENCY_BODY_MISMATCH",
+          "Idempotency-Key was already used with a different canonical request body",
+          false,
+          request.id
+        );
+      }
       return v2Error(
         reply,
         503,
@@ -2574,7 +2622,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         policyVersionId: policy.policyVersionId,
         replayRunId: replay.id,
         evidencePlane: "MAINNET_HISTORICAL",
-        promotionScope: "HISTORICAL_REPLAY_ONLY",
+        promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
         ruleVersion: "eval-002-historical-replay-v1",
         provenance: {
           replayRunId: replay.id,
@@ -2831,26 +2879,35 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       let comparisonId: string;
       try {
         await client.query("BEGIN");
-        const existing = await client.query<{ id: string }>(
+        const idempotencyHash = sha256(
+          stableJson({
+            route: "POST /api/v2/comparisons",
+            body: parsed.data
+          })
+        );
+        const existing = await client.query<{ readonly id: string; readonly idempotency_hash: string | null }>(
           `
-            SELECT id
+            SELECT id, idempotency_hash
             FROM comparison_sets
             WHERE created_by_session_id = $1
-              AND name = $2
+              AND idempotency_key = $2
             ORDER BY created_at DESC
             LIMIT 1
           `,
-          [session.id, `${parsed.data.name}#${idempotencyKey}`]
+          [session.id, idempotencyKey]
         );
         const existingRow = existing.rows[0];
+        if (existingRow !== undefined && existingRow.idempotency_hash !== null && existingRow.idempotency_hash !== idempotencyHash) {
+          throw new Error("IDEMPOTENCY_BODY_MISMATCH");
+        }
         if (existingRow === undefined) {
           const comparison = await client.query<{ id: string }>(
             `
-              INSERT INTO comparison_sets(created_by_session_id, name)
-              VALUES ($1, $2)
+              INSERT INTO comparison_sets(created_by_session_id, name, idempotency_key, idempotency_hash)
+              VALUES ($1, $2, $3, $4)
               RETURNING id
             `,
-            [session.id, `${parsed.data.name}#${idempotencyKey}`]
+            [session.id, parsed.data.name, idempotencyKey, idempotencyHash]
           );
           comparisonId = comparison.rows[0]?.id ?? "";
           for (const [displayOrder, assessmentId] of parsed.data.assessmentIds.entries()) {
@@ -2868,6 +2925,16 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
+        if (error instanceof Error && error.message === "IDEMPOTENCY_BODY_MISMATCH") {
+          return await v2Error(
+            reply,
+            409,
+            "IDEMPOTENCY_BODY_MISMATCH",
+            "Idempotency-Key was already used with a different canonical request body",
+            false,
+            request.id
+          );
+        }
         throw error;
       } finally {
         client.release();

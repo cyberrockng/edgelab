@@ -86,6 +86,14 @@ function historicalFill(overrides: Partial<HistoricalFillEvidence> = {}): Histor
   };
 }
 
+function historicalPolicy(version: string) {
+  const policy = historicalPolicies.find((adapter) => adapter.version === version);
+  if (policy === undefined) {
+    throw new Error(`Missing historical policy ${version}`);
+  }
+  return policy;
+}
+
 describe("POLICY-001 immutable policy runtime", () => {
   it("creates deterministic immutable manifests for compile-time policies", () => {
     const first = createPolicyManifest(referencePolicies[0]);
@@ -168,16 +176,35 @@ describe("POLICY-001 immutable policy runtime", () => {
   });
 
   it("publishes deterministic historical policy manifests", () => {
-    const manifest = createHistoricalPolicyManifest(historicalPolicies[0]);
-    expect(manifest).toEqual(createHistoricalPolicyManifest(historicalPolicies[0]));
-    expect(manifest).toMatchObject({
+    const v1Manifest = createHistoricalPolicyManifest(historicalPolicy("1.0.0"));
+    const v11Manifest = createHistoricalPolicyManifest(historicalPolicy("1.1.0"));
+    expect(v1Manifest).toEqual(createHistoricalPolicyManifest(historicalPolicy("1.0.0")));
+    expect(v1Manifest).toMatchObject({
       policyId: "historical-last-trade",
       version: "1.0.0",
       label: "Last-Trade Probability"
     });
-    expect(manifest.sourceHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(createHistoricalPolicyRegistry(historicalPolicies).get("historical-last-trade@1.0.0")).toEqual(
-      manifest
+    expect(v11Manifest).toMatchObject({
+      policyId: "historical-last-trade",
+      version: "1.1.0",
+      label: "Last-Trade Probability"
+    });
+    expect(v1Manifest.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(v11Manifest.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(v11Manifest.sourceHash).not.toBe(v1Manifest.sourceHash);
+    const registry = createHistoricalPolicyRegistry(historicalPolicies);
+    expect(registry.get("historical-last-trade@1.0.0")).toEqual(v1Manifest);
+    expect(registry.get("historical-last-trade@1.1.0")).toEqual(v11Manifest);
+  });
+
+  it("changes corrected historical policy identity when behavior-defining helper semantics change", () => {
+    const original = historicalPolicy("1.1.0");
+    const changed = {
+      ...original,
+      identitySource: `${original.identitySource ?? ""}\nhelper mutation: compareHistoricalFills reverses log order`
+    };
+    expect(createHistoricalPolicyManifest(changed).sourceHash).not.toBe(
+      createHistoricalPolicyManifest(original).sourceHash
     );
   });
 
@@ -192,7 +219,7 @@ describe("POLICY-001 immutable policy runtime", () => {
       orders: [],
       fills: [historicalFill(), historicalFill({ id: "future", blockNumber: "101", fillPriceRaw: "990000" })]
     });
-    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.0.0"), {
       frame: frameResult.frame,
       frameHash: frameResult.frameHash
     });
@@ -223,7 +250,7 @@ describe("POLICY-001 immutable policy runtime", () => {
         })
       ]
     });
-    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.0.0"), {
       frame: frameResult.frame,
       frameHash: frameResult.frameHash
     });
@@ -231,6 +258,107 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(decision.forecastPUp).toBe(0.51);
     expect(decision.action).toBe("WATCH_ONLY");
     expect(decision.reasonCodes).toContain("NO_FILL_PRICE_INVERTED");
+  });
+
+  it("uses DreamDEX canonical YES probability for a NO-tagged mint-pair fill in v1.1.0", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({
+          fillPriceRaw: "700000",
+          kind: "MINT_A_PAIR",
+          makerSide: "BUY_YES",
+          takerSide: "BUY_NO"
+        })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.7);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("DREAMDEX_YES_TERM_PRICE");
+    expect(decision.reasonCodes).toContain("NO_TAG_NOT_INVERTED");
+    expect(decision.reasonCodes).toContain("MINT_PAIR_ELIGIBLE");
+  });
+
+  it("uses DreamDEX canonical YES probability for direct YES and direct NO fills in v1.1.0", () => {
+    for (const fill of [
+      historicalFill({ fillPriceRaw: "700000", kind: "DIRECT_YES", makerSide: "BUY_YES", takerSide: "SELL_YES" }),
+      historicalFill({ fillPriceRaw: "700000", kind: "DIRECT_NO", makerSide: "BUY_NO", takerSide: "SELL_NO" })
+    ]) {
+      const frameResult = buildHistoricalDecisionFrame({
+        market: historicalMarket,
+        decisionAt: "2026-08-24T10:17:00.000Z",
+        cutoffBlock: "100",
+        quoteDecimals: 6,
+        openingPrice: null,
+        candles: [],
+        orders: [],
+        fills: [fill]
+      });
+      const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+        frame: frameResult.frame,
+        frameHash: frameResult.frameHash
+      });
+
+      expect(decision.forecastPUp).toBe(0.7);
+      expect(decision.action).toBe("WATCH_ONLY");
+      expect(decision.reasonCodes).toContain("DREAMDEX_YES_TERM_PRICE");
+      expect(decision.reasonCodes).toContain("NO_TAG_NOT_INVERTED");
+    }
+  });
+
+  it("accepts BURN_A_PAIR fills when source and cutoff data are complete in v1.1.0", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [historicalFill({ fillPriceRaw: "640000", kind: "BURN_A_PAIR", makerSide: "SELL_YES", takerSide: "SELL_NO" })]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.64);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("DREAMDEX_YES_TERM_PRICE");
+  });
+
+  it("selects the deterministic latest qualifying pre-cutoff fill in v1.1.0", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({ id: "unsupported-late", timestampSeconds: 1787566510, kind: "UNKNOWN", fillPriceRaw: "900000" }),
+        historicalFill({ id: "eligible-earlier", timestampSeconds: 1787566500, kind: "DIRECT_NO", fillPriceRaw: "610000" })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.61);
+    expect(decision.action).toBe("WATCH_ONLY");
   });
 
   it("abstains when a historical fill side cannot be mapped to YES or NO", () => {
@@ -250,7 +378,7 @@ describe("POLICY-001 immutable policy runtime", () => {
         })
       ]
     });
-    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.0.0"), {
       frame: frameResult.frame,
       frameHash: frameResult.frameHash
     });
@@ -271,7 +399,7 @@ describe("POLICY-001 immutable policy runtime", () => {
       orders: [],
       fills: []
     });
-    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.0.0"), {
       frame: frameResult.frame,
       frameHash: frameResult.frameHash
     });
@@ -295,11 +423,55 @@ describe("POLICY-001 immutable policy runtime", () => {
         historicalFill({ id: "later-tx", transactionIndex: "4", logIndex: "1", fillPriceRaw: "620000" })
       ]
     });
-    const decision = evaluateHistoricalPolicy(historicalPolicies[0], {
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.0.0"), {
       frame: frameResult.frame,
       frameHash: frameResult.frameHash
     });
 
     expect(decision.forecastPUp).toBe(0.62);
+  });
+
+  it("excludes post-cutoff fills and abstains when no v1.1.0 fill qualifies", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [historicalFill({ id: "future", blockNumber: "101", fillPriceRaw: "880000" })]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(frameResult.frame.exclusions).toContain("FILL_AFTER_CUTOFF");
+    expect(decision.forecastPUp).toBe(0.5);
+    expect(decision.action).toBe("ABSTAIN");
+    expect(decision.reasonCodes).toContain("NO_PRE_CUTOFF_FILL");
+  });
+
+  it("orders same-block v1.1.0 fills by transaction index and log index", () => {
+    const frameResult = buildHistoricalDecisionFrame({
+      market: historicalMarket,
+      decisionAt: "2026-08-24T10:17:00.000Z",
+      cutoffBlock: "100",
+      quoteDecimals: 6,
+      openingPrice: null,
+      candles: [],
+      orders: [],
+      fills: [
+        historicalFill({ id: "earlier-log", transactionIndex: "4", logIndex: "1", fillPriceRaw: "510000" }),
+        historicalFill({ id: "later-log", transactionIndex: "4", logIndex: "2", fillPriceRaw: "630000" })
+      ]
+    });
+    const decision = evaluateHistoricalPolicy(historicalPolicy("1.1.0"), {
+      frame: frameResult.frame,
+      frameHash: frameResult.frameHash
+    });
+
+    expect(decision.forecastPUp).toBe(0.63);
   });
 });

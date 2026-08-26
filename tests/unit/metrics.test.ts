@@ -37,7 +37,7 @@ describe("METRIC-001 deterministic metric math", () => {
     expect(assessment.metrics.executionMetrics.tradeabilityStatus).toBe("NOT_EVALUATED");
   });
 
-  it("returns deterministic promote, hold, and reject verdicts from thresholds", () => {
+  it("returns deterministic scoped promote, hold, and reject verdicts from thresholds", () => {
     const thresholds = {
       minSampleSize: 2,
       promoteMaxBrierScore: 0.2,
@@ -53,7 +53,7 @@ describe("METRIC-001 deterministic metric math", () => {
         ],
         { thresholds }
       ).verdict
-    ).toBe("PROMOTE");
+    ).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
 
     expect(
       assessEvidence(

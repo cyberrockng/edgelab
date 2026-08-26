@@ -10,8 +10,8 @@ export default function HomePage() {
           <p className="eyebrow">DreamDEX strategy qualification lab</p>
           <h1>Test a DreamDEX strategy before putting capital behind it.</h1>
           <p>
-            EdgeLab combines authentic DreamDEX historical evidence, forward/live-shadow validation,
-            and bounded Shannon execution proof to decide whether a strategy deserves promotion.
+            EdgeLab uses authentic DreamDEX historical evidence, forward/live-shadow validation,
+            and bounded Shannon execution proof to decide whether a strategy may advance through a scoped evidence gate.
           </p>
           <div className="actionRow">
             <Link className="primaryAction large" to="/lab">
@@ -43,7 +43,7 @@ export default function HomePage() {
           </div>
           <div className="modelGate">
             <span>Evidence Gate</span>
-            <strong>PROMOTE / HOLD / REJECT / INSUFFICIENT</strong>
+            <strong>PROMOTE TO FORWARD / HOLD / REJECT / INSUFFICIENT</strong>
           </div>
         </div>
       </section>
@@ -74,9 +74,9 @@ export default function HomePage() {
         <span className="label">Integrity boundary</span>
         <h2>Insufficient evidence is a protection mechanism, not the homepage outcome.</h2>
         <p>
-          EdgeLab refuses promotion when forecast quality, tradeability, risk, settlement evidence,
-          or PnL support is missing. The Evidence Gate route shows that reasoning after a real
-          experiment has an evaluation result.
+          Historical replay can only promote a strategy to forward observation. Bounded Shannon
+          review remains separate, conditional, and human-authorized. The Evidence Gate route
+          shows that reasoning after a real experiment has an evaluation result.
         </p>
       </section>
     </div>

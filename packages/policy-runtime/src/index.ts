@@ -34,6 +34,7 @@ export interface PolicyAdapter {
   readonly adapterName: string;
   readonly parameters?: Readonly<Record<string, unknown>>;
   readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  readonly identitySource?: string;
   evaluate(input: PolicyEvaluationInput): Omit<
     PolicyDecision,
     "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
@@ -47,6 +48,7 @@ export interface HistoricalPolicyAdapter {
   readonly adapterName: string;
   readonly parameters?: Readonly<Record<string, unknown>>;
   readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  readonly identitySource?: string;
   evaluate(input: HistoricalPolicyEvaluationInput): Omit<
     PolicyDecision,
     "policyId" | "policyVersion" | "decidedAt" | "snapshotHash" | "policyHash"
@@ -88,11 +90,13 @@ interface PolicyIdentityInput {
   readonly adapterName: string;
   readonly parameters?: Readonly<Record<string, unknown>>;
   readonly supportedPlanes?: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  readonly identitySource?: string;
   readonly evaluate: { toString(): string };
 }
 
-function implementationHash(adapter: Pick<PolicyIdentityInput, "evaluate">): string {
-  return createHash("sha256").update(adapter.evaluate.toString().replace(/\s+/g, " ").trim()).digest("hex");
+function implementationHash(adapter: Pick<PolicyIdentityInput, "evaluate" | "identitySource">): string {
+  const source = adapter.identitySource ?? adapter.evaluate.toString();
+  return createHash("sha256").update(source.replace(/\s+/g, " ").trim()).digest("hex");
 }
 
 export function hashManifest(
@@ -263,6 +267,75 @@ function normalizeHistoricalFillOutcome(fill: HistoricalDecisionFrame["fills"][n
   return yesTagged ? "YES" : "NO";
 }
 
+const supportedDreamDexBinaryFillKinds = new Set([
+  "DIRECT_YES",
+  "DIRECT_NO",
+  "MINT_A_PAIR",
+  "BURN_A_PAIR"
+]);
+
+function isSupportedDreamDexBinaryFillKind(fill: HistoricalDecisionFrame["fills"][number]): boolean {
+  return typeof fill.kind === "string" && supportedDreamDexBinaryFillKinds.has(fill.kind.toUpperCase());
+}
+
+function isPositiveRawQuantity(quantityRaw: string): boolean {
+  try {
+    return BigInt(quantityRaw) > 0n;
+  } catch {
+    return false;
+  }
+}
+
+function canonicalDreamDexYesProbability(priceRaw: string, quoteDecimals: number): number {
+  if (!/^[0-9]+$/.test(priceRaw)) {
+    throw new PolicyRuntimeError("Historical fill price is not an unsigned integer string", "INVALID_PRICE");
+  }
+  return scaledPriceToProbability(priceRaw, quoteDecimals);
+}
+
+function eligibleDreamDexBinaryFill(
+  fill: HistoricalDecisionFrame["fills"][number]
+): { readonly eligible: true } | { readonly eligible: false; readonly reasonCode: string } {
+  if (!isSupportedDreamDexBinaryFillKind(fill)) {
+    return { eligible: false, reasonCode: "FILL_KIND_UNSUPPORTED_BY_SOURCE" };
+  }
+  if (!isPositiveRawQuantity(fill.quantityRaw)) {
+    return { eligible: false, reasonCode: "FILL_SOURCE_INCOMPLETE" };
+  }
+  if (!/^[0-9]+$/.test(fill.fillPriceRaw)) {
+    return { eligible: false, reasonCode: "INVALID_PRICE" };
+  }
+  if (!/^[0-9]+$/.test(fill.blockNumber) || !/^[0-9]+$/.test(fill.logIndex) || fill.id.trim() === "") {
+    return { eligible: false, reasonCode: "FILL_ORDERING_INCOMPLETE" };
+  }
+  return { eligible: true };
+}
+
+const historicalLastTradeV11IdentitySource = canonicalJson({
+  policyId: "historical-last-trade",
+  version: "1.1.0",
+  dataSemantics: {
+    dreamDexBinaryFillPrice: "YES_TERM_PROBABILITY",
+    canonicalFormula: "forecastPUp = clamp(fillPriceRaw / 10^quoteDecimals, 0.05, 0.95)",
+    noTagHandling: "NO tags are display/account context only; do not invert market-level YES/UP forecasts",
+    supportedFillKinds: [...supportedDreamDexBinaryFillKinds].sort()
+  },
+  helpers: {
+    canonicalDreamDexYesProbability: canonicalDreamDexYesProbability.toString(),
+    compareHistoricalFills: compareHistoricalFills.toString(),
+    eligibleDreamDexBinaryFill: eligibleDreamDexBinaryFill.toString(),
+    isPositiveRawQuantity: isPositiveRawQuantity.toString(),
+    isSupportedDreamDexBinaryFillKind: isSupportedDreamDexBinaryFillKind.toString(),
+    scaledPriceToProbability: scaledPriceToProbability.toString()
+  },
+  parameters: {
+    fillOrder: ["timestampSeconds", "blockNumber", "transactionIndex", "logIndex", "id"],
+    lookbackSeconds: 900,
+    probabilityClamp: [0.05, 0.95],
+    targetOutcome: "YES_UP"
+  }
+});
+
 export const referencePolicies: readonly PolicyAdapter[] = [
   {
     policyId: "reference-neutral",
@@ -346,6 +419,69 @@ export const historicalPolicies: readonly HistoricalPolicyAdapter[] = [
           "PRE_CUTOFF_FILL",
           fillOutcome === "YES" ? "YES_FILL_PRICE" : "NO_FILL_PRICE_INVERTED"
         ]
+      };
+    }
+  },
+  {
+    policyId: "historical-last-trade",
+    version: "1.1.0",
+    label: "Last-Trade Probability",
+    adapterName: "historicalLastTradeProbabilityPolicy",
+    identitySource: historicalLastTradeV11IdentitySource,
+    parameters: {
+      lookbackSeconds: 900,
+      targetOutcome: "YES_UP",
+      priceScale: "DreamDEX YES-term fillPriceRaw / 10^quoteDecimals",
+      probabilityClamp: [0.05, 0.95],
+      fillOrder: ["timestampSeconds", "blockNumber", "transactionIndex", "logIndex", "id"],
+      dataSemantics: "DreamDEX binary fill prices are canonical market-level YES/UP probabilities",
+      supersedes: "historical-last-trade@1.0.0"
+    },
+    supportedPlanes: ["MAINNET_HISTORICAL"],
+    evaluate(input) {
+      const windowStartSeconds = Math.max(
+        input.frame.market.tradingStartSeconds,
+        input.frame.clock.decisionAtSeconds - 900
+      );
+      const candidates: HistoricalDecisionFrame["fills"] = [];
+      const exclusionReasons = new Set<string>();
+      for (const fill of input.frame.fills) {
+        if (fill.timestampSeconds < windowStartSeconds) {
+          continue;
+        }
+        const eligible = eligibleDreamDexBinaryFill(fill);
+        if (eligible.eligible) {
+          candidates.push(fill);
+        } else {
+          exclusionReasons.add(eligible.reasonCode);
+        }
+      }
+      const latestFill = candidates.sort(compareHistoricalFills).at(-1);
+      if (latestFill === undefined) {
+        return {
+          forecastPUp: 0.5,
+          action: "ABSTAIN",
+          reasonCodes: [
+            "HISTORICAL_LAST_TRADE",
+            input.frame.fills.length === 0 ? "NO_PRE_CUTOFF_FILL" : "NO_QUALIFYING_PRE_CUTOFF_FILL",
+            ...[...exclusionReasons].sort()
+          ]
+        };
+      }
+      const rawProbability = canonicalDreamDexYesProbability(
+        latestFill.fillPriceRaw,
+        input.frame.market.quoteDecimals
+      );
+      return {
+        forecastPUp: rawProbability,
+        action: "WATCH_ONLY",
+        reasonCodes: [
+          "HISTORICAL_LAST_TRADE",
+          "PRE_CUTOFF_FILL",
+          "DREAMDEX_YES_TERM_PRICE",
+          "NO_TAG_NOT_INVERTED",
+          "MINT_PAIR_ELIGIBLE"
+        ].filter((code) => code !== "MINT_PAIR_ELIGIBLE" || latestFill.kind?.toUpperCase() === "MINT_A_PAIR")
       };
     }
   }

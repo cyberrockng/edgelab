@@ -448,7 +448,7 @@ export default function ExperimentWorkspacePage() {
               <div className="sectionHeader">
                 <div>
                   <p className="eyebrow">Evaluation</p>
-                  <h2>{assessment === null ? "NOT EVALUATED" : assessment.verdict.replace("_", " ")}</h2>
+                  <h2>{assessment === null ? "NOT EVALUATED" : assessment.verdict.replaceAll("_", " ")}</h2>
                 </div>
                 <span className="statusPill">PnL: {assessment?.pnlStatus ?? "NOT_AVAILABLE"}</span>
               </div>

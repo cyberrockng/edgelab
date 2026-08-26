@@ -132,7 +132,7 @@ const V2ProvenExperimentSchema = z.object({
         reasonCodes: z.array(z.string())
       }),
       assessment: z.object({
-        verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+        verdict: z.enum(["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
         sampleSize: z.number(),
         pnlStatus: z.literal("NOT_AVAILABLE")
       }),
@@ -235,7 +235,7 @@ const V2ReplaySchema = z.object({
 const V2AssessmentSchema = z.object({
   data: z.object({
     assessment: z.object({
-      verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+      verdict: z.enum(["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
       reasonCodes: z.array(z.string()),
       sampleSize: z.number(),
       exclusionCount: z.number(),
@@ -257,7 +257,7 @@ const V2EvidenceGateSchema = z.object({
         experimentId: z.string().uuid(),
         assessment: z.object({
           assessmentId: z.string().uuid(),
-          verdict: z.enum(["PROMOTE", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+          verdict: z.enum(["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
           sampleSize: z.number(),
           evidencePlane: z.string(),
           promotionScope: z.string(),
@@ -712,6 +712,9 @@ describe("API-001 server contracts", () => {
     expect(policiesBody.data.policies).toContainEqual(
       expect.objectContaining({ policyId: "historical-last-trade", version: "1.0.0" })
     );
+    expect(policiesBody.data.policies).toContainEqual(
+      expect.objectContaining({ policyId: "historical-last-trade", version: "1.1.0" })
+    );
   });
 
   it("serves EXG-003 proof as Shannon execution evidence without fill or cancelled/profit drift", async () => {
@@ -878,8 +881,8 @@ describe("API-001 server contracts", () => {
       mode: "HISTORICAL_REPLAY",
       asset: "BTC",
       intervalSec: 3600,
-      policyId: "reference-neutral",
-      policyVersion: "1.0.0",
+      policyId: "historical-last-trade",
+      policyVersion: "1.1.0",
       marketId: apiMarketId,
       riskEnvelopeId: "WATCH_ONLY_BOUNDED"
     };
@@ -903,6 +906,16 @@ describe("API-001 server contracts", () => {
       },
       payload
     });
+    const mismatch = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-judge-btc"
+      },
+      payload: { ...payload, name: "Changed body replay" }
+    });
     const createBody = V2ExperimentSchema.parse(create.json());
     const duplicateBody = V2ExperimentSchema.parse(duplicate.json());
     const detail = await app.inject({
@@ -925,13 +938,15 @@ describe("API-001 server contracts", () => {
     expect(createBody.data.experiment.configuration.config.historicalBookReconstruction).toBe("SOURCE_INCOMPLETE");
     expect(createBody.data.experiment.configuration.config.pnlStatus).toBe("NOT_AVAILABLE");
     expect(createBody.data.experiment.policies[0]).toMatchObject({
-      policyId: "reference-neutral",
-      version: "1.0.0",
+      policyId: "historical-last-trade",
+      version: "1.1.0",
       role: "CANDIDATE"
     });
     expect(duplicate.statusCode).toBe(200);
     expect(duplicateBody.data.idempotentReplay).toBe(true);
     expect(duplicateBody.data.experiment.experimentId).toBe(createBody.data.experiment.experimentId);
+    expect(mismatch.statusCode).toBe(409);
+    expect(mismatch.json()).toMatchObject({ error: { code: "IDEMPOTENCY_BODY_MISMATCH" } });
     expect(detail.statusCode).toBe(200);
     expect(V2ExperimentSchema.parse(detail.json()).data.experiment.experimentId).toBe(
       createBody.data.experiment.experimentId
@@ -943,7 +958,7 @@ describe("API-001 server contracts", () => {
     const app = buildApp(config, { ...v2Deps(), pool });
     const policies = await app.inject({ method: "GET", url: "/api/v2/policies" });
     const policyRow = V2PoliciesSchema.parse(policies.json()).data.policies.find(
-      (entry) => entry.policyId === "historical-last-trade" && entry.version === "1.0.0"
+      (entry) => entry.policyId === "historical-last-trade" && entry.version === "1.1.0"
     );
     if (policyRow === undefined) {
       throw new Error("historical-last-trade policy missing from test catalog");
@@ -1000,7 +1015,7 @@ describe("API-001 server contracts", () => {
         asset: "BTC",
         intervalSec: 3600,
         policyId: "historical-last-trade",
-        policyVersion: "1.0.0",
+        policyVersion: "1.1.0",
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
     });
@@ -1040,7 +1055,7 @@ describe("API-001 server contracts", () => {
         asset: "BTC",
         intervalSec: 3600,
         policyId: "historical-last-trade",
-        policyVersion: "1.0.0",
+        policyVersion: "1.1.0",
         marketId: apiMarketId,
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
@@ -1257,7 +1272,7 @@ describe("API-001 server contracts", () => {
           asset: "BTC",
           intervalSec: 3600,
           policyId: "historical-last-trade",
-          policyVersion: "1.0.0",
+          policyVersion: "1.1.0",
           marketId: apiMarketId,
           riskEnvelopeId: "WATCH_ONLY_BOUNDED"
         }
@@ -1323,6 +1338,32 @@ describe("API-001 server contracts", () => {
         assessmentIds: [firstAssessmentId, secondAssessmentId]
       }
     });
+    const compareDuplicate = await app.inject({
+      method: "POST",
+      url: "/api/v2/comparisons",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": listBody.data.csrfToken ?? sessionBody.data.csrfToken,
+        "idempotency-key": "api-save-comparison-001"
+      },
+      payload: {
+        name: "API comparison",
+        assessmentIds: [firstAssessmentId, secondAssessmentId]
+      }
+    });
+    const compareMismatch = await app.inject({
+      method: "POST",
+      url: "/api/v2/comparisons",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": listBody.data.csrfToken ?? sessionBody.data.csrfToken,
+        "idempotency-key": "api-save-comparison-001"
+      },
+      payload: {
+        name: "API comparison changed",
+        assessmentIds: [firstAssessmentId, secondAssessmentId]
+      }
+    });
     const comparisonBody = V2ComparisonSchema.parse(compare.json());
     const comparisonList = await app.inject({
       method: "GET",
@@ -1341,6 +1382,12 @@ describe("API-001 server contracts", () => {
       expect.arrayContaining([firstAssessmentId, secondAssessmentId])
     );
     expect(compare.statusCode).toBe(200);
+    expect(compareDuplicate.statusCode).toBe(200);
+    expect(V2ComparisonSchema.parse(compareDuplicate.json()).data.comparison.comparisonId).toBe(
+      comparisonBody.data.comparison.comparisonId
+    );
+    expect(compareMismatch.statusCode).toBe(409);
+    expect(compareMismatch.json()).toMatchObject({ error: { code: "IDEMPOTENCY_BODY_MISMATCH" } });
     expect(comparisonBody.data.comparison.name).toBe("API comparison");
     expect(comparisonBody.data.comparison.items.map((item) => item.assessmentId)).toEqual([
       firstAssessmentId,
@@ -1380,8 +1427,8 @@ describe("API-001 server contracts", () => {
         mode: "HISTORICAL_REPLAY",
         asset: "BTC",
         intervalSec: 3600,
-        policyId: "reference-neutral",
-        policyVersion: "1.0.0",
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
     });
@@ -1407,8 +1454,8 @@ describe("API-001 server contracts", () => {
         mode: "HISTORICAL_REPLAY",
         asset: "BTC",
         intervalSec: 3600,
-        policyId: "reference-neutral",
-        policyVersion: "1.0.0",
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
     });
@@ -1448,6 +1495,24 @@ describe("API-001 server contracts", () => {
     });
   });
 
+  it("does not let spoofed X-Forwarded-For values bypass public write rate limits", async () => {
+    const app = buildApp(config, { consumedNonces: new Set(), signatureVerifier: verifier });
+    let finalResponseStatus = 0;
+    for (let index = 0; index < 61; index += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/challenge",
+        remoteAddress: "198.51.100.10",
+        headers: { "x-forwarded-for": `203.0.113.${String(index)}` },
+        payload: { purpose: "login", account }
+      });
+      finalResponseStatus = response.statusCode;
+    }
+    await app.close();
+
+    expect(finalResponseStatus).toBe(429);
+  });
+
   it("enforces the per-session experiment quota", async () => {
     const app = buildApp(config, { ...v2Deps(), pool });
     const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
@@ -1467,8 +1532,8 @@ describe("API-001 server contracts", () => {
           mode: "HISTORICAL_REPLAY",
           asset: "BTC",
           intervalSec: 3600,
-          policyId: "reference-neutral",
-          policyVersion: "1.0.0",
+          policyId: "historical-last-trade",
+          policyVersion: "1.1.0",
           riskEnvelopeId: "WATCH_ONLY_BOUNDED"
         }
       });
@@ -1487,8 +1552,8 @@ describe("API-001 server contracts", () => {
         mode: "HISTORICAL_REPLAY",
         asset: "BTC",
         intervalSec: 3600,
-        policyId: "reference-neutral",
-        policyVersion: "1.0.0",
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
     });

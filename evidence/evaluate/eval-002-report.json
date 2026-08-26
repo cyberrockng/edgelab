@@ -1,9 +1,9 @@
 {
   "evidenceId": "EVAL-002",
-  "capturedAt": "2026-08-26T05:58:14Z",
+  "capturedAt": "2026-08-26T17:47:18Z",
   "supersedes": {
     "capturedAt": "2026-08-25T11:54:48.289Z",
-    "reason": "Previous assessment hash omitted decision-defining provenance. Evaluation identity now binds canonical forecasts, actions, reasons, frame/policy/config/source hashes, outcomes, thresholds, scope, and evaluation version."
+    "reason": "Fresh System 3 S3F-001/S3F-002 invalidated active historical-last-trade@1.0.0 evidence. This report records corrected active policy identity and scoped progression semantics without changing evaluation thresholds."
   },
   "producer": "EdgeLab local execution agent",
   "task": "EVAL-002 persisted historical replay evaluation",
@@ -26,14 +26,20 @@
   },
   "provenance": {
     "sourcePlane": "MAINNET_HISTORICAL",
+    "policy": "historical-last-trade@1.1.0",
+    "supersededPolicy": "historical-last-trade@1.0.0",
+    "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+    "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
     "replayOutputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
     "inputHash": "12bd8d730924b4fc323181284091b8e148d2c69c9197cd3e8cc21c70a8380adb",
     "assessmentHash": "a79d66c4051c67db621a259283d740ca228f09c89a3a79e361f2e0465592f82a",
     "evaluationVersion": "edgelab-evaluation-v2",
-    "verdictAuthority": "server-evaluation-engine"
+    "verdictAuthority": "server-evaluation-engine",
+    "thresholdChanged": false,
+    "progressionScope": "PROMOTE_TO_FORWARD_OBSERVATION"
   },
   "verdictFixtures": {
-    "PROMOTE": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
+    "PROMOTE_TO_FORWARD_OBSERVATION": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
     "HOLD": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
     "REJECT": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
     "INSUFFICIENT_EVIDENCE": "covered by tests/unit/metrics.test.ts, tests/integration/evaluate.test.ts, and tests/integration/api.test.ts"

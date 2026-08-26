@@ -1,19 +1,29 @@
 {
   "task": "POLICY-002",
   "title": "Deterministic strategy catalog with historical Last-Trade policy",
-  "capturedAt": "2026-08-25T11:23:59Z",
+  "capturedAt": "2026-08-26T17:47:18Z",
   "policies": [
     {
       "id": "reference-neutral@1.0.0",
       "label": "Educational neutral baseline",
-      "supportedPlanes": ["MAINNET_HISTORICAL", "SHANNON_FORWARD"],
-      "behavior": "forecastPUp=0.5, WATCH_ONLY"
+      "supportedPlanes": ["SHANNON_FORWARD"],
+      "behavior": "forecastPUp=0.5, WATCH_ONLY; historical replay creation is disabled because no historical adapter exists"
     },
     {
       "id": "historical-last-trade@1.0.0",
       "label": "Last-Trade Probability",
       "supportedPlanes": ["MAINNET_HISTORICAL"],
-      "behavior": "uses latest verified pre-cutoff fill in the previous 900 seconds; ABSTAIN when unavailable"
+      "status": "SUPERSEDED",
+      "behavior": "retained for reproducibility only; not valid for new active evidence"
+    },
+    {
+      "id": "historical-last-trade@1.1.0",
+      "label": "Last-Trade Probability",
+      "supportedPlanes": ["MAINNET_HISTORICAL"],
+      "status": "ACTIVE",
+      "sourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
+      "implementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
+      "behavior": "uses latest eligible pre-cutoff DreamDEX YES-term fill in the previous 900 seconds; does not invert NO tags; MINT_A_PAIR and BURN_A_PAIR are eligible when source-complete; ABSTAIN when unavailable"
     },
     {
       "id": "reference-book-tilt@1.0.0",
@@ -23,11 +33,11 @@
     }
   ],
   "tests": {
-    "targeted": "PASS - pnpm --filter @edgelab/replay typecheck && pnpm --filter @edgelab/policy-runtime typecheck && pnpm vitest run tests/unit/replay.test.ts tests/unit/policy-runtime.test.ts tests/integration/api.test.ts",
+    "targeted": "PASS - pnpm exec vitest run tests/unit/policy-runtime.test.ts tests/unit/replay.test.ts tests/unit/metrics.test.ts tests/integration/evaluate.test.ts tests/integration/api.test.ts",
     "manifestStability": "PASS",
-    "lastTradeGolden": "PASS - fillPriceRaw 510000 with quoteDecimals 6 produces forecastPUp 0.51",
+    "lastTradeGolden": "PASS - fillPriceRaw 700000 with quoteDecimals 6 produces forecastPUp 0.70 for YES, NO, MINT_A_PAIR, and BURN_A_PAIR contexts",
     "noFillAbstain": "PASS",
-    "apiExposure": "PASS - /api/v2/policies includes historical-last-trade@1.0.0"
+    "apiExposure": "PASS - /api/v2/policies includes historical-last-trade@1.1.0 as active and historical-last-trade@1.0.0 as superseded"
   },
   "boundaries": {
     "freeFormStrategyCode": false,

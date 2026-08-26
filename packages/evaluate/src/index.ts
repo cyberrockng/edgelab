@@ -15,7 +15,7 @@ export interface MetricAssessmentInput {
   readonly ruleVersion: string;
   readonly replayRunId?: string;
   readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
-  readonly promotionScope?: "HISTORICAL_REPLAY_ONLY" | "FORWARD_WINDOW";
+  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW";
   readonly provenance?: Record<string, unknown>;
   readonly thresholds?: EvidenceThresholds;
 }
@@ -218,7 +218,7 @@ async function insertMetricRun(input: {
   readonly ruleVersion: string;
   readonly replayRunId?: string;
   readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
-  readonly promotionScope?: "HISTORICAL_REPLAY_ONLY" | "FORWARD_WINDOW";
+  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW";
   readonly provenance?: Record<string, unknown>;
   readonly inputHash: string;
   readonly canonicalInput: Record<string, unknown>;
@@ -367,7 +367,7 @@ export async function runMetricAssessment(input: MetricAssessmentInput): Promise
     const evidencePlane =
       input.evidencePlane ?? (input.replayRunId === undefined ? "SHANNON_FORWARD" : "MAINNET_HISTORICAL");
     const promotionScope =
-      input.promotionScope ?? (input.replayRunId === undefined ? "FORWARD_WINDOW" : "HISTORICAL_REPLAY_ONLY");
+      input.promotionScope ?? (input.replayRunId === undefined ? "FORWARD_WINDOW" : "PROMOTE_TO_FORWARD_OBSERVATION");
     const canonicalInput = {
       evaluationVersion: EVALUATION_VERSION,
       experimentId: input.experimentId,

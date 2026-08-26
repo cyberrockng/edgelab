@@ -19,11 +19,12 @@ function AssessmentRow({ item }: { readonly item: AssessmentSummaryRecord & { re
   return (
     <div role="row">
       <span role="cell" data-label="Experiment">{item.experimentName}</span>
-      <span role="cell" data-label="Verdict" className="mutedCell">{item.verdict.replace("_", " ")}</span>
+      <span role="cell" data-label="Verdict" className="mutedCell">{item.verdict.replaceAll("_", " ")}</span>
       <span role="cell" data-label="Observations">{item.sampleSize}</span>
       <span role="cell" data-label="Calibration">{metric(item.calibrationBias)}</span>
       <span role="cell" data-label="Brier">{metric(item.brierScore)}</span>
-      <span role="cell" data-label="Tradeability">{item.evidencePlane}</span>
+      <span role="cell" data-label="Evidence plane">{item.evidencePlane}</span>
+      <span role="cell" data-label="Linked execution">{item.tradeabilityStatus}</span>
       <span role="cell" data-label="PnL">{item.pnlStatus}</span>
       <span role="cell" data-label="Scope">{item.promotionScope}</span>
     </div>
@@ -83,7 +84,7 @@ export default function ComparePage() {
       <section className="routeHero">
         <p className="eyebrow">Strategy Comparison</p>
         <h1>Compare evidence dimensions, not vanity scores.</h1>
-        <p>Choose two to four persisted assessments. EdgeLab preserves source plane, sample size, forecast metrics, and PnL availability.</p>
+        <p>Choose two to four persisted assessments. EdgeLab preserves source plane, sample size, forecast metrics, linked execution state, and PnL availability.</p>
       </section>
       <section className="routePanel" aria-label="Strategy comparison">
         {comparisonsQuery.isLoading ? <div className="stateBox">Loading saved comparisons...</div> : null}
@@ -125,7 +126,7 @@ export default function ComparePage() {
                     }}
                   />
                   <span>{assessment.experimentName}</span>
-                  <span className="statusPill">{assessment.verdict.replace("_", " ")}</span>
+                  <span className="statusPill">{assessment.verdict.replaceAll("_", " ")}</span>
                 </label>
               ))}
             </div>
@@ -169,7 +170,8 @@ export default function ComparePage() {
             <span role="columnheader">Observations</span>
             <span role="columnheader">Calibration</span>
             <span role="columnheader">Brier</span>
-            <span role="columnheader">Tradeability</span>
+            <span role="columnheader">Evidence plane</span>
+            <span role="columnheader">Linked execution</span>
             <span role="columnheader">PnL</span>
             <span role="columnheader">Scope</span>
           </div>

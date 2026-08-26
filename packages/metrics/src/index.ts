@@ -114,8 +114,8 @@ export function assessEvidence(
     Math.abs(calibrationBias) <= thresholds.promoteMaxAbsCalibrationBias
   ) {
     return {
-      verdict: "PROMOTE",
-      reasonCodes: ["FORECAST_THRESHOLD_MET", "TRADEABILITY_STILL_SEPARATE"],
+      verdict: "PROMOTE_TO_FORWARD_OBSERVATION",
+      reasonCodes: ["FORECAST_THRESHOLD_MET", "PROMOTE_TO_FORWARD_OBSERVATION", "TRADEABILITY_STILL_SEPARATE"],
       thresholds,
       metrics
     };
