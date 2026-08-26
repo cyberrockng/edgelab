@@ -64,7 +64,19 @@ const V2CapabilitiesSchema = z.object({
 });
 const V2PoliciesSchema = z.object({
   data: z.object({
-    policies: z.array(z.object({ policyId: z.string(), version: z.string() }))
+    policies: z.array(
+      z.object({
+        policyId: z.string(),
+        version: z.string(),
+        label: z.string(),
+        adapterName: z.string(),
+        sourceHash: z.string(),
+        implementationHash: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
+        supportedPlanes: z.array(z.enum(["MAINNET_HISTORICAL", "SHANNON_FORWARD"])),
+        description: z.string()
+      })
+    )
   })
 });
 const V2ProofSchema = z.object({
@@ -925,6 +937,88 @@ describe("API-001 server contracts", () => {
       createBody.data.experiment.experimentId
     );
     expect(denied.statusCode).toBe(404);
+  });
+
+  it("creates experiments when built-in policy rows already contain full immutable manifests", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const policies = await app.inject({ method: "GET", url: "/api/v2/policies" });
+    const policyRow = V2PoliciesSchema.parse(policies.json()).data.policies.find(
+      (entry) => entry.policyId === "historical-last-trade" && entry.version === "1.0.0"
+    );
+    if (policyRow === undefined) {
+      throw new Error("historical-last-trade policy missing from test catalog");
+    }
+    const policyManifest = {
+      policyId: policyRow.policyId,
+      version: policyRow.version,
+      label: policyRow.label,
+      adapterName: policyRow.adapterName,
+      sourceHash: policyRow.sourceHash,
+      implementationHash: policyRow.implementationHash,
+      parameters: policyRow.parameters,
+      supportedPlanes: policyRow.supportedPlanes
+    };
+    await pool.query("DROP TRIGGER IF EXISTS policy_versions_append_only ON policy_versions");
+    await pool.query(
+      `
+        INSERT INTO policy_versions(policy_id, version, label, adapter_name, source_hash, manifest)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        ON CONFLICT (policy_id, version) DO UPDATE
+        SET label = EXCLUDED.label,
+            adapter_name = EXCLUDED.adapter_name,
+            source_hash = EXCLUDED.source_hash,
+            manifest = EXCLUDED.manifest
+      `,
+      [
+        policyManifest.policyId,
+        policyManifest.version,
+        policyManifest.label,
+        policyManifest.adapterName,
+        policyManifest.sourceHash,
+        JSON.stringify(policyManifest)
+      ]
+    );
+    await pool.query(`
+      CREATE TRIGGER policy_versions_append_only
+      BEFORE UPDATE OR DELETE ON policy_versions
+      FOR EACH ROW
+      EXECUTE FUNCTION reject_policy_version_mutation()
+    `);
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookieHeader(session),
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-full-policy-manifest-create"
+      },
+      payload: {
+        name: "Full manifest policy create",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    expect(create.statusCode, JSON.stringify(create.json())).toBe(201);
+    const created = V2ExperimentSchema.parse(create.json());
+    const persisted = await pool.query<{ readonly source_hash: string }>(
+      `
+        SELECT policy_versions.source_hash
+        FROM policy_versions
+        JOIN experiment_policy_versions ON experiment_policy_versions.policy_version_id = policy_versions.id
+        WHERE experiment_policy_versions.experiment_id = $1
+      `,
+      [created.data.experiment.experimentId]
+    );
+    await app.close();
+
+    expect(created.data.experiment.policies[0]).toMatchObject({ policyId: "historical-last-trade" });
+    expect(persisted.rows[0]?.source_hash).toBe(policyManifest.sourceHash);
   });
 
   it("runs historical replay, persists decisions, and evaluates from replay evidence", async () => {

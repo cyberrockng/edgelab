@@ -375,6 +375,8 @@ function policyCatalog(
   readonly label: string;
   readonly adapterName: string;
   readonly sourceHash: string;
+  readonly implementationHash: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
   readonly supportedPlanes: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
   readonly description: string;
 }[] {
@@ -2023,6 +2025,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           label: policy.label,
           adapterName: policy.adapterName,
           sourceHash: policy.sourceHash,
+          implementationHash: policy.implementationHash,
+          parameters: policy.parameters,
           supportedPlanes: policy.supportedPlanes
         }
       });
