@@ -112,7 +112,7 @@ describe("DB-001 schema and recovery controls", () => {
 
   it("runs migrations idempotently and records hashes", async () => {
     const rerun = await runMigrations(pool);
-    expect(rerun).toHaveLength(8);
+    expect(rerun).toHaveLength(9);
     expect(rerun[0]?.applied).toBe(false);
     expect(rerun[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(rerun[1]?.applied).toBe(false);
@@ -129,6 +129,8 @@ describe("DB-001 schema and recovery controls", () => {
     expect(rerun[6]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(rerun[7]?.applied).toBe(false);
     expect(rerun[7]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(rerun[8]?.applied).toBe(false);
+    expect(rerun[8]?.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("rejects same-version policy identity mutation", async () => {

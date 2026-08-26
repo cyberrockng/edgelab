@@ -175,7 +175,8 @@ export const migrations = [
   "0005_replay_outcome_embargo",
   "0006_replay_job_controls",
   "0007_policy_version_immutability",
-  "0008_evaluation_integrity"
+  "0008_evaluation_integrity",
+  "0009_builtin_policy_manifest_backfill"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
