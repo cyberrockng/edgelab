@@ -1,48 +1,175 @@
 {
-  "evidenceId": "EVAL-002",
-  "capturedAt": "2026-08-26T17:47:18Z",
-  "supersedes": {
-    "capturedAt": "2026-08-25T11:54:48.289Z",
-    "reason": "Fresh System 3 S3F-001/S3F-002 invalidated active historical-last-trade@1.0.0 evidence. This report records corrected active policy identity and scoped progression semantics without changing evaluation thresholds."
-  },
-  "producer": "EdgeLab local execution agent",
-  "task": "EVAL-002 persisted historical replay evaluation",
-  "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
-  "metricRunId": "13aad28c-eea2-48d7-8736-f15f5cc23703",
-  "assessmentId": "f68aaf48-2a38-4542-b096-22485a789750",
-  "verdict": "INSUFFICIENT_EVIDENCE",
-  "reasonCodes": [
-    "MIN_SAMPLE_NOT_MET",
-    "SUFFICIENCY_RUN_FIRST",
-    "PNL_SEPARATE_FROM_FORECAST"
-  ],
-  "metrics": {
-    "sampleSize": 0,
-    "exclusionCount": 1,
-    "brierScore": null,
-    "calibrationBias": null,
+  "task": "S3D-001/S3D-006/S3D-007 regenerated evaluation evidence",
+  "generatedAt": "2026-08-27T19:47:05.839Z",
+  "status": "REGENERATED",
+  "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+  "replayRunId": "35bd7b5e-0e42-49e1-b79d-38fd3221c92d",
+  "evaluation": {
+    "metricRunId": "dc817907-aa51-4a74-bba4-306b6e5f464d",
+    "assessmentId": "4b6d95d7-ec83-4143-960c-fe924986c4c1",
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "reasonCodes": [
+      "MIN_SAMPLE_NOT_MET",
+      "SUFFICIENCY_RUN_FIRST",
+      "PNL_SEPARATE_FROM_FORECAST"
+    ],
+    "sampleSize": 1,
+    "exclusionCount": 0,
     "pnlStatus": "NOT_AVAILABLE",
-    "pnlLabel": "not realized wallet PnL"
+    "inputHash": "10017b058dfad685fdb7108a207ca36e9f6ba50c6b9c709386be461bf2bca67f",
+    "assessmentHash": "253b3bda10d72c73642e8c9be75f0ac7c0dd4025f77b55b9212ed0bedd7d1386"
   },
-  "provenance": {
-    "sourcePlane": "MAINNET_HISTORICAL",
-    "policy": "historical-last-trade@1.1.0",
-    "supersededPolicy": "historical-last-trade@1.0.0",
-    "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
-    "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
-    "replayOutputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
-    "inputHash": "12bd8d730924b4fc323181284091b8e148d2c69c9197cd3e8cc21c70a8380adb",
-    "assessmentHash": "a79d66c4051c67db621a259283d740ca228f09c89a3a79e361f2e0465592f82a",
-    "evaluationVersion": "edgelab-evaluation-v2",
-    "verdictAuthority": "server-evaluation-engine",
+  "evidenceGate": {
+    "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+    "assessment": {
+      "assessmentId": "4b6d95d7-ec83-4143-960c-fe924986c4c1",
+      "metricRunId": "dc817907-aa51-4a74-bba4-306b6e5f464d",
+      "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+      "experimentName": "Deep Audit Proven BTC 900s MINT_A_PAIR Replay",
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "reasonCodes": [
+        "MIN_SAMPLE_NOT_MET",
+        "SUFFICIENCY_RUN_FIRST",
+        "PNL_SEPARATE_FROM_FORECAST"
+      ],
+      "sampleSize": 1,
+      "exclusionCount": 0,
+      "brierScore": 0.589824,
+      "calibrationBias": -0.768,
+      "neutralBaselineDelta": -0.339824,
+      "tradeabilityStatus": "NOT_EVALUATED",
+      "pnlStatus": "NOT_AVAILABLE",
+      "evidencePlane": "MAINNET_HISTORICAL",
+      "promotionScope": "PROMOTE_TO_FORWARD_OBSERVATION",
+      "createdAt": "2026-08-27T19:47:32.447Z"
+    },
+    "decision": {
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "reason": "Promotion is blocked because the scored evidence sample is below the required threshold.",
+      "supportingEvidence": [
+        "Provenance"
+      ],
+      "missingEvidence": [
+        "Forecast sample",
+        "Forecast quality",
+        "Forecast calibration",
+        "Tradeability / execution quality",
+        "PnL"
+      ],
+      "nextPermittedAction": "COLLECT_MORE_EVIDENCE",
+      "doesNotAuthorize": [
+        "mainnet trading",
+        "autonomous execution",
+        "profit or realized PnL claims",
+        "unbounded Shannon testnet orders",
+        "promotion to forward observation"
+      ],
+      "sourcePlane": "MAINNET_HISTORICAL",
+      "promotionScope": "NOT_APPLICABLE",
+      "decidedAt": "2026-08-27T19:47:32.447Z"
+    },
+    "progression": {
+      "candidateId": "5a335947-1f13-4367-a3ba-b842467b200e",
+      "currentStage": "Evidence Gate",
+      "stages": [
+        {
+          "stage": "Configuration",
+          "plane": "APPLICATION_STATE",
+          "status": "VERIFIED",
+          "detail": "Immutable experiment configuration and policy identity are persisted."
+        },
+        {
+          "stage": "Historical Replay",
+          "plane": "MAINNET_HISTORICAL",
+          "status": "VERIFIED",
+          "detail": "Historical evidence is evaluated under strict anti-lookahead."
+        },
+        {
+          "stage": "Evidence Gate",
+          "plane": "MAINNET_HISTORICAL",
+          "status": "VERIFIED",
+          "detail": "Server-authored assessment controls the current verdict."
+        },
+        {
+          "stage": "Forward Observation",
+          "plane": "SHANNON_FORWARD",
+          "status": "PENDING",
+          "detail": "Forward observation remains unavailable until evidence permits advancement."
+        },
+        {
+          "stage": "Execution Proof",
+          "plane": "SHANNON_EXECUTION",
+          "status": "UNLINKED_GLOBAL_PROOF_AVAILABLE",
+          "detail": "Global EXG-003 proof remains separate unless explicitly linked to this candidate."
+        }
+      ]
+    },
+    "gateRows": [
+      {
+        "dimension": "Forecast sample",
+        "status": "BLOCKED",
+        "value": "1/30 observations",
+        "detail": "29 additional scored observations are required before promotion can be considered."
+      },
+      {
+        "dimension": "Forecast quality",
+        "status": "BLOCKED",
+        "value": "0.5898",
+        "detail": "Brier score is compared with the promotion threshold 0.2000."
+      },
+      {
+        "dimension": "Forecast calibration",
+        "status": "BLOCKED",
+        "value": "-0.7680",
+        "detail": "Absolute calibration bias must be <= 0.0500 for promotion."
+      },
+      {
+        "dimension": "Tradeability / execution quality",
+        "status": "NOT_AVAILABLE",
+        "value": "NOT_EVALUATED",
+        "detail": "Historical replay forecast evidence remains separate from live execution and realized fill evidence."
+      },
+      {
+        "dimension": "PnL",
+        "status": "NOT_AVAILABLE",
+        "value": "NOT_AVAILABLE",
+        "detail": "Replay or counterfactual PnL is never labeled realized wallet PnL."
+      },
+      {
+        "dimension": "Provenance",
+        "status": "VERIFIED",
+        "value": "MAINNET_HISTORICAL",
+        "detail": "PROMOTE_TO_FORWARD_OBSERVATION; replay 35bd7b5e-0e42-49e1-b79d-38fd3221c92d."
+      }
+    ],
+    "missingEvidence": [
+      "Forecast sample",
+      "Forecast quality",
+      "Forecast calibration",
+      "Tradeability / execution quality",
+      "PnL"
+    ],
+    "verdictReasons": [
+      "MIN_SAMPLE_NOT_MET",
+      "SUFFICIENCY_RUN_FIRST",
+      "PNL_SEPARATE_FROM_FORECAST"
+    ],
+    "nextPermittedAction": "COLLECT_MORE_EVIDENCE",
+    "serverAuthored": true
+  },
+  "assertions": {
+    "serverAuthoredVerdict": true,
     "thresholdChanged": false,
-    "progressionScope": "PROMOTE_TO_FORWARD_OBSERVATION"
-  },
-  "verdictFixtures": {
-    "PROMOTE_TO_FORWARD_OBSERVATION": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
-    "HOLD": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
-    "REJECT": "covered by tests/unit/metrics.test.ts and tests/integration/evaluate.test.ts",
-    "INSUFFICIENT_EVIDENCE": "covered by tests/unit/metrics.test.ts, tests/integration/evaluate.test.ts, and tests/integration/api.test.ts"
-  },
-  "redaction": "public/non-secret hashes and UUIDs only"
+    "progressionScope": "NOT_APPLICABLE",
+    "nextPermittedAction": "COLLECT_MORE_EVIDENCE",
+    "doesNotAuthorize": [
+      "mainnet trading",
+      "autonomous execution",
+      "profit or realized PnL claims",
+      "unbounded Shannon testnet orders",
+      "promotion to forward observation"
+    ],
+    "planesSeparated": true,
+    "blockchainWrite": false
+  }
 }

@@ -36,6 +36,8 @@ const chainSizedHex = /0x[a-fA-F0-9]{64}/;
 const publicEvidenceKeys = [
   "stableMarketId",
   "marketId",
+  "selectedMarketId",
+  "explicitMarketId",
   "txHash",
   "transactionHash",
   "blockHash",
@@ -43,7 +45,16 @@ const publicEvidenceKeys = [
   "snapshot_hash",
   "calldataHash",
   "intentHash",
-  "receiptHash"
+  "receiptHash",
+  "sourceHash",
+  "implementationHash",
+  "configHash",
+  "inputHash",
+  "outputHash",
+  "frameHash",
+  "replayEvidenceHash",
+  "evaluationEvidenceHash",
+  "assessmentHash"
 ];
 
 /**

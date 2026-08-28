@@ -21,8 +21,8 @@
       "label": "Last-Trade Probability",
       "supportedPlanes": ["MAINNET_HISTORICAL"],
       "status": "ACTIVE",
-      "sourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
-      "implementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
+      "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889",
+      "implementationHash": "74c3ea12c0849db864b1cc5b4b9006743f449a97244f83245b6e16543b604635",
       "behavior": "uses latest eligible pre-cutoff DreamDEX YES-term fill in the previous 900 seconds; does not invert NO tags; MINT_A_PAIR and BURN_A_PAIR are eligible when source-complete; ABSTAIN when unavailable"
     },
     {

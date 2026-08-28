@@ -145,6 +145,46 @@ button {
   color: var(--ink);
 }
 
+.mobileNav {
+  display: none;
+}
+
+.mobileNav summary {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mobileNav nav {
+  position: absolute;
+  right: 12px;
+  display: grid;
+  min-width: 220px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  box-shadow: 0 18px 40px rgb(17 24 22 / 18%);
+}
+
+.mobileNav a {
+  padding: 10px;
+  border-radius: 5px;
+  color: #3d4743;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.mobileNav a.active,
+.mobileNav a:hover {
+  background: #dde5df;
+  color: var(--ink);
+}
+
 .primaryAction,
 button {
   padding: 10px 13px;
@@ -585,12 +625,13 @@ dd {
 
 .evidenceGate {
   display: grid;
-  grid-template-columns: minmax(220px, 0.62fr) minmax(0, 1.38fr) minmax(260px, 0.68fr);
+  grid-template-columns: minmax(220px, 0.62fr) minmax(280px, 1fr) minmax(240px, 0.68fr);
   gap: 14px;
   align-items: stretch;
 }
 
 .gateCandidate,
+.gateDecision,
 .gateOutput {
   position: relative;
   display: grid;
@@ -602,6 +643,13 @@ dd {
   border-radius: 8px;
   background: var(--rail);
   color: #f7faf6;
+}
+
+.gateDecision {
+  border-color: #d9c596;
+  background:
+    linear-gradient(180deg, rgb(166 109 37 / 14%), transparent),
+    var(--rail);
 }
 
 .gateCandidate::after,
@@ -623,6 +671,7 @@ dd {
 }
 
 .gateCandidate strong,
+.gateDecision strong,
 .gateOutput strong {
   overflow-wrap: break-word;
   font-size: 1.35rem;
@@ -630,16 +679,32 @@ dd {
 }
 
 .gateCandidate small,
+.gateDecision p,
 .gateOutput p {
   color: #c9d4cf;
   line-height: 1.4;
 }
 
+.gateDecision .factGrid {
+  margin: 6px 0 0;
+}
+
+.compactFacts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.gateDecision .factGrid div {
+  border-color: #3a4742;
+  background: rgb(255 255 255 / 6%);
+}
+
+.gateDecision dt,
+.gateDecision dd {
+  color: #f7faf6;
+}
+
 .gateOutput {
-  border-color: #d9c596;
-  background:
-    linear-gradient(180deg, rgb(166 109 37 / 14%), transparent),
-    var(--rail);
+  border-color: #466258;
 }
 
 .gateOutput strong {
@@ -649,8 +714,48 @@ dd {
 
 .gateBody {
   display: grid;
+  grid-column: 1 / -1;
   gap: 8px;
   min-width: 0;
+}
+
+.stageRail {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stageNode {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dbe2dd;
+  border-radius: 7px;
+  background: var(--surface-strong);
+}
+
+.stageNode span,
+.stageNode strong,
+.stageNode p,
+.stageNode small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.stageNode span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.stageNode strong {
+  margin-top: 5px;
+}
+
+.stageNode p,
+.stageNode small {
+  margin-top: 5px;
+  color: var(--muted);
 }
 
 .gateRow {
@@ -1015,6 +1120,7 @@ dd {
   .heroGrid,
   .workflowGrid,
   .evidenceGate,
+  .stageRail,
   .chainProof,
   .detailGrid {
     grid-template-columns: 1fr;
@@ -1041,14 +1147,12 @@ dd {
   }
 
   .topNav {
-    grid-column: 1 / -1;
-    flex-wrap: wrap;
-    overflow: visible;
+    display: none;
   }
 
-  .topNav a {
-    flex: 1 1 134px;
-    text-align: center;
+  .mobileNav {
+    display: block;
+    justify-self: end;
   }
 
   .primaryAction:not(.large) {
@@ -1066,6 +1170,10 @@ dd {
   .chainProof,
   .proofSection {
     padding: 16px;
+  }
+
+  .routeHero h1 {
+    font-size: clamp(2rem, 8vw, 3rem);
   }
 
   .threeColumn,

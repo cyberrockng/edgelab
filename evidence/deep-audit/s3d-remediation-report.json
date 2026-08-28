@@ -1,0 +1,114 @@
+{
+  "task": "DEEP_AUDIT_REMEDIATION",
+  "capturedAt": "2026-08-28T05:54:46.064Z",
+  "baselineSha": "25d5c237e418608434c4b24dcecaa2fe5e91f7fd",
+  "activeHandoff": "output/DEEP_AUDIT_REMEDIATION_HANDOFF.md",
+  "status": "LOCAL_VALIDATION_PASS_PENDING_COMMIT_DEPLOY",
+  "findings": {
+    "S3D-001": {
+      "severity": "P0",
+      "status": "FIXED",
+      "evidence": "evidence/proven/manifest.json",
+      "summary": "Proven Experiment regenerated from fresh API replay/evaluation using historical-last-trade@1.1.0."
+    },
+    "S3D-002": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "tests/unit/policy-runtime.test.ts",
+      "summary": "Policy implementation identity binds deterministic executable behavior fingerprint."
+    },
+    "S3D-003": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "tests/integration/api.test.ts",
+      "summary": "Replay selection paginates through eligible historical window rows."
+    },
+    "S3D-004": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "tests/integration/api.test.ts",
+      "summary": "Explicit historical market replay fails closed when outside configured window."
+    },
+    "S3D-005": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "tests/integration/api.test.ts",
+      "summary": "Decision offset min 60 seconds, visible in UI, and bound into config hash."
+    },
+    "S3D-006": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "apps/server/src/app.ts",
+      "summary": "Evidence Gate includes historical, forward, and execution progression stages with separate provenance."
+    },
+    "S3D-007": {
+      "severity": "P1",
+      "status": "FIXED",
+      "evidence": "apps/web/src/pages/EvidencePage.tsx",
+      "summary": "Evidence Gate displays verdict, human reason, reason codes, missing evidence, next action, and non-authorization scope."
+    },
+    "S3D-008": {
+      "severity": "P2",
+      "status": "FIXED_BEFORE_REAUDIT",
+      "evidence": "apps/web/src/pages/ComparePage.tsx",
+      "summary": "Fresh Compare route includes a public read-only comparison instead of empty-session dead end."
+    },
+    "S3D-009": {
+      "severity": "P2",
+      "status": "FIXED_BEFORE_REAUDIT",
+      "evidence": "apps/web/src/pages/MarketDetailPage.tsx",
+      "summary": "Market detail shows normalized probability/quantity labels while preserving raw audit values."
+    },
+    "S3D-010": {
+      "severity": "P2",
+      "status": "FIXED_BEFORE_REAUDIT",
+      "evidence": "apps/web/src/App.tsx",
+      "summary": "Mobile global navigation collapsed into an accessible menu and route hero density reduced."
+    },
+    "S3D-011": {
+      "severity": "P3",
+      "status": "FIXED_BY_DISCLOSURE",
+      "evidence": "/readyz",
+      "summary": "Readiness discloses inline replay mode when background worker is disabled."
+    },
+    "S3D-012": {
+      "severity": "P3",
+      "status": "FIXED_BEFORE_REAUDIT",
+      "evidence": "/api/v1/evidence/summary",
+      "summary": "Legacy public summary no longer exposes aggregate internal table counts."
+    }
+  },
+  "provenExperiment": {
+    "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+    "replayRunId": "35bd7b5e-0e42-49e1-b79d-38fd3221c92d",
+    "policy": "historical-last-trade@1.1.0",
+    "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889",
+    "implementationHash": "74c3ea12c0849db864b1cc5b4b9006743f449a97244f83245b6e16543b604635",
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "sampleSize": 1,
+    "forecastPUp": 0.232,
+    "reasonCodes": [
+      "HISTORICAL_LAST_TRADE",
+      "PRE_CUTOFF_FILL",
+      "DREAMDEX_YES_TERM_PRICE",
+      "NO_TAG_NOT_INVERTED",
+      "MINT_PAIR_ELIGIBLE"
+    ],
+    "selectedMarketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+    "sourcePlane": "MAINNET_HISTORICAL",
+    "blockchainWrite": false
+  },
+  "localValidation": {
+    "pnpm build": "PASS",
+    "pnpm check": "PASS - 13 files, 98 tests",
+    "pnpm test:e2e": "PASS - 40 tests across 1440, 1366, 1280, Pixel 5",
+    "pnpm secret:scan": "PASS - 163 files",
+    "pnpm evidence:manifest": "PASS - 80 artifacts"
+  },
+  "boundaries": {
+    "mainnet5031": "READ_ONLY_HISTORICAL_RESEARCH",
+    "shannon50312": "FORWARD_AND_HUMAN_AUTHORIZED_EXECUTION_ONLY",
+    "blockchainWrites": "NONE_PERFORMED_FOR_REMEDIATION",
+    "finalSubmission": "NOT_AUTHORIZED"
+  }
+}

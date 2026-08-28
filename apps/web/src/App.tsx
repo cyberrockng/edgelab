@@ -95,6 +95,16 @@ function RootLayout() {
             </NavLink>
           ))}
         </nav>
+        <details className="mobileNav">
+          <summary>Menu</summary>
+          <nav aria-label="EdgeLab mobile navigation">
+            {navItems.map((item) => (
+              <NavLink to={item.to} key={item.to} className={({ isActive }) => (isActive ? "active" : undefined)}>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </details>
         <div className="runtimePills" aria-label="Runtime status">
           <span>Mainnet {SOMNIA_MAINNET_CHAIN_ID} read-only</span>
           <span>Shannon {SOMNIA_SHANNON_CHAIN_ID}</span>

@@ -118,6 +118,7 @@ export interface MarketEvidence {
   readonly tradingStartSeconds: number;
   readonly expirySeconds: number;
   readonly tradeCount: number;
+  readonly quoteDecimals?: number;
   readonly openingPriceRaw?: string | null;
   readonly source: SourceMeta;
 }
@@ -351,6 +352,27 @@ export interface EvidenceGateRow {
 export interface EvidenceGateRecord {
   readonly experimentId: string;
   readonly assessment: AssessmentSummaryRecord;
+  readonly decision: {
+    readonly verdict: EvaluationAssessmentRecord["verdict"];
+    readonly reason: string;
+    readonly supportingEvidence: readonly string[];
+    readonly missingEvidence: readonly string[];
+    readonly nextPermittedAction: string;
+    readonly doesNotAuthorize: readonly string[];
+    readonly sourcePlane: string;
+    readonly promotionScope: string;
+    readonly decidedAt: string;
+  };
+  readonly progression: {
+    readonly candidateId: string;
+    readonly currentStage: string;
+    readonly stages: readonly {
+      readonly stage: string;
+      readonly plane: string;
+      readonly status: string;
+      readonly detail: string;
+    }[];
+  };
   readonly gateRows: readonly EvidenceGateRow[];
   readonly missingEvidence: readonly string[];
   readonly verdictReasons: readonly string[];

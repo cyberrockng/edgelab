@@ -47,7 +47,7 @@ export default function LabPage() {
   const [interval, setInterval] = useState("3600");
   const [windowFrom, setWindowFrom] = useState("");
   const [windowTo, setWindowTo] = useState("");
-  const [decisionOffsetSec, setDecisionOffsetSec] = useState(0);
+  const [decisionOffsetSec, setDecisionOffsetSec] = useState(60);
   const selectedStrategy = strategyOptions.find((strategy) => strategy.key === strategyKey) ?? strategyOptions[0];
   const experimentsQuery = useQuery({
     queryKey: ["experiments"],
@@ -188,7 +188,7 @@ export default function LabPage() {
             Decision offset seconds
             <input
               type="number"
-              min="-3600"
+              min="60"
               max="3600"
               step="60"
               value={decisionOffsetSec}
@@ -226,7 +226,11 @@ export default function LabPage() {
             </div>
             <div>
               <dt>Decision offset</dt>
-              <dd>{decisionOffsetSec}s</dd>
+              <dd>{decisionOffsetSec}s before expiry</dd>
+            </div>
+            <div>
+              <dt>Replay boundary</dt>
+              <dd>max(trading start + 1s, expiry - offset)</dd>
             </div>
             <div>
               <dt>Blockchain write</dt>

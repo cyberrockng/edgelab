@@ -94,9 +94,172 @@ interface PolicyIdentityInput {
   readonly evaluate: { toString(): string };
 }
 
-function implementationHash(adapter: Pick<PolicyIdentityInput, "evaluate" | "identitySource">): string {
-  const source = adapter.identitySource ?? adapter.evaluate.toString();
-  return createHash("sha256").update(source.replace(/\s+/g, " ").trim()).digest("hex");
+function canonicalMarketSnapshot(book: MarketSnapshot["book"]): MarketSnapshot {
+  return {
+    marketId: "0xbehavior-fingerprint",
+    chainId: 50312,
+    asset: "BTC",
+    intervalSeconds: 900,
+    capturedAt: "2026-08-27T00:00:00.000Z",
+    source: {
+      sdkVersion: "0.28.1",
+      rpcUrl: "https://api.infra.testnet.somnia.network",
+      indexerUrl: "https://dev.smk.somnia.host/v1/graphql",
+      evidenceClass: "CAPTURED"
+    },
+    book
+  };
+}
+
+function canonicalHistoricalFrame(fills: HistoricalDecisionFrame["fills"]): HistoricalDecisionFrame {
+  return {
+    schemaVersion: "historical-decision-frame-v1",
+    market: {
+      stableMarketId: ["0x", "0".repeat(60), "00aa"].join(""),
+      asset: "BTC",
+      intervalSeconds: 900,
+      quoteDecimals: 18,
+      tradingStartSeconds: 1_787_858_100,
+      expirySeconds: 1_787_859_000,
+      question: "BTC closes at or above its opening price"
+    },
+    clock: {
+      decisionAt: "2026-08-27T19:29:00.000Z",
+      decisionAtSeconds: 1_787_858_940,
+      cutoffBlock: "397067729",
+      cutoffRule: "STRICTLY_BEFORE_DECISION_AT"
+    },
+    openingPrice: {
+      priceRaw: "8016762",
+      availableAtBlock: "397000000"
+    },
+    candles: [],
+    orders: [],
+    fills,
+    exclusions: []
+  };
+}
+
+function canonicalHistoricalFill(input: {
+  readonly id: string;
+  readonly fillPriceRaw: string;
+  readonly kind: string | null;
+  readonly makerSide: string | null;
+  readonly takerSide: string | null;
+  readonly timestampSeconds: number;
+  readonly blockNumber: string;
+  readonly logIndex: string;
+}): HistoricalDecisionFrame["fills"][number] {
+  return {
+    id: input.id,
+    fillPriceRaw: input.fillPriceRaw,
+    quantityRaw: "1000000000000000000",
+    quoteQuantityRaw: input.fillPriceRaw,
+    kind: input.kind,
+    makerOrderId: "1",
+    makerRemainingQuantityRaw: "0",
+    makerSide: input.makerSide,
+    takerOrderId: "2",
+    takerRemainingQuantityRaw: "0",
+    takerSide: input.takerSide,
+    takerIsBid: false,
+    blockNumber: input.blockNumber,
+    transactionIndex: null,
+    logIndex: input.logIndex,
+    timestampSeconds: input.timestampSeconds
+  };
+}
+
+function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
+  const supportedPlanes = adapter.supportedPlanes ?? [];
+  if (supportedPlanes.includes("MAINNET_HISTORICAL")) {
+    const evaluate = adapter.evaluate as HistoricalPolicyAdapter["evaluate"];
+    const cases = [
+      {
+        name: "no-fill-abstain",
+        frame: canonicalHistoricalFrame([])
+      },
+      {
+        name: "yes-fill",
+        frame: canonicalHistoricalFrame([
+          canonicalHistoricalFill({
+            id: "yes-fill",
+            fillPriceRaw: "700000000000000000",
+            kind: "TRADE",
+            makerSide: "BUY_YES",
+            takerSide: "SELL_YES",
+            timestampSeconds: 1_787_858_800,
+            blockNumber: "397066310",
+            logIndex: "1"
+          })
+        ])
+      },
+      {
+        name: "no-tag-canonical-price",
+        frame: canonicalHistoricalFrame([
+          canonicalHistoricalFill({
+            id: "no-tag",
+            fillPriceRaw: "700000000000000000",
+            kind: "TRADE",
+            makerSide: "BUY_NO",
+            takerSide: "SELL_NO",
+            timestampSeconds: 1_787_858_801,
+            blockNumber: "397066311",
+            logIndex: "2"
+          })
+        ])
+      },
+      {
+        name: "mint-pair",
+        frame: canonicalHistoricalFrame([
+          canonicalHistoricalFill({
+            id: "mint-pair",
+            fillPriceRaw: "232000000000000000",
+            kind: "MINT_A_PAIR",
+            makerSide: "BUY_YES",
+            takerSide: "BUY_NO",
+            timestampSeconds: 1_787_858_798,
+            blockNumber: "397066316",
+            logIndex: "6"
+          })
+        ])
+      }
+    ];
+    return cases.map((testCase) => ({
+      name: testCase.name,
+      output: evaluate({ frame: testCase.frame, frameHash: `behavior-${testCase.name}` })
+    }));
+  }
+  const evaluate = adapter.evaluate as PolicyAdapter["evaluate"];
+  return [
+    {
+      name: "empty-book",
+      output: evaluate({
+        snapshot: canonicalMarketSnapshot({ bids: [], asks: [] }),
+        decidedAt: "2026-08-27T00:00:00.000Z",
+        snapshotHash: "behavior-empty-book"
+      })
+    },
+    {
+      name: "bid-heavy-book",
+      output: evaluate({
+        snapshot: canonicalMarketSnapshot({
+          bids: [{ priceRaw: "510000", quantityRaw: "1000000" }],
+          asks: []
+        }),
+        decidedAt: "2026-08-27T00:00:00.000Z",
+        snapshotHash: "behavior-bid-heavy-book"
+      })
+    }
+  ];
+}
+
+function implementationHash(adapter: PolicyIdentityInput): string {
+  const source = canonicalJson({
+    declaredIdentity: adapter.identitySource ?? null,
+    executableBehavior: behaviorFingerprint(adapter)
+  });
+  return createHash("sha256").update(source).digest("hex");
 }
 
 export function hashManifest(
@@ -321,12 +484,10 @@ const historicalLastTradeV11IdentitySource = canonicalJson({
     supportedFillKinds: [...supportedDreamDexBinaryFillKinds].sort()
   },
   helpers: {
-    canonicalDreamDexYesProbability: canonicalDreamDexYesProbability.toString(),
-    compareHistoricalFills: compareHistoricalFills.toString(),
-    eligibleDreamDexBinaryFill: eligibleDreamDexBinaryFill.toString(),
-    isPositiveRawQuantity: isPositiveRawQuantity.toString(),
-    isSupportedDreamDexBinaryFillKind: isSupportedDreamDexBinaryFillKind.toString(),
-    scaledPriceToProbability: scaledPriceToProbability.toString()
+    canonicalDreamDexYesProbability: "scaled fillPriceRaw / 10^quoteDecimals, clamped to [0.05, 0.95]",
+    compareHistoricalFills: "timestampSeconds, blockNumber, transactionIndex, logIndex, id",
+    eligibleDreamDexBinaryFill: "supported kind, positive quantity, valid price, deterministic ordering fields",
+    supportedFillKinds: [...supportedDreamDexBinaryFillKinds].sort()
   },
   parameters: {
     fillOrder: ["timestampSeconds", "blockNumber", "transactionIndex", "logIndex", "id"],

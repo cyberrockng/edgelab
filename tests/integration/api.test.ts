@@ -127,7 +127,10 @@ const V2ProvenExperimentSchema = z.object({
         blockchainWrite: z.literal(false)
       }),
       decision: z.object({
+        marketId: z.string(),
         action: z.string(),
+        forecastPUp: z.number().nullable(),
+        outcomeResult: z.string().nullable(),
         frameHash: z.string(),
         reasonCodes: z.array(z.string())
       }),
@@ -138,6 +141,17 @@ const V2ProvenExperimentSchema = z.object({
       }),
       evidenceGate: z.object({
         serverAuthored: z.literal(true),
+        decision: z.object({
+          verdict: z.enum(["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+          reason: z.string(),
+          missingEvidence: z.array(z.string()),
+          nextPermittedAction: z.string(),
+          doesNotAuthorize: z.array(z.string()),
+          promotionScope: z.string()
+        }),
+        progression: z.object({
+          stages: z.array(z.object({ stage: z.string(), plane: z.string(), status: z.string(), detail: z.string() }))
+        }),
         verdictReasons: z.array(z.string()),
         gateRows: z.array(z.object({ dimension: z.string(), status: z.string(), value: z.string() }))
       }),
@@ -196,6 +210,11 @@ const V2ExperimentSchema = z.object({
         intervals: z.array(z.number()),
         config: z.object({
           sourcePlane: z.string(),
+          selectedMarketId: z.string().nullable().optional(),
+          windowFrom: z.string().nullable().optional(),
+          windowTo: z.string().nullable().optional(),
+          decisionOffsetSec: z.number().optional(),
+          decisionBoundaryRule: z.string().optional(),
           historicalBookReconstruction: z.string(),
           pnlStatus: z.string()
         })
@@ -215,6 +234,7 @@ const V2ReplaySchema = z.object({
         processedCount: z.number(),
         scoredCount: z.number(),
         excludedCount: z.number(),
+        errorCode: z.string().nullable(),
         outputHash: z.string().nullable(),
         decisions: z
           .array(
@@ -262,6 +282,22 @@ const V2EvidenceGateSchema = z.object({
           evidencePlane: z.string(),
           promotionScope: z.string(),
           pnlStatus: z.string()
+        }),
+        decision: z.object({
+          verdict: z.enum(["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"]),
+          reason: z.string(),
+          supportingEvidence: z.array(z.string()),
+          missingEvidence: z.array(z.string()),
+          nextPermittedAction: z.string(),
+          doesNotAuthorize: z.array(z.string()),
+          sourcePlane: z.string(),
+          promotionScope: z.string(),
+          decidedAt: z.string()
+        }),
+        progression: z.object({
+          candidateId: z.string(),
+          currentStage: z.string(),
+          stages: z.array(z.object({ stage: z.string(), plane: z.string(), status: z.string(), detail: z.string() }))
         }),
         gateRows: z.array(
           z.object({
@@ -449,6 +485,25 @@ function historicalClient(): HistoricalDreamDexSdkClient {
     },
     getFills() {
       return Promise.resolve([]);
+    }
+  };
+}
+
+function paginatedHistoricalClient(): HistoricalDreamDexSdkClient {
+  const fillerMarkets = Array.from({ length: 101 }, (_, index): BinaryMarket => ({
+    ...binaryMarket,
+    marketId: `0x${(index + 1).toString(16).padStart(64, "0")}`,
+    id: `filler-${String(index)}`,
+    tradingStart: "1787500000",
+    expiry: "1787503600"
+  }));
+  return {
+    ...historicalClient(),
+    listPastBinaryMarkets(opts) {
+      const offset = opts?.offset ?? 0;
+      const limit = opts?.limit ?? 25;
+      const rows = [...fillerMarkets, binaryMarket];
+      return Promise.resolve(rows.slice(offset, offset + limit));
     }
   };
 }
@@ -663,7 +718,7 @@ describe("API-001 server contracts", () => {
     });
   });
 
-  it("summarizes evidence counts without exposing raw secrets", async () => {
+  it("summarizes public evidence without exposing internal operational counts", async () => {
     const app = buildApp(config, { pool });
     const response = await app.inject({ method: "GET", url: "/api/v1/evidence/summary" });
     await app.close();
@@ -671,11 +726,11 @@ describe("API-001 server contracts", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       ok: true,
-      counts: {
-        experiments: 0,
-        episodes: 0,
-        snapshots: 0,
-        decisions: 0
+      summary: {
+        publicProofAvailable: false,
+        latestTerminalState: "UNAVAILABLE",
+        fillCount: 0,
+        evidenceScope: "judge-facing public proof only"
       },
       chain: {
         submittedOrderCount: 0,
@@ -758,13 +813,17 @@ describe("API-001 server contracts", () => {
     expect(body.data.provenExperiment.selectionDisclosure).toContain("not favorability");
     expect(body.data.provenExperiment.replay).toMatchObject({
       processedCount: 1,
-      scoredCount: 0,
-      excludedCount: 1,
+      scoredCount: 1,
+      excludedCount: 0,
       blockchainWrite: false
     });
+    expect(body.data.provenExperiment.decision.forecastPUp).toBe(0.232);
+    expect(body.data.provenExperiment.decision.reasonCodes).toEqual(
+      expect.arrayContaining(["NO_TAG_NOT_INVERTED", "MINT_PAIR_ELIGIBLE"])
+    );
     expect(body.data.provenExperiment.assessment).toMatchObject({
       verdict: "INSUFFICIENT_EVIDENCE",
-      sampleSize: 0,
+      sampleSize: 1,
       pnlStatus: "NOT_AVAILABLE"
     });
     expect(body.data.provenExperiment.evidenceGate.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
@@ -776,6 +835,11 @@ describe("API-001 server contracts", () => {
       status: "NOT_AVAILABLE",
       value: "NOT_AVAILABLE"
     });
+    expect(body.data.provenExperiment.evidenceGate.decision.nextPermittedAction).toBe("COLLECT_MORE_EVIDENCE");
+    expect(body.data.provenExperiment.evidenceGate.decision.promotionScope).toBe("NOT_APPLICABLE");
+    expect(
+      body.data.provenExperiment.evidenceGate.progression.stages.find((stage) => stage.stage === "Execution Proof")
+    ).toMatchObject({ status: "UNLINKED_GLOBAL_PROOF_AVAILABLE" });
     expect(body.data.provenExperiment.reproducibility.sourceArtifacts).toEqual(
       expect.arrayContaining(["evidence/replay/replay-002-report.json", "evidence/evaluate/eval-002-report.json"])
     );
@@ -943,6 +1007,8 @@ describe("API-001 server contracts", () => {
     expect(create.statusCode).toBe(201);
     expect(createBody.data.experiment.name).toBe("Judge BTC hourly replay");
     expect(createBody.data.experiment.configuration.config.sourcePlane).toBe("MAINNET_HISTORICAL");
+    expect(createBody.data.experiment.configuration.config.decisionOffsetSec).toBe(60);
+    expect(createBody.data.experiment.configuration.config.decisionBoundaryRule).toContain("expiry - decisionOffsetSec");
     expect(createBody.data.experiment.configuration.config.historicalBookReconstruction).toBe("SOURCE_INCOMPLETE");
     expect(createBody.data.experiment.configuration.config.pnlStatus).toBe("NOT_AVAILABLE");
     expect(createBody.data.experiment.policies[0]).toMatchObject({
@@ -960,6 +1026,180 @@ describe("API-001 server contracts", () => {
       createBody.data.experiment.experimentId
     );
     expect(denied.statusCode).toBe(404);
+  });
+
+  it("rejects ambiguous or negative historical decision offsets", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const headers = {
+      cookie: cookieHeader(session),
+      "x-csrf-token": sessionBody.data.csrfToken
+    };
+    const basePayload = {
+      name: "Offset validation replay",
+      mode: "HISTORICAL_REPLAY",
+      asset: "BTC",
+      intervalSec: 3600,
+      policyId: "historical-last-trade",
+      policyVersion: "1.1.0",
+      marketId: apiMarketId,
+      riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+    };
+    const zero = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: { ...headers, "idempotency-key": "api-offset-zero" },
+      payload: { ...basePayload, decisionOffsetSec: 0 }
+    });
+    const negative = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: { ...headers, "idempotency-key": "api-offset-negative" },
+      payload: { ...basePayload, decisionOffsetSec: -60 }
+    });
+    const positive = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: { ...headers, "idempotency-key": "api-offset-positive" },
+      payload: { ...basePayload, decisionOffsetSec: 60 }
+    });
+    await app.close();
+
+    expect(zero.statusCode).toBe(400);
+    expect(negative.statusCode).toBe(400);
+    expect(positive.statusCode).toBe(201);
+    expect(V2ExperimentSchema.parse(positive.json()).data.experiment.configuration.config.decisionOffsetSec).toBe(60);
+  });
+
+  it("fails explicit historical replay when the selected market is outside the configured window", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookieHeader(session),
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-explicit-outside-window-create"
+      },
+      payload: {
+        name: "Explicit outside window",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
+        marketId: apiMarketId,
+        windowFrom: "2026-08-27T14:15:00.000Z",
+        windowTo: "2026-08-27T15:15:00.000Z",
+        decisionOffsetSec: 60,
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const created = V2ExperimentSchema.parse(create.json());
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${created.data.experiment.experimentId}/replay`,
+      headers: {
+        cookie: cookieHeader(session),
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-explicit-outside-window-replay"
+      }
+    });
+    let replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${created.data.experiment.experimentId}/replay`,
+      headers: { cookie: cookieHeader(session) }
+    });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = V2ReplaySchema.parse(replayReload.json()).data.replay;
+      if (current?.status === "FAILED") {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      replayReload = await app.inject({
+        method: "GET",
+        url: `/api/v2/experiments/${created.data.experiment.experimentId}/replay`,
+        headers: { cookie: cookieHeader(session) }
+      });
+    }
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(replay.statusCode).toBe(202);
+    const latest = V2ReplaySchema.parse(replayReload.json()).data.replay;
+    expect(latest?.status).toBe("FAILED");
+    expect(latest?.errorCode).toContain("EXPLICIT_MARKET_OUTSIDE_WINDOW");
+  });
+
+  it("paginates no-explicit-market replay selection until the historical window is complete", async () => {
+    const app = buildApp(config, { ...v2Deps(), historicalDreamDexClient: paginatedHistoricalClient(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-paginated-selection-create"
+      },
+      payload: {
+        name: "Paginated source replay",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
+        windowFrom: "2026-08-24T10:00:00.000Z",
+        windowTo: "2026-08-24T10:20:00.000Z",
+        decisionOffsetSec: 60,
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-paginated-selection-replay"
+      }
+    });
+    let replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: { cookie: cookies }
+    });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = V2ReplaySchema.parse(replayReload.json()).data.replay;
+      if (current?.status === "COMPLETED") {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      replayReload = await app.inject({
+        method: "GET",
+        url: `/api/v2/experiments/${experimentId}/replay`,
+        headers: { cookie: cookies }
+      });
+    }
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(replay.statusCode, JSON.stringify(replay.json())).toBe(202);
+    const completed = V2ReplaySchema.parse(replayReload.json()).data.replay;
+    expect(completed?.status).toBe("COMPLETED");
+    expect(completed?.selectedCount).toBe(1);
+    expect(completed?.processedCount).toBe(1);
+    expect(completed?.decisions?.[0]?.marketId).toBe(apiMarketId.toLowerCase());
   });
 
   it("creates experiments when built-in policy rows already contain full immutable manifests", async () => {
@@ -1191,6 +1431,12 @@ describe("API-001 server contracts", () => {
     expect(evidenceBody.data.evidence?.assessment.verdict).toBe("INSUFFICIENT_EVIDENCE");
     expect(evidenceBody.data.evidence?.assessment.evidencePlane).toBe("MAINNET_HISTORICAL");
     expect(evidenceBody.data.evidence?.assessment.pnlStatus).toBe("NOT_AVAILABLE");
+    expect(evidenceBody.data.evidence?.decision.nextPermittedAction).toBe("COLLECT_MORE_EVIDENCE");
+    expect(evidenceBody.data.evidence?.decision.promotionScope).toBe("NOT_APPLICABLE");
+    expect(evidenceBody.data.evidence?.decision.doesNotAuthorize).toContain("promotion to forward observation");
+    expect(evidenceBody.data.evidence?.progression.stages.map((stage) => stage.stage)).toEqual(
+      expect.arrayContaining(["Historical Replay", "Forward Observation", "Execution Proof"])
+    );
     expect(evidenceBody.data.evidence?.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
     expect(evidenceBody.data.evidence?.gateRows.map((row) => row.dimension)).toEqual(
       expect.arrayContaining(["Forecast sample", "Forecast quality", "Forecast calibration", "Tradeability / execution quality", "PnL", "Provenance"])

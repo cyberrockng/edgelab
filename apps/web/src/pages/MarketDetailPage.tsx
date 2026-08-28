@@ -18,6 +18,34 @@ function UnknownValue() {
   return <span className="mutedCell">Not available</span>;
 }
 
+function decimalFromRaw(raw: string | null | undefined, decimals: number): number | null {
+  if (raw === null || raw === undefined || !/^[0-9]+$/.test(raw) || decimals < 0) {
+    return null;
+  }
+  if (decimals === 0) {
+    const wholeValue = Number(raw);
+    return Number.isFinite(wholeValue) ? wholeValue : null;
+  }
+  const padded = raw.padStart(decimals + 1, "0");
+  const whole = padded.slice(0, -decimals) || "0";
+  const fraction = decimals === 0 ? "" : padded.slice(-decimals).replace(/0+$/, "");
+  const value = Number(`${whole}${fraction.length > 0 ? `.${fraction}` : ""}`);
+  return Number.isFinite(value) ? value : null;
+}
+
+function probabilityLabel(raw: string | null | undefined, decimals: number): string {
+  const value = decimalFromRaw(raw, decimals);
+  return value === null ? "Not available" : `${(value * 100).toFixed(2)}% YES/UP`;
+}
+
+function tokenQuantityLabel(raw: string | null | undefined): string {
+  const value = decimalFromRaw(raw, 18);
+  if (value === null) {
+    return "Not available";
+  }
+  return value >= 1 ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : value.toPrecision(4);
+}
+
 function routePlane(value: string | null): "mainnet-history" | "shannon-live" | null {
   if (value === "mainnet-history" || value === "shannon-live") {
     return value;
@@ -84,6 +112,7 @@ export default function MarketDetailPage() {
   });
 
   const market = detailQuery.data?.data.market;
+  const quoteDecimals = market?.quoteDecimals ?? 18;
   const bookCapabilityMessage = bookQuery.isLoading
     ? "Checking reconstruction capability..."
     : bookQuery.data ?? (bookQuery.isError ? apiErrorMessage(bookQuery.error) : "SOURCE_INCOMPLETE");
@@ -268,6 +297,7 @@ export default function MarketDetailPage() {
                   <span role="columnheader">Order</span>
                   <span role="columnheader">Side</span>
                   <span role="columnheader">Status</span>
+                  <span role="columnheader">Price</span>
                   <span role="columnheader">Remaining</span>
                 </div>
                 {ordersQuery.data?.data.orders.map((row) => (
@@ -275,7 +305,12 @@ export default function MarketDetailPage() {
                     <span role="cell">{compactId(row.orderId)}</span>
                     <span role="cell">{row.side}</span>
                     <span role="cell">{row.status}</span>
-                    <span role="cell">{row.remainingQuantityRaw}</span>
+                    <span role="cell" title={`raw ${row.priceRaw}`}>
+                      {probabilityLabel(row.priceRaw, quoteDecimals)}
+                    </span>
+                    <span role="cell" title={`raw ${row.remainingQuantityRaw}`}>
+                      {tokenQuantityLabel(row.remainingQuantityRaw)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -299,8 +334,12 @@ export default function MarketDetailPage() {
                       {row.blockNumber}:{row.logIndex}
                     </span>
                     <span role="cell">{row.kind ?? "Unknown"}</span>
-                    <span role="cell">{row.fillPriceRaw}</span>
-                    <span role="cell">{row.quantityRaw}</span>
+                    <span role="cell" title={`raw ${row.fillPriceRaw}`}>
+                      {probabilityLabel(row.fillPriceRaw, quoteDecimals)}
+                    </span>
+                    <span role="cell" title={`raw ${row.quantityRaw}`}>
+                      {tokenQuantityLabel(row.quantityRaw)}
+                    </span>
                   </div>
                 ))}
               </div>

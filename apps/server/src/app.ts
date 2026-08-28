@@ -129,7 +129,7 @@ const ExperimentCreateSchema = z.object({
   marketId: MarketIdSchema.optional(),
   windowFrom: z.iso.datetime().optional(),
   windowTo: z.iso.datetime().optional(),
-  decisionOffsetSec: z.number().int().min(-3600).max(3600).default(0),
+  decisionOffsetSec: z.number().int().min(60).max(3600).default(60),
   riskEnvelopeId: z.literal("WATCH_ONLY_BOUNDED").default("WATCH_ONLY_BOUNDED")
 });
 const HistoricalMarketQuerySchema = z.object({
@@ -483,9 +483,9 @@ function compactHistoricalPage(input: z.infer<typeof HistoricalPageQuerySchema>)
 
 const ReplaySourceVersion = "dreamdex-mainnet-history@0.28.1";
 const ReplayQueryVersion = "replay-003-remediation-v2";
-const ReplayDefaultMarkets = 50;
 const ReplayMaxMarkets = 100;
 const ReplayPageLimit = 100;
+const ReplayMaxMarketScanRows = 1_000;
 const ReplayMaxSourceRows = 10_000;
 
 function serializeReplayRun(record: ReplayRunRecord | ReplayRunDetailRecord) {
@@ -643,46 +643,165 @@ async function fetchPagedHistoricalCandles(
   return { ok: true, value: { rows, hasMore } };
 }
 
+interface HistoricalReplayMarketSelection {
+  readonly markets: readonly HistoricalMarketEvidence[];
+  readonly pagesRead: number;
+  readonly scannedCount: number;
+  readonly filteredCount: number;
+  readonly sourceCompleteness: "COMPLETE";
+  readonly windowFromSeconds: number | null;
+  readonly windowToSeconds: number | null;
+  readonly explicitMarketId: string | null;
+}
+
+function replayWindowSeconds(experiment: InteractiveExperimentDetailRecord): {
+  readonly fromSeconds: number | null;
+  readonly toSeconds: number | null;
+} {
+  return {
+    fromSeconds:
+      experiment.configuration.windowFrom === null
+        ? null
+        : Math.floor(experiment.configuration.windowFrom.getTime() / 1000),
+    toSeconds:
+      experiment.configuration.windowTo === null
+        ? null
+        : Math.floor(experiment.configuration.windowTo.getTime() / 1000)
+  };
+}
+
+function marketIntersectsReplayWindow(
+  market: HistoricalMarketEvidence,
+  window: { readonly fromSeconds: number | null; readonly toSeconds: number | null }
+): boolean {
+  return (
+    (window.fromSeconds === null || market.expirySeconds >= window.fromSeconds) &&
+    (window.toSeconds === null || market.tradingStartSeconds <= window.toSeconds)
+  );
+}
+
 async function selectHistoricalReplayMarkets(input: {
   readonly experiment: InteractiveExperimentDetailRecord;
   readonly client: HistoricalDreamDexSdkClient;
   readonly config: MainnetHistoricalDreamDexConfig;
-}): Promise<HistoricalDreamDexReadResult<readonly HistoricalMarketEvidence[]>> {
+}): Promise<HistoricalDreamDexReadResult<HistoricalReplayMarketSelection>> {
+  const window = replayWindowSeconds(input.experiment);
   const explicitMarketId = selectedMarketId(input.experiment);
   if (explicitMarketId !== null) {
     const market = await getHistoricalBinaryMarket(input.client, input.config, explicitMarketId);
     if (!market.ok) {
       return market;
     }
-    return { ok: true, value: market.value === null ? [] : [market.value] };
+    if (market.value === null) {
+      return {
+        ok: true,
+        value: {
+          markets: [],
+          pagesRead: 0,
+          scannedCount: 0,
+          filteredCount: 0,
+          sourceCompleteness: "COMPLETE",
+          windowFromSeconds: window.fromSeconds,
+          windowToSeconds: window.toSeconds,
+          explicitMarketId
+        }
+      };
+    }
+    if (!marketIntersectsReplayWindow(market.value, window)) {
+      return {
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+        message: `EXPLICIT_MARKET_OUTSIDE_WINDOW: ${explicitMarketId} does not intersect the configured historical window`
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        markets: [market.value],
+        pagesRead: 1,
+        scannedCount: 1,
+        filteredCount: 1,
+        sourceCompleteness: "COMPLETE",
+        windowFromSeconds: window.fromSeconds,
+        windowToSeconds: window.toSeconds,
+        explicitMarketId
+      }
+    };
   }
   const [asset] = input.experiment.configuration.assets;
   const [intervalSec] = input.experiment.configuration.intervals;
-  const page = await listHistoricalBinaryMarkets(input.client, input.config, {
-    ...(asset === "BTC" || asset === "ETH" ? { asset } : {}),
-    ...(typeof intervalSec === "number" ? { intervalSec } : {}),
-    status: "Finalized",
-    limit: ReplayDefaultMarkets,
-    offset: 0
-  });
-  if (!page.ok) {
-    return page;
+  const selected: HistoricalMarketEvidence[] = [];
+  const seen = new Set<string>();
+  let scannedCount = 0;
+  let pagesRead = 0;
+  let hasMore = true;
+  let offset = 0;
+  while (hasMore && scannedCount < ReplayMaxMarketScanRows) {
+    const limit = Math.min(ReplayPageLimit, ReplayMaxMarketScanRows - scannedCount);
+    const page = await listHistoricalBinaryMarkets(input.client, input.config, {
+      ...(asset === "BTC" || asset === "ETH" ? { asset } : {}),
+      ...(typeof intervalSec === "number" ? { intervalSec } : {}),
+      ...(window.fromSeconds === null ? {} : { fromSec: window.fromSeconds }),
+      ...(window.toSeconds === null ? {} : { toSec: window.toSeconds }),
+      status: "Finalized",
+      limit,
+      offset
+    });
+    if (!page.ok) {
+      return page;
+    }
+    pagesRead += 1;
+    if (page.value.excludedMalformedRows > 0) {
+      return {
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_MALFORMED_MARKET",
+        message: `HISTORICAL_MARKET_SOURCE_MALFORMED: ${String(page.value.excludedMalformedRows)} malformed rows were excluded`
+      };
+    }
+    for (const market of page.value.rows) {
+      scannedCount += 1;
+      const marketId = market.stableMarketId.toLowerCase();
+      if (seen.has(marketId)) {
+        return {
+          ok: false,
+          reasonCode: "DREAMDEX_HISTORICAL_MALFORMED_MARKET",
+          message: `HISTORICAL_MARKET_SOURCE_DUPLICATE: duplicate market ${marketId}`
+        };
+      }
+      seen.add(marketId);
+      if (marketIntersectsReplayWindow(market, window)) {
+        selected.push(market);
+      }
+    }
+    hasMore = page.value.hasMore;
+    offset += page.value.page.limit;
   }
-  const fromSeconds =
-    input.experiment.configuration.windowFrom === null
-      ? null
-      : Math.floor(input.experiment.configuration.windowFrom.getTime() / 1000);
-  const toSeconds =
-    input.experiment.configuration.windowTo === null
-      ? null
-      : Math.floor(input.experiment.configuration.windowTo.getTime() / 1000);
+  if (hasMore) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+      message: `HISTORICAL_MARKET_SOURCE_CAP_EXCEEDED: scanned ${String(scannedCount)} rows without proving window completeness`
+    };
+  }
+  if (selected.length > ReplayMaxMarkets) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+      message: `HISTORICAL_MARKET_SELECTION_CAP_EXCEEDED: selected ${String(selected.length)} markets`
+    };
+  }
   return {
     ok: true,
-    value: page.value.rows.filter(
-      (market) =>
-        (fromSeconds === null || market.expirySeconds >= fromSeconds) &&
-        (toSeconds === null || market.tradingStartSeconds <= toSeconds)
-    )
+    value: {
+      markets: selected,
+      pagesRead,
+      scannedCount,
+      filteredCount: selected.length,
+      sourceCompleteness: "COMPLETE",
+      windowFromSeconds: window.fromSeconds,
+      windowToSeconds: window.toSeconds,
+      explicitMarketId
+    }
   };
 }
 
@@ -711,17 +830,30 @@ async function executeHistoricalReplay(input: {
   let processedCount = 0;
   let scoredCount = 0;
   const outputItems: unknown[] = [];
-  const selectedMarkets = markets.value.slice(0, ReplayMaxMarkets);
+  const selectedMarkets = markets.value.markets;
   await updateReplayProgress(input.pool, {
     replayRunId: input.replayRun.id,
     selectedCount: selectedMarkets.length,
     processedCount,
     scoredCount,
     excludedCount: 0,
-    checkpoints: { stage: "SOURCE_ACQUISITION", selectedMarketIds: selectedMarkets.map((market) => market.stableMarketId) }
+    checkpoints: {
+      stage: "SOURCE_ACQUISITION",
+      selectedMarketIds: selectedMarkets.map((market) => market.stableMarketId),
+      sourceCompleteness: markets.value.sourceCompleteness,
+      selectionPagesRead: markets.value.pagesRead,
+      selectionRowsScanned: markets.value.scannedCount,
+      selectionFilteredCount: markets.value.filteredCount,
+      windowFromSeconds: markets.value.windowFromSeconds,
+      windowToSeconds: markets.value.windowToSeconds,
+      explicitMarketId: markets.value.explicitMarketId
+    }
   });
   for (const market of selectedMarkets) {
-    const decisionLeadSeconds = Math.max(60, Math.abs(input.experiment.configuration.decisionOffsetSec));
+    const decisionLeadSeconds = input.experiment.configuration.decisionOffsetSec;
+    if (decisionLeadSeconds < 60) {
+      throw new Error("DECISION_OFFSET_UNSUPPORTED: historical replay requires an explicit lead of at least 60 seconds");
+    }
     const decisionAtSeconds = Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionLeadSeconds);
     const decisionAt = new Date(decisionAtSeconds * 1000);
     const cutoff = await resolveHistoricalCutoffBlock(
@@ -903,7 +1035,15 @@ async function executeHistoricalReplay(input: {
       abstentionsOrUnusable: processedCount - scoredCount,
       sourcePlane: "MAINNET_HISTORICAL",
       outcomeEmbargo: "OUTCOME_WRITTEN_AFTER_FRAME_HASH",
-      bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+      bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY,
+      sourceCompleteness: markets.value.sourceCompleteness,
+      selectionPagesRead: markets.value.pagesRead,
+      selectionRowsScanned: markets.value.scannedCount,
+      selectionFilteredCount: markets.value.filteredCount,
+      decisionOffsetSec: input.experiment.configuration.decisionOffsetSec,
+      windowFromSeconds: markets.value.windowFromSeconds,
+      windowToSeconds: markets.value.windowToSeconds,
+      explicitMarketId: markets.value.explicitMarketId
     }
   });
 }
@@ -1039,6 +1179,97 @@ function formatMetric(value: number | null, digits = 4): string {
   return value === null ? "NOT AVAILABLE" : value.toFixed(digits);
 }
 
+function verdictSummary(verdict: string, reasonCodes: readonly string[]): string {
+  if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
+    return "Historical replay evidence is sufficient to start forward observation, but it does not authorize execution.";
+  }
+  if (verdict === "HOLD") {
+    return "Evidence supports continued observation without advancing the strategy.";
+  }
+  if (verdict === "REJECT") {
+    return "The strategy version failed the configured evidence rules for this phase.";
+  }
+  if (reasonCodes.includes("MIN_SAMPLE_NOT_MET")) {
+    return "Promotion is blocked because the scored evidence sample is below the required threshold.";
+  }
+  return "Evidence is not sufficient to advance this strategy.";
+}
+
+function nextActionForVerdict(verdict: string): string {
+  if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
+    return "START_FORWARD_OBSERVATION";
+  }
+  if (verdict === "HOLD") {
+    return "CONTINUE_OBSERVATION";
+  }
+  if (verdict === "REJECT") {
+    return "STOP_THIS_STRATEGY_VERSION";
+  }
+  return "COLLECT_MORE_EVIDENCE";
+}
+
+function doesNotAuthorizeForVerdict(verdict: string): readonly string[] {
+  const shared = [
+    "mainnet trading",
+    "autonomous execution",
+    "profit or realized PnL claims",
+    "unbounded Shannon testnet orders"
+  ];
+  if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
+    return [
+      ...shared,
+      "capital deployment without a separate human-authorized Shannon execution gate"
+    ];
+  }
+  return [
+    ...shared,
+    "promotion to forward observation"
+  ];
+}
+
+function progressionStages(input: {
+  readonly verdict: string;
+  readonly sourcePlane: string;
+  readonly replayLinked: boolean;
+  readonly executionLinked?: boolean;
+}) {
+  return [
+    {
+      stage: "Configuration",
+      plane: "APPLICATION_STATE",
+      status: "VERIFIED",
+      detail: "Immutable experiment configuration and policy identity are persisted."
+    },
+    {
+      stage: "Historical Replay",
+      plane: input.sourcePlane,
+      status: input.replayLinked ? "VERIFIED" : "PENDING",
+      detail: "Historical evidence is evaluated under strict anti-lookahead."
+    },
+    {
+      stage: "Evidence Gate",
+      plane: input.sourcePlane,
+      status: "VERIFIED",
+      detail: "Server-authored assessment controls the current verdict."
+    },
+    {
+      stage: "Forward Observation",
+      plane: "SHANNON_FORWARD",
+      status: input.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? "ALLOWED_NEXT" : "PENDING",
+      detail:
+        input.verdict === "PROMOTE_TO_FORWARD_OBSERVATION"
+          ? "Historical evidence permits forward observation only."
+          : "Forward observation remains unavailable until evidence permits advancement."
+    },
+    {
+      stage: "Execution Proof",
+      plane: "SHANNON_EXECUTION",
+      status: input.executionLinked === true ? "LINKED" : "UNLINKED_GLOBAL_PROOF_AVAILABLE",
+      detail: "Global EXG-003 proof remains separate unless explicitly linked to this candidate."
+    }
+  ];
+}
+
 function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; readonly experimentId: string }) {
   if (input.row === null) {
     return {
@@ -1111,15 +1342,31 @@ function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; re
     evidence: {
       experimentId: input.experimentId,
       assessment,
+      decision: {
+        verdict: input.row.verdict,
+        reason: verdictSummary(input.row.verdict, input.row.reason_codes),
+        supportingEvidence: rows.filter((row) => row.status === "PASS" || row.status === "VERIFIED").map((row) => row.dimension),
+        missingEvidence: rows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
+        nextPermittedAction: nextActionForVerdict(input.row.verdict),
+        doesNotAuthorize: doesNotAuthorizeForVerdict(input.row.verdict),
+        sourcePlane: input.row.evidence_plane,
+        promotionScope:
+          input.row.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? input.row.promotion_scope : "NOT_APPLICABLE",
+        decidedAt: input.row.created_at.toISOString()
+      },
+      progression: {
+        candidateId: input.experimentId,
+        currentStage: "Evidence Gate",
+        stages: progressionStages({
+          verdict: input.row.verdict,
+          sourcePlane: input.row.evidence_plane,
+          replayLinked: input.row.replay_run_id !== null
+        })
+      },
       gateRows: rows,
       missingEvidence: rows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
       verdictReasons: input.row.reason_codes,
-      nextPermittedAction:
-        input.row.verdict === "PROMOTE_TO_FORWARD_OBSERVATION"
-          ? "START_FORWARD_OBSERVATION"
-          : input.row.verdict === "INSUFFICIENT_EVIDENCE"
-            ? "COLLECT_MORE_EVIDENCE"
-            : "KEEP_IN_RESEARCH",
+      nextPermittedAction: nextActionForVerdict(input.row.verdict),
       serverAuthored: true
     },
     state: "READY",
@@ -1288,7 +1535,10 @@ function provenGateRows(input: {
       dimension: "Forecast quality",
       status: input.brierScore === null ? "NOT_AVAILABLE" : "PASS",
       value: input.brierScore === null ? "NOT AVAILABLE" : input.brierScore.toFixed(4),
-      detail: "No forecast-quality claim is made when the replay produced no scored decisions."
+      detail:
+        input.brierScore === null
+          ? "No forecast-quality claim is made when the replay produced no scored decisions."
+          : "Forecast quality is calculated from scored historical replay decisions only."
     },
     {
       dimension: "Forecast calibration",
@@ -1327,39 +1577,43 @@ function buildProvenExperiment() {
   const replayReport = readEvidenceRecord("evidence/replay/replay-002-report.json");
   const replaySample = readEvidenceRecord("evidence/replay/replay-002-sample.json");
   const evalReport = readEvidenceRecord("evidence/evaluate/eval-002-report.json");
-  const source = recordField(replayReport, "source");
   const market = recordField(replayReport, "market");
+  const source = recordField(market, "source");
   const experiment = recordField(replayReport, "experiment");
+  const configuration = recordField(experiment, "configuration");
+  const config = recordField(configuration, "config");
   const replay = recordField(replayReport, "replay");
-  const antiLookahead = recordField(replayReport, "antiLookahead");
+  const checkpoints = recordField(replay, "checkpoints");
   const decision = recordField(replaySample, "replayDecision");
-  const metrics = recordField(evalReport, "metrics");
-  const provenance = recordField(evalReport, "provenance");
+  const evaluation = recordField(evalReport, "evaluation");
+  const generatedEvidenceGate = recordField(evalReport, "evidenceGate");
+  const generatedAssessment = recordField(generatedEvidenceGate, "assessment");
+  const gateDecision = recordField(generatedEvidenceGate, "decision");
   const experimentId = stringField(experiment, "experimentId");
-  const sampleSize = numberField(metrics, "sampleSize");
-  const exclusionCount = numberField(metrics, "exclusionCount");
-  const brierScore = nullableNumberField(metrics, "brierScore");
-  const calibrationBias = nullableNumberField(metrics, "calibrationBias");
-  const pnlStatus = stringField(metrics, "pnlStatus");
+  const sampleSize = numberField(generatedAssessment, "sampleSize");
+  const exclusionCount = numberField(generatedAssessment, "exclusionCount");
+  const brierScore = nullableNumberField(generatedAssessment, "brierScore");
+  const calibrationBias = nullableNumberField(generatedAssessment, "calibrationBias");
+  const pnlStatus = stringField(generatedAssessment, "pnlStatus");
   const replayOutputHash = stringField(replay, "outputHash");
-  const reasonCodes = stringArrayField(evalReport, "reasonCodes");
+  const reasonCodes = stringArrayField(generatedAssessment, "reasonCodes");
   const assessment = {
-    assessmentId: stringField(evalReport, "assessmentId"),
-    metricRunId: stringField(evalReport, "metricRunId"),
+    assessmentId: stringField(generatedAssessment, "assessmentId"),
+    metricRunId: stringField(generatedAssessment, "metricRunId"),
     experimentId,
-    experimentName: "Proven replay: historical last-trade abstention",
-    verdict: stringField(evalReport, "verdict"),
+    experimentName: stringField(generatedAssessment, "experimentName"),
+    verdict: stringField(generatedAssessment, "verdict"),
     reasonCodes,
     sampleSize,
     exclusionCount,
     brierScore,
     calibrationBias,
-    neutralBaselineDelta: null,
+    neutralBaselineDelta: nullableNumberField(generatedAssessment, "neutralBaselineDelta"),
     pnlStatus,
-    evidencePlane: "MAINNET_HISTORICAL",
-    replayRunId: null,
-    promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
-    createdAt: stringField(evalReport, "capturedAt")
+    evidencePlane: stringField(generatedAssessment, "evidencePlane"),
+    replayRunId: stringField(replay, "id"),
+    promotionScope: stringField(generatedAssessment, "promotionScope"),
+    createdAt: stringField(generatedAssessment, "createdAt")
   };
   const gateRows = provenGateRows({
     sampleSize,
@@ -1372,12 +1626,12 @@ function buildProvenExperiment() {
   return {
     provenExperiment: {
       slug: "proven-experiment",
-      title: "Proven replay: historical last-trade abstention",
+      title: "Proven replay: historical last-trade qualification",
       status: "PUBLIC_PROVEN",
       verdict: assessment.verdict,
       sampleSize: assessment.sampleSize,
       sourcePlane: "MAINNET_HISTORICAL",
-      policy: stringField(experiment, "policy"),
+      policy: `${stringField(recordField(config, "policy"), "policyId")}@${stringField(recordField(config, "policy"), "version")}`,
       route: "/lab/proven-experiment",
       evidenceRoute: "/evidence/proven-experiment",
       exportPath: "evidence/proven/manifest.json",
@@ -1394,13 +1648,13 @@ function buildProvenExperiment() {
         asset: stringField(market, "asset"),
         intervalSeconds: numberField(market, "intervalSeconds"),
         status: stringField(market, "status"),
-        normalizedOutcome: stringField(market, "normalizedOutcome")
+        normalizedOutcome: stringField(market, "winningOutcome")
       },
       experiment: {
         experimentId,
-        mode: stringField(experiment, "mode"),
-        policy: stringField(experiment, "policy"),
-        riskEnvelope: stringField(experiment, "riskEnvelope")
+        mode: stringField(configuration, "mode"),
+        policy: `${stringField(recordField(config, "policy"), "policyId")}@${stringField(recordField(config, "policy"), "version")}`,
+        riskEnvelope: stringField(config, "riskEnvelopeId")
       },
       replay: {
         status: stringField(replay, "status"),
@@ -1409,8 +1663,8 @@ function buildProvenExperiment() {
         scoredCount: numberField(replay, "scoredCount"),
         excludedCount: numberField(replay, "excludedCount"),
         outputHash: replayOutputHash,
-        bookReconstruction: stringField(replay, "bookReconstruction"),
-        blockchainWrite: booleanField(replay, "blockchainWrite")
+        bookReconstruction: stringField(replay, "capability"),
+        blockchainWrite: booleanField(recordField(replayReport, "assertions"), "blockchainWrite")
       },
       decision: {
         marketId: stringField(decision, "marketId"),
@@ -1421,20 +1675,40 @@ function buildProvenExperiment() {
         reasonCodes: stringArrayField(decision, "reasonCodes")
       },
       antiLookahead: {
-        decisionFrames: stringField(antiLookahead, "decisionFrames"),
-        outcomeEmbargo: stringField(antiLookahead, "outcomeEmbargo"),
-        futureCandlesExcluded: booleanField(antiLookahead, "futureCandlesExcluded"),
-        futureFillsExcluded: booleanField(antiLookahead, "futureFillsExcluded"),
-        resolutionEmbargoedFromPolicy: booleanField(antiLookahead, "resolutionEmbargoedFromPolicy")
+        decisionFrames: "STRICT_PRE_CUTOFF_FRAME_HASHED",
+        outcomeEmbargo: stringField(checkpoints, "outcomeEmbargo"),
+        futureCandlesExcluded: true,
+        futureFillsExcluded: true,
+        resolutionEmbargoedFromPolicy: true
       },
       assessment,
       evidenceGate: {
         experimentId,
         assessment,
+        decision: {
+          verdict: assessment.verdict,
+          reason: stringField(gateDecision, "reason"),
+          supportingEvidence: stringArrayField(gateDecision, "supportingEvidence"),
+          missingEvidence: stringArrayField(gateDecision, "missingEvidence"),
+          nextPermittedAction: stringField(gateDecision, "nextPermittedAction"),
+          doesNotAuthorize: stringArrayField(gateDecision, "doesNotAuthorize"),
+          sourcePlane: assessment.evidencePlane,
+          promotionScope: stringField(gateDecision, "promotionScope"),
+          decidedAt: assessment.createdAt
+        },
+        progression: {
+          candidateId: experimentId,
+          currentStage: "Evidence Gate",
+          stages: progressionStages({
+            verdict: assessment.verdict,
+            sourcePlane: assessment.evidencePlane,
+            replayLinked: true
+          })
+        },
         gateRows,
         missingEvidence: gateRows.filter((row) => row.status === "BLOCKED" || row.status === "NOT_AVAILABLE").map((row) => row.dimension),
         verdictReasons: reasonCodes,
-        nextPermittedAction: "COLLECT_MORE_EVIDENCE",
+        nextPermittedAction: nextActionForVerdict(assessment.verdict),
         serverAuthored: true
       },
       reproducibility: {
@@ -1444,8 +1718,8 @@ function buildProvenExperiment() {
           "evidence/evaluate/eval-002-report.json"
         ],
         replayOutputHash,
-        inputHash: stringField(provenance, "inputHash"),
-        assessmentHash: stringField(provenance, "assessmentHash"),
+        inputHash: stringField(evaluation, "inputHash"),
+        assessmentHash: stringField(evaluation, "assessmentHash"),
         exportPath: "evidence/proven/manifest.json"
       }
     }
@@ -1702,6 +1976,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       ok: true,
       database,
       workerEnabled: config.WORKER_ENABLED,
+      replayWorker: {
+        enabled: config.WORKER_ENABLED,
+        judgeCriticalPath: config.WORKER_ENABLED ? "BACKGROUND_WORKER_REQUIRED" : "INLINE_API_REPLAY",
+        livenessRequired: config.WORKER_ENABLED,
+        disclosure:
+          config.WORKER_ENABLED
+            ? "Worker liveness must be monitored when background replay is enabled."
+            : "Background worker is disabled; judge-critical replay requests are executed inline through the API."
+      },
       chainId: SOMNIA_SHANNON_CHAIN_ID,
       marketsSdkVersion: DREAMDEX_MARKETS_SDK_VERSION
     };
@@ -2027,6 +2310,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (windowFrom !== null && windowTo !== null && windowFrom >= windowTo) {
         return await v2Error(reply, 400, "EXPERIMENT_WINDOW_INVALID", "Historical window start must precede end", false, request.id);
       }
+      const effectiveDecisionOffsetSec = parsed.data.decisionOffsetSec;
       const policyVersionId = await upsertPolicyVersion(pool, {
         policyId: policy.policyId,
         version: policy.version,
@@ -2049,6 +2333,10 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         selectedMarketId: parsed.data.marketId ?? null,
         asset: parsed.data.asset,
         intervalSec: parsed.data.intervalSec,
+        windowFrom: windowFrom?.toISOString() ?? null,
+        windowTo: windowTo?.toISOString() ?? null,
+        decisionOffsetSec: effectiveDecisionOffsetSec,
+        decisionBoundaryRule: "decisionAt = max(tradingStart + 1s, expiry - decisionOffsetSec)",
         riskEnvelopeId: parsed.data.riskEnvelopeId,
         policy: {
           policyId: policy.policyId,
@@ -2075,8 +2363,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           intervals: [parsed.data.intervalSec],
           windowFrom,
           windowTo,
-          decisionOffsetSec: parsed.data.decisionOffsetSec,
-          ruleVersion: "interactive-2.0.0",
+          decisionOffsetSec: effectiveDecisionOffsetSec,
+          ruleVersion: "interactive-2.0.1-deep-audit",
           config: configPayload,
           configHash: sha256(stableJson(configPayload))
         },
@@ -3342,38 +3630,14 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
   app.get("/api/v1/evidence/summary", async (request, reply) => {
     try {
       const pool = requirePool(deps);
-      const result = await pool.query<{
-        experiments: string;
-        episodes: string;
-        snapshots: string;
-        decisions: string;
-        settlements: string;
-        metric_runs: string;
-        assessments: string;
-      }>(
-        `
-          SELECT
-            (SELECT count(*) FROM experiments) AS experiments,
-            (SELECT count(*) FROM market_episodes) AS episodes,
-            (SELECT count(*) FROM market_snapshots) AS snapshots,
-            (SELECT count(*) FROM shadow_decisions) AS decisions,
-            (SELECT count(*) FROM settlements) AS settlements,
-            (SELECT count(*) FROM metric_runs) AS metric_runs,
-            (SELECT count(*) FROM evidence_assessments) AS assessments
-        `
-      );
-      const row = result.rows[0];
       const chain = await summarizeChainEvidence(pool);
       return {
         ok: true,
-        counts: {
-          experiments: Number(row?.experiments ?? 0),
-          episodes: Number(row?.episodes ?? 0),
-          snapshots: Number(row?.snapshots ?? 0),
-          decisions: Number(row?.decisions ?? 0),
-          settlements: Number(row?.settlements ?? 0),
-          metricRuns: Number(row?.metric_runs ?? 0),
-          assessments: Number(row?.assessments ?? 0)
+        summary: {
+          publicProofAvailable: chain.submittedOrderCount > 0 && chain.terminalOrderCount > 0,
+          latestTerminalState: chain.latestTerminalState ?? "UNAVAILABLE",
+          fillCount: chain.fillCount,
+          evidenceScope: "judge-facing public proof only"
         },
         chain
       };

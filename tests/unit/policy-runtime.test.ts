@@ -208,6 +208,24 @@ describe("POLICY-001 immutable policy runtime", () => {
     );
   });
 
+  it("changes corrected historical policy identity when evaluate behavior changes", () => {
+    const original = historicalPolicy("1.1.0");
+    const changed = {
+      ...original,
+      evaluate() {
+        return {
+          forecastPUp: 0.99,
+          action: "WATCH_ONLY" as const,
+          reasonCodes: ["MUTATED_POLICY"]
+        };
+      }
+    };
+    const originalManifest = createHistoricalPolicyManifest(original);
+    const changedManifest = createHistoricalPolicyManifest(changed);
+    expect(changedManifest.sourceHash).not.toBe(originalManifest.sourceHash);
+    expect(changedManifest.implementationHash).not.toBe(originalManifest.implementationHash);
+  });
+
   it("evaluates Last-Trade Probability only from pre-cutoff historical fills", () => {
     const frameResult = buildHistoricalDecisionFrame({
       market: historicalMarket,

@@ -85,13 +85,16 @@ test("every product route mounts by direct navigation without horizontal overflo
   }
 });
 
-test("navigation, active route state, and keyboard focus work", async ({ page }) => {
+test("navigation, active route state, and keyboard focus work", async ({ page }, testInfo) => {
   await page.goto("/", { waitUntil: "networkidle" });
   await page.keyboard.press("Tab");
   await expect(page.locator(":focus")).toHaveText("Skip to content");
   await page.keyboard.press("Enter");
   await expect(page.locator(":focus")).toHaveAttribute("id", "main-content");
 
+  if (testInfo.project.name.includes("mobile")) {
+    await page.getByText("Menu").click();
+  }
   await page.getByRole("link", { name: "Markets" }).click();
   await expect(page).toHaveURL(/\/markets$/);
   await expect(page.getByRole("link", { name: "Markets" })).toHaveClass(/active/);
@@ -135,14 +138,14 @@ test("proven experiment path exposes captured replay without favorable-data clai
   await expect(workspace).toContainText("reproducibility and completeness, not favorability");
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
   await expect(page).toHaveURL("/evidence/proven-experiment");
-  await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("MIN SAMPLE NOT MET");
+  await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("MIN_SAMPLE_NOT_MET");
 });
 
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await page.goto("/evidence/proven-experiment", { waitUntil: "networkidle" });
   const gate = page.getByRole("region", { name: "Evidence gate" });
   await expect(gate).toContainText("INSUFFICIENT EVIDENCE");
-  await expect(gate).toContainText("MIN SAMPLE NOT MET");
+  await expect(gate).toContainText("MIN_SAMPLE_NOT_MET");
   await expect(gate).toContainText("MAINNET_HISTORICAL");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Forecast sample");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("PnL");

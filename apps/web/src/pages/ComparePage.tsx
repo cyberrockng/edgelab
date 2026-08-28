@@ -7,6 +7,7 @@ import {
   fetchAssessments,
   fetchComparison,
   fetchComparisons,
+  fetchProvenExperiment,
   type AssessmentSummaryRecord,
   type ComparisonRecord
 } from "../data.js";
@@ -42,6 +43,10 @@ export default function ComparePage() {
   const comparisonsQuery = useQuery({
     queryKey: ["comparisons"],
     queryFn: fetchComparisons
+  });
+  const provenQuery = useQuery({
+    queryKey: ["proven-experiment", "compare"],
+    queryFn: () => fetchProvenExperiment("proven-experiment")
   });
   const comparisonDetailQuery = useQuery({
     enabled: comparisonId !== undefined,
@@ -111,7 +116,8 @@ export default function ComparePage() {
         ) : null}
         {assessments.length === 0 ? (
           <div className="stateBox">
-            No server assessments exist for this research session yet. Run and evaluate at least two experiments to save a comparison.
+            No private assessments exist for this research session yet. The public comparison below remains available for
+            judge review; run and evaluate at least two experiments to save your own comparison.
           </div>
         ) : (
           <>
@@ -180,6 +186,62 @@ export default function ComparePage() {
           ))}
         </div>
       </section>
+      {assessments.length === 0 ? (
+        <section className="routePanel" aria-label="Public comparison">
+          <div className="sectionHeader">
+            <div>
+              <p className="eyebrow">Public Read-Only Comparison</p>
+              <h2>Corrected historical replay versus neutral baseline</h2>
+            </div>
+            <span className="statusPill">Demo evidence; no capital authorization</span>
+          </div>
+          {provenQuery.isError ? (
+            <div className="stateBox errorState" role="alert">
+              {apiErrorMessage(provenQuery.error)}
+            </div>
+          ) : null}
+          <div className="policyMatrix" role="table" aria-label="Public evidence comparison">
+            <div role="row">
+              <span role="columnheader">Strategy</span>
+              <span role="columnheader">Evidence plane</span>
+              <span role="columnheader">Observations</span>
+              <span role="columnheader">Verdict scope</span>
+              <span role="columnheader">Missing evidence</span>
+              <span role="columnheader">Does not authorize</span>
+            </div>
+            <div role="row">
+              <span role="cell" data-label="Strategy">historical-last-trade@1.1.0</span>
+              <span role="cell" data-label="Evidence plane">MAINNET_HISTORICAL</span>
+              <span role="cell" data-label="Observations">
+                {provenQuery.data?.data.provenExperiment.sampleSize ?? "Loading"}
+              </span>
+              <span role="cell" data-label="Verdict scope">
+                {provenQuery.data?.data.provenExperiment.evidenceGate.decision.promotionScope ?? "NOT_APPLICABLE"}
+              </span>
+              <span role="cell" data-label="Missing evidence">
+                {provenQuery.data?.data.provenExperiment.evidenceGate.missingEvidence.join(", ") ?? "Loading"}
+              </span>
+              <span role="cell" data-label="Does not authorize">mainnet trading, autonomous execution, profit claims</span>
+            </div>
+            <div role="row">
+              <span role="cell" data-label="Strategy">reference-neutral@1.0.0</span>
+              <span role="cell" data-label="Evidence plane">SHANNON_FORWARD workflow baseline</span>
+              <span role="cell" data-label="Observations">NOT AVAILABLE</span>
+              <span role="cell" data-label="Verdict scope">NOT_APPLICABLE</span>
+              <span role="cell" data-label="Missing evidence">Historical replay, evaluation, execution linkage</span>
+              <span role="cell" data-label="Does not authorize">capital execution or profitability claims</span>
+            </div>
+          </div>
+          <div className="actionRow">
+            <Link className="primaryAction" to="/lab/proven-experiment">
+              Inspect Proven Experiment
+            </Link>
+            <Link className="secondaryAction" to="/evidence/proven-experiment">
+              Open Evidence Gate
+            </Link>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

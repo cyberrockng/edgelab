@@ -1,60 +1,168 @@
 {
-  "evidenceId": "REPLAY-002",
-  "capturedAt": "2026-08-26T17:47:18Z",
-  "supersedes": {
-    "capturedAt": "2026-08-25T11:54:48.289Z",
-    "reason": "Fresh System 3 S3F-001 found historical-last-trade@1.0.0 fill semantics invalid. This report supersedes the public active metadata with historical-last-trade@1.1.0 semantics. The captured sample remains an abstention because no qualifying pre-cutoff fill existed in its 900-second window."
-  },
-  "producer": "EdgeLab local execution agent",
-  "task": "REPLAY-002 real historical replay vertical slice",
-  "source": {
-    "plane": "MAINNET_HISTORICAL",
-    "chainId": 5031,
-    "sdkVersion": "0.28.1",
-    "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
-    "writePolicy": "read-only-no-mainnet-signer"
-  },
+  "task": "S3D-001/S3D-003/S3D-004/S3D-005 regenerated replay evidence",
+  "generatedAt": "2026-08-27T19:47:05.839Z",
+  "runtime": "local production bundle",
+  "buildCommit": "deep-audit-local",
+  "status": "REGENERATED",
+  "sourcePlane": "MAINNET_HISTORICAL",
   "market": {
-    "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001bdb",
+    "stableMarketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+    "marketAddress": "0xf7019f7fd84aed12d998cbdbeb619331e2f40431",
+    "poolAddress": "0x39b910486dbc82510d0990caa8b4af05da864bb4",
+    "nonce": "311",
     "asset": "BTC",
-    "intervalSeconds": 900,
+    "question": "BTC closes at or above its opening price",
     "status": "Finalized",
-    "winningOutcomeRaw": "1",
-    "normalizedOutcome": "NO"
+    "finalized": true,
+    "winningOutcome": "0",
+    "intervalSeconds": 900,
+    "tradingStartSeconds": 1787858100,
+    "expirySeconds": 1787859000,
+    "collateral": "0x00000022da000002656c64d9ea6011ea952d008a",
+    "quoteDecimals": 18,
+    "tradeCount": 1,
+    "openingPriceRaw": "8016762",
+    "source": {
+      "plane": "MAINNET_HISTORICAL",
+      "chainId": 5031,
+      "rpcUrl": "https://api.infra.mainnet.somnia.network",
+      "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
+      "sdkVersion": "0.28.1",
+      "evidenceClass": "LIVE",
+      "retrievedAt": "2026-08-27T19:47:11.737Z",
+      "writePolicy": "read-only-no-mainnet-signer"
+    }
+  },
+  "selectedFillSample": {
+    "id": "397066316_6",
+    "marketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+    "poolAddress": "0x39b910486dbc82510d0990caa8b4af05da864bb4",
+    "fillPriceRaw": "232000000000000000",
+    "quantityRaw": "18337000000000000000",
+    "quoteQuantityRaw": "4254184000000000000",
+    "kind": "MINT_A_PAIR",
+    "makerOrderId": "73786976294838722982",
+    "makerRemainingQuantityRaw": "181663000000000000000",
+    "makerSide": "BUY_YES",
+    "takerOrderId": "55340232221129171370",
+    "takerRemainingQuantityRaw": "0",
+    "takerSide": "BUY_NO",
+    "takerIsBid": false,
+    "timestampSeconds": 1787858798,
+    "blockNumber": "397066316",
+    "transactionIndex": null,
+    "logIndex": "6",
+    "txHash": "0xef35a472610d0b43aa63c1e8af1bc4a94fd2256f1240c93a902c329d313dc54a",
+    "source": {
+      "plane": "MAINNET_HISTORICAL",
+      "chainId": 5031,
+      "rpcUrl": "https://api.infra.mainnet.somnia.network",
+      "indexerUrl": "https://prd.smk.somnia.host/v1/graphql",
+      "sdkVersion": "0.28.1",
+      "evidenceClass": "LIVE",
+      "retrievedAt": "2026-08-27T19:47:12.876Z",
+      "writePolicy": "read-only-no-mainnet-signer"
+    }
   },
   "experiment": {
-    "experimentId": "97e0f4e2-b428-461f-bad3-2eed77e0d2b4",
-    "mode": "HISTORICAL_REPLAY",
-    "policy": "historical-last-trade@1.1.0",
-    "supersededPolicy": "historical-last-trade@1.0.0",
-    "policySourceHash": "928d73916b72d9434b495fb72f79d87b06bbb048cca8bc3a44a5f2f8282ba5ed",
-    "policyImplementationHash": "70c8e44d06905038a4ba9b4e695e701da5415dacd9031bc0e58305db2289b5ff",
-    "riskEnvelope": "WATCH_ONLY_BOUNDED"
+    "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+    "name": "Deep Audit Proven BTC 900s MINT_A_PAIR Replay",
+    "status": "DRAFT",
+    "visibility": "PRIVATE",
+    "createdAt": "2026-08-27T19:47:12.911Z",
+    "updatedAt": "2026-08-27T19:47:12.911Z",
+    "configuration": {
+      "id": "b8f096e0-08ec-48a1-8014-930037eca05e",
+      "version": 1,
+      "mode": "HISTORICAL_REPLAY",
+      "assets": [
+        "BTC"
+      ],
+      "intervals": [
+        900
+      ],
+      "windowFrom": "2026-08-27T19:14:00.000Z",
+      "windowTo": "2026-08-27T19:31:00.000Z",
+      "decisionOffsetSec": 60,
+      "riskEnvelopeId": null,
+      "ruleVersion": "interactive-2.0.1-deep-audit",
+      "config": {
+        "asset": "BTC",
+        "policy": {
+          "version": "1.1.0",
+          "policyId": "historical-last-trade",
+          "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889"
+        },
+        "windowTo": "2026-08-27T19:31:00.000Z",
+        "pnlStatus": "NOT_AVAILABLE",
+        "windowFrom": "2026-08-27T19:14:00.000Z",
+        "intervalSec": 900,
+        "sourcePlane": "MAINNET_HISTORICAL",
+        "riskEnvelopeId": "WATCH_ONLY_BOUNDED",
+        "selectedMarketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+        "decisionOffsetSec": 60,
+        "decisionBoundaryRule": "decisionAt = max(tradingStart + 1s, expiry - decisionOffsetSec)",
+        "historicalBookReconstruction": "SOURCE_INCOMPLETE"
+      },
+      "configHash": "2ca6d071f3fcdf36716a3706dd453d50a8cf1e7b3628652e9e457d6eebb7c5e8"
+    },
+    "policies": [
+      {
+        "role": "CANDIDATE",
+        "label": "Last-Trade Probability",
+        "version": "1.1.0",
+        "policyId": "historical-last-trade",
+        "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889",
+        "adapterName": "historicalLastTradeProbabilityPolicy",
+        "policyVersionId": "5d31910a-9d53-4e50-ac96-88c7b656b36e"
+      }
+    ]
   },
   "replay": {
+    "id": "35bd7b5e-0e42-49e1-b79d-38fd3221c92d",
+    "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
+    "configurationId": "b8f096e0-08ec-48a1-8014-930037eca05e",
+    "plane": "MAINNET_HISTORICAL",
     "status": "COMPLETED",
+    "frozenNow": "2026-08-27T19:47:12.956Z",
     "selectedCount": 1,
     "processedCount": 1,
-    "scoredCount": 0,
-    "excludedCount": 1,
-    "inputHash": "feb7e589b7ed49039c8c4cebf395ccab5d984ac19e72f3c89a6b8a13800fdb5d",
-    "outputHash": "aa037165da1f6a83615e1e8cc536ed06bd3fa977f71694398b0fd23b504b2821",
-    "outputHashNote": "Legacy output hash retained for the captured no-fill abstention artifact; active policy identity and public semantics are superseded to 1.1.0.",
-    "bookReconstruction": "SOURCE_INCOMPLETE",
+    "scoredCount": 1,
+    "excludedCount": 0,
+    "capability": "SOURCE_INCOMPLETE",
+    "sourceVersion": "dreamdex-mainnet-history@0.28.1",
+    "queryVersion": "replay-003-remediation-v2",
+    "inputHash": "374b1904460b73e83050aba06e7229f2ac80f87eb3ac999ac4ca601350506e4e",
+    "outputHash": "3249457993a746dca73e946ddeca70423a03518cd92711bd7138ae9cddea2131",
+    "errorCode": null,
+    "checkpoints": {
+      "sourcePlane": "MAINNET_HISTORICAL",
+      "outcomeEmbargo": "OUTCOME_WRITTEN_AFTER_FRAME_HASH",
+      "scoredDecisions": 1,
+      "windowToSeconds": 1787859060,
+      "explicitMarketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+      "marketsProcessed": 1,
+      "decisionOffsetSec": 60,
+      "windowFromSeconds": 1787858040,
+      "bookReconstruction": "SOURCE_INCOMPLETE",
+      "decisionsGenerated": 1,
+      "selectionPagesRead": 1,
+      "sourceCompleteness": "COMPLETE",
+      "selectionRowsScanned": 1,
+      "abstentionsOrUnusable": 0,
+      "selectionFilteredCount": 1
+    },
+    "createdAt": "2026-08-27T19:47:12.957Z",
+    "startedAt": "2026-08-27T19:47:12.995Z",
+    "completedAt": "2026-08-27T19:47:32.408Z"
+  },
+  "assertions": {
+    "policyVersion": "historical-last-trade@1.1.0",
+    "behaviorBoundPolicyHash": true,
+    "explicitMarketWithinWindow": true,
+    "decisionOffsetSec": 60,
+    "decisionBoundaryRule": "decisionAt = max(tradingStart + 1s, expiry - decisionOffsetSec)",
+    "mintPairEligible": true,
     "blockchainWrite": false
-  },
-  "antiLookahead": {
-    "decisionFrames": "STRICTLY_BEFORE_DECISION_AT",
-    "outcomeEmbargo": "decision frame and replay decision persist before the separate replay_outcomes stage",
-    "futureCandlesExcluded": true,
-    "futureFillsExcluded": true,
-    "resolutionEmbargoedFromPolicy": true
-  },
-  "tests": {
-    "pnpmCheck": "PASS - pnpm check",
-    "pnpmBuild": "PASS - pnpm build",
-    "pnpmTestE2E": "PASS - E2E_BASE_URL=http://localhost:3011 pnpm test:e2e",
-    "targetedFreshAuditRemediation": "PASS - pnpm exec vitest run tests/unit/policy-runtime.test.ts tests/unit/replay.test.ts tests/unit/metrics.test.ts tests/integration/evaluate.test.ts tests/integration/api.test.ts"
-  },
-  "redaction": "public market ids and hashes only; no cookies, tokens, wallet secrets, or private credentials"
+  }
 }

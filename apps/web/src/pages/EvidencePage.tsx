@@ -58,7 +58,7 @@ export default function EvidencePage() {
   const gateDetail =
     evidence === null
       ? "The browser does not manufacture PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
-      : evidence.verdictReasons.map((reason) => reason.replaceAll("_", " ")).join(" / ");
+      : evidence.decision.reason;
 
   return (
     <div className="pageStack">
@@ -74,8 +74,37 @@ export default function EvidencePage() {
           <small>
             {evidence === null
               ? "Evidence is provenance-labeled by plane."
-              : `${evidence.assessment.evidencePlane}; ${evidence.assessment.promotionScope}.`}
+              : `${evidence.decision.sourcePlane}; scope ${evidence.decision.promotionScope}.`}
           </small>
+        </div>
+        <div className={`gateDecision status-${normalizeStatus(evidence?.assessment.verdict ?? "pending")}`}>
+          <span>Decision</span>
+          <strong>{gateVerdict}</strong>
+          <p>{gateDetail}</p>
+          {evidence !== null ? (
+            <dl className="factGrid compactFacts">
+              <div>
+                <dt>Next allowed action</dt>
+                <dd>{evidence.decision.nextPermittedAction.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Missing evidence</dt>
+                <dd>{evidence.decision.missingEvidence.length === 0 ? "None" : evidence.decision.missingEvidence.join(", ")}</dd>
+              </div>
+              <div>
+                <dt>Reason codes</dt>
+                <dd>{evidence.verdictReasons.join(", ")}</dd>
+              </div>
+              <div>
+                <dt>Does not authorize</dt>
+                <dd>{evidence.decision.doesNotAuthorize.join(", ")}</dd>
+              </div>
+              <div>
+                <dt>Decided at</dt>
+                <dd>{new Date(evidence.decision.decidedAt).toLocaleString()}</dd>
+              </div>
+            </dl>
+          ) : null}
         </div>
         <div className="gateBody" role="list" aria-label="Evidence gate dimensions">
           {evidenceQuery.isLoading || provenQuery.isLoading ? <div className="stateBox">Loading server Evidence Gate...</div> : null}
@@ -103,6 +132,18 @@ export default function EvidencePage() {
             </div>
           ))}
         </div>
+        {evidence !== null ? (
+          <div className="stageRail" aria-label="Evidence progression">
+            {evidence.progression.stages.map((stage) => (
+              <div className={`stageNode status-${normalizeStatus(stage.status)}`} key={stage.stage}>
+                <span>{stage.stage}</span>
+                <strong>{stage.status.replaceAll("_", " ")}</strong>
+                <p>{stage.plane}</p>
+                <small>{stage.detail}</small>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className={`gateOutput ${evidence === null ? "neutralGate" : "verifiedGate"}`}>
           <span>Gate output</span>
           <strong>{gateVerdict}</strong>
