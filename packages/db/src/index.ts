@@ -181,7 +181,8 @@ export const migrations = [
   "0011_body_bound_idempotency",
   "0012_behavior_bound_policy_manifest",
   "0013_direct_fill_behavior_policy_manifest",
-  "0014_latest_ordering_policy_manifest"
+  "0014_latest_ordering_policy_manifest",
+  "0015_exact_runtime_policy_manifest"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
