@@ -4,7 +4,9 @@ Target duration: 2:40. Do not record or submit this until a fresh independent Sy
 
 ## 0:00-0:20 Opening
 
-EdgeLab tests whether a DreamDEX Event Contract strategy deserves progression. It separates mainnet historical research, Shannon live-shadow evidence, and human-authorized Shannon execution proof.
+EdgeLab is a promotion gate for DreamDEX Event Contract strategies. It answers one question: has this strategy earned progression, or is the honest answer still `INSUFFICIENT_EVIDENCE`?
+
+State the lane clearly: EdgeLab is not an order-book trust classifier, exchange clone, or trading bot. It qualifies strategy evidence by separating mainnet historical research, Shannon live-shadow evidence, and human-authorized Shannon execution proof.
 
 ## 0:20-0:55 Market Reality
 
@@ -28,6 +30,8 @@ Open `/compare`, select two to four owned assessments when available, save, and 
 
 Open `/proof`. Show chain `50312`, exact approval, POST_ONLY BUY_YES order, no fill, actual `OrderExpired` terminal event, collateral reconciliation, and explorer links. State that this proves execution handling, not profit.
 
+Mention that Shannon setup used STT for gas and tUSDC collateral from the public faucet path. Do not narrate or display private wallet material.
+
 ## 2:30-2:40 Close
 
-Restate the boundary: EdgeLab promotes only when evidence is sufficient. If the corrected evidence says `INSUFFICIENT_EVIDENCE`, that is the truthful verdict.
+Restate the boundary: EdgeLab promotes only when evidence is sufficient. If the corrected evidence says `INSUFFICIENT_EVIDENCE`, that is the product protecting a builder from overconfidence, not a failed demo.

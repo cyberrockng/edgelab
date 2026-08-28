@@ -20,6 +20,16 @@ Captured during EdgeLab implementation against `@somnia-chain/markets-sdk` `0.28
 - `getBinaryPositionPnL` represents actual-account indexed fills/router actions/current balances/marks. It must not be used as counterfactual replay PnL.
 - The Somnia RPC rejected `eth_getLogs` ranges larger than 1000 blocks. Evidence collection now chunks log reads.
 - A `cancelOrder(orderId)` call that lands after order expiry can succeed and emit `OrderExpired` rather than `OrderCancelled`. This is valid terminal proof, but UIs and evidence schemas should label it explicitly.
+- Community builder notes from the Event Contracts channel reported that `collateral()` is exposed on the per-window market, for example `IBinaryMarket(pool.market()).collateral()`, rather than directly on `BinaryPool`. EdgeLab's evidence model already records collateral at the market/window layer; final SDK feedback should verify this against the current contract ABI before submission.
+- The same channel reported that `builderFeeBpsTimes1k` must be encoded as `uint96`, and that using `uint256` can produce an undecodable revert. EdgeLab does not rely on builder-fee mutation in the current proof path, but this is useful DreamDEX integration feedback to preserve and verify.
+- Builder discussion also reinforced that order cancellation authority belongs to the order owner. EdgeLab keeps cancellation as a human-authorized owner-wallet action and does not present delegated cancellation as available.
+
+## Faucet / Testnet Operations Notes
+
+- The Somnia helper faucet sends `STT` for gas and `tUSDC` for Event Contract collateral on Shannon testnet chain `50312`.
+- Observed commands were `/faucet 0xYourAddress`, `/faucet tusdc 0xYourAddress`, `/register 0xYourAddress`, and `/faucet` after registration.
+- Observed limits were `50 STT` and `500 tUSDC` every 24 hours, with token-specific cooldowns.
+- The Shannon tUSDC address observed from the builder channel was `0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe`; final demo setup should re-verify this against DreamDEX docs and public chain metadata.
 
 ## EdgeLab Handling
 

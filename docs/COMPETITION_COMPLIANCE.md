@@ -22,9 +22,10 @@
 
 - Team: single entrant until official team constraints are clarified.
 - Newness: EdgeLab product-specific code starts in this dedicated repository after handoff activation.
-- License: project license remains pending owner approval before final public submission; no event-specific OSS mandate was found in the checked sources.
+- License: MIT is currently applied after repository dependency/license compatibility review; no event-specific OSS mandate was found in the checked sources.
 - KYC/prize: no implementation impact unless requested through authenticated official channels.
 - Deployment: public HTTPS target plus local Docker fallback.
+- Shannon faucet operations: implementation notes observed public faucet support for `50 STT` and `500 tUSDC` per 24 hours on chain `50312`; recheck faucet availability and token metadata before final video capture.
 
 ## GOV-001 Result
 

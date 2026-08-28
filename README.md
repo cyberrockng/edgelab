@@ -92,6 +92,33 @@ Required runtime values:
 - `MARKETS_SDK_VERSION=0.28.1`
 - `WORKER_ENABLED=true` for deployed replay workers after remediation tests pass; local on-demand testing may run either mode.
 
+## Shannon Testnet Funding
+
+EdgeLab's consequential execution proof uses Somnia Shannon testnet only. Mainnet remains read-only historical research and has no signer path.
+
+For Shannon testing, the project wallet needs:
+
+- `STT` for gas on chain `50312`.
+- `tUSDC` as DreamDEX Event Contract collateral.
+
+The Somnia helper faucet observed during implementation supports:
+
+```text
+/faucet 0xYourAddress
+/faucet tusdc 0xYourAddress
+/register 0xYourAddress
+```
+
+Observed faucet limits were `50 STT` and `500 tUSDC` per 24 hours, with separate cooldowns per token, Telegram account, and address. Treat these as operational faucet behavior to recheck before final demo, not as a permanent protocol guarantee.
+
+The Shannon tUSDC address observed from the DreamDEX/Event Contracts builder channel was:
+
+```text
+0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe
+```
+
+Before any human-authorized testnet transaction, verify the token, network, balance, allowance, and contract targets against the current DreamDEX docs and public chain state. Never share wallet recovery or signing material.
+
 ## Commands
 
 ```bash
