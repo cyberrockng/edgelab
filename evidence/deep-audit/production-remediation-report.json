@@ -32,8 +32,8 @@
     "version": "1.1.0",
     "label": "Last-Trade Probability",
     "adapterName": "historicalLastTradeProbabilityPolicy",
-    "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889",
-    "implementationHash": "74c3ea12c0849db864b1cc5b4b9006743f449a97244f83245b6e16543b604635",
+    "sourceHash": "d8451528c5f423e9bcb9a34a3d35e8f773c4ddbda5920c0f9199a261c2b4006c",
+    "implementationHash": "3440452063e86422728ab5b4bf1a317da37da61902b47d87eb0db4d9485391fc",
     "parameters": {
       "lookbackSeconds": 900,
       "targetOutcome": "YES_UP",

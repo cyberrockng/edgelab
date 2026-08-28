@@ -40,7 +40,7 @@ export default function LabPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const seededMarketId = searchParams.get("market");
-  const [name, setName] = useState(seededMarketId === null ? "Judge historical replay" : "Market-selected replay");
+  const [name, setName] = useState(seededMarketId === null ? "BTC historical qualification" : "Market-selected qualification");
   const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>("historical-last-trade@1.1.0");
   const [mode, setMode] = useState<ExperimentCreateInput["mode"]>("HISTORICAL_REPLAY");
   const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>("BTC");

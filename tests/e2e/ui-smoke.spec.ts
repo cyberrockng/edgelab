@@ -29,15 +29,15 @@ test("homepage explains the interactive product and links to real routes", async
 
   await expect(page.getByRole("heading", { name: productRoutes[0].heading })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open Strategy Lab" })).toHaveAttribute("href", "/lab");
-  await expect(page.getByRole("link", { name: "Explore DreamDEX History" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "Explore DreamDEX history" })).toHaveAttribute(
     "href",
     "/markets?plane=mainnet-history"
   );
-  await expect(page.getByRole("link", { name: "Open Proven Experiment" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "See Proven Experiment" })).toHaveAttribute(
     "href",
     "/lab/proven-experiment"
   );
-  await expect(page.getByRole("link", { name: "View Verified Execution" })).toHaveAttribute("href", "/proof");
+  await expect(page.getByRole("link", { name: "View verified execution" })).toHaveAttribute("href", "/proof");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical Reality");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Evidence Gate");
   await expect(page.getByLabel("Product boundary")).toContainText("Insufficient evidence is a protection mechanism");

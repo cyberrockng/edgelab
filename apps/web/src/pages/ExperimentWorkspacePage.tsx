@@ -181,6 +181,9 @@ export default function ExperimentWorkspacePage() {
                 <Link className="primaryAction" to="/evidence/proven-experiment">
                   View Evidence Gate
                 </Link>
+                <Link className="secondaryAction" to="/compare">
+                  Compare Evidence
+                </Link>
                 <Link className="secondaryAction" to="/markets">
                   Explore Markets
                 </Link>

@@ -23,11 +23,10 @@ const NotFoundPage = lazy(() => import("./pages/NotFoundPage.js"));
 
 const navItems = [
   { to: "/markets", label: "Markets" },
-  { to: "/lab", label: "Strategy Lab" },
+  { to: "/lab", label: "Lab" },
   { to: "/compare", label: "Compare" },
-  { to: "/evidence/proven-experiment", label: "Evidence" },
   { to: "/proof", label: "Proof" },
-  { to: "/how-it-works", label: "How It Works" }
+  { to: "/how-it-works", label: "Methodology" }
 ] as const;
 
 function routeTitleFromPath(pathname: string): string {
@@ -105,14 +104,8 @@ function RootLayout() {
             ))}
           </nav>
         </details>
-        <div className="runtimePills" aria-label="Runtime status">
-          <span>Mainnet {SOMNIA_MAINNET_CHAIN_ID} read-only</span>
-          <span>Shannon {SOMNIA_SHANNON_CHAIN_ID}</span>
-          <span>SDK {DREAMDEX_MARKETS_SDK_VERSION}</span>
-          <span>{capturedSummarySource}</span>
-        </div>
         <Link className="primaryAction" to="/lab">
-          Run Strategy Lab
+          Open Lab
         </Link>
       </header>
       <main id="main-content" ref={mainRef} tabIndex={-1} className="routeMain">
@@ -120,6 +113,12 @@ function RootLayout() {
           <Outlet />
         </Suspense>
       </main>
+      <footer className="systemStatus" aria-label="System status">
+        <span>Mainnet {SOMNIA_MAINNET_CHAIN_ID} read-only historical research</span>
+        <span>Shannon {SOMNIA_SHANNON_CHAIN_ID} forward and human-authorized execution</span>
+        <span>DreamDEX SDK {DREAMDEX_MARKETS_SDK_VERSION}</span>
+        <span>{capturedSummarySource}</span>
+      </footer>
     </div>
   );
 }

@@ -66,7 +66,10 @@ export default function EvidencePage() {
       <section className="routeHero">
         <p className="eyebrow">Evidence Gate</p>
         <h1>What evidence caused the strategy decision?</h1>
-        <p>Server evaluation data drives the verdict. The browser renders the result and reasons only.</p>
+        <p>
+          Start from an Experiment Workspace, then use this gate to inspect the server-authored
+          verdict, missing evidence, next action, and boundaries.
+        </p>
       </section>
       <section className="evidenceGate" aria-label="Evidence gate">
         <div className="gateCandidate">
@@ -84,9 +87,8 @@ export default function EvidencePage() {
           <p>{gateDetail}</p>
           {protectionTriggered ? (
             <p className="decisionNote">
-              EdgeLab found real evidence, evaluated it, and blocked advancement because the
-              support is not yet strong enough. This is a non-advancing integrity result, not a
-              profitability claim.
+              EdgeLab found real evidence, evaluated it, and blocked advancement because support is
+              not yet strong enough.
             </p>
           ) : null}
           {evidence !== null ? (

@@ -18,14 +18,8 @@ export default function HomePage() {
             <Link className="primaryAction large" to="/lab">
               Open Strategy Lab
             </Link>
-            <Link className="secondaryAction" to="/markets?plane=mainnet-history">
-              Explore DreamDEX History
-            </Link>
             <Link className="secondaryAction" to="/lab/proven-experiment">
-              Open Proven Experiment
-            </Link>
-            <Link className="secondaryAction" to="/proof">
-              View Verified Execution
+              See Proven Experiment
             </Link>
           </div>
         </div>
@@ -49,8 +43,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="routePanel compactPanel thesisPanel" aria-label="EdgeLab thesis">
-        <span className="label">Judge-ready thesis</span>
+      <section className="routePanel compactPanel thesisPanel" aria-label="Why EdgeLab exists">
+        <span className="label">Why EdgeLab exists</span>
         <h2>A strategy does not graduate because it looks promising once.</h2>
         <p>
           EdgeLab forces every candidate through the same evidence chain: historical reality,
@@ -59,16 +53,19 @@ export default function HomePage() {
         </p>
       </section>
 
-      <section className="threeColumn" aria-label="What judges can inspect">
+      <section className="threeColumn" aria-label="Core product workflow">
         <article>
           <span className="label">Explore</span>
           <h2>DreamDEX markets become the research source.</h2>
           <p>Historical market routes are ready for verified mainnet data, filters, provenance, and detail views.</p>
+          <Link className="textLink" to="/markets?plane=mainnet-history">
+            Explore DreamDEX history
+          </Link>
         </article>
         <article>
           <span className="label">Operate</span>
           <h2>Experiments are application state.</h2>
-          <p>Strategy Lab routes let judges create a fresh run or inspect a captured public replay with real evidence.</p>
+          <p>Strategy Lab routes create fresh runs or inspect a captured public replay with real evidence.</p>
         </article>
         <article>
           <span className="label">Verify</span>
@@ -78,6 +75,9 @@ export default function HomePage() {
             )} fills, terminal state ${
               summary.chain.latestTerminalState ?? "unavailable"
             }. Source: ${capturedSummarySource}.`}</p>
+          <Link className="textLink" to="/proof">
+            View verified execution
+          </Link>
         </article>
       </section>
 

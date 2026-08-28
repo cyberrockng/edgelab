@@ -56,7 +56,7 @@ export default function ComparePage() {
   const comparisonMutation = useMutation({
     mutationFn: () =>
       createComparison({
-        name: "Judge evidence comparison",
+        name: "Evidence comparison",
         assessmentIds: selectedIds
       }),
     onSuccess: async (response) => {
@@ -121,7 +121,7 @@ export default function ComparePage() {
         {assessments.length === 0 ? (
           <div className="stateBox">
             No private assessments exist for this research session yet. The public comparison below remains available for
-            judge review; run and evaluate at least two experiments to save your own comparison.
+            product review; run and evaluate at least two experiments to save your own comparison.
           </div>
         ) : (
           <>

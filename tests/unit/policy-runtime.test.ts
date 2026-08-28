@@ -226,6 +226,28 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(changedManifest.implementationHash).not.toBe(originalManifest.implementationHash);
   });
 
+  it("binds corrected historical policy identity to executable DIRECT_NO no-inversion behavior", () => {
+    const original = historicalPolicy("1.1.0");
+    const changed = {
+      ...original,
+      evaluate(input) {
+        const decision = original.evaluate(input);
+        const directNoFill = input.frame.fills.find((fill) => fill.kind === "DIRECT_NO");
+        if (directNoFill !== undefined) {
+          return {
+            ...decision,
+            forecastPUp: 1 - decision.forecastPUp,
+            reasonCodes: [...decision.reasonCodes, "MUTATED_DIRECT_NO_INVERSION"]
+          };
+        }
+        return decision;
+      }
+    } satisfies typeof original;
+    const originalManifest = createHistoricalPolicyManifest(original);
+    const changedManifest = createHistoricalPolicyManifest(changed);
+    expect(changedManifest.implementationHash).not.toBe(originalManifest.implementationHash);
+  });
+
   it("evaluates Last-Trade Probability only from pre-cutoff historical fills", () => {
     const frameResult = buildHistoricalDecisionFrame({
       market: historicalMarket,
@@ -331,7 +353,11 @@ describe("POLICY-001 immutable policy runtime", () => {
       expect(decision.forecastPUp).toBe(0.7);
       expect(decision.action).toBe("WATCH_ONLY");
       expect(decision.reasonCodes).toContain("DREAMDEX_YES_TERM_PRICE");
-      expect(decision.reasonCodes).toContain("NO_TAG_NOT_INVERTED");
+      if (fill.kind === "DIRECT_NO") {
+        expect(decision.reasonCodes).toContain("NO_TAG_NOT_INVERTED");
+      } else {
+        expect(decision.reasonCodes).not.toContain("NO_TAG_NOT_INVERTED");
+      }
     }
   });
 

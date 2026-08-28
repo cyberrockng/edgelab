@@ -91,7 +91,7 @@
         "policy": {
           "version": "1.1.0",
           "policyId": "historical-last-trade",
-          "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889"
+          "sourceHash": "d8451528c5f423e9bcb9a34a3d35e8f773c4ddbda5920c0f9199a261c2b4006c"
         },
         "windowTo": "2026-08-27T19:31:00.000Z",
         "pnlStatus": "NOT_AVAILABLE",
@@ -112,7 +112,7 @@
         "label": "Last-Trade Probability",
         "version": "1.1.0",
         "policyId": "historical-last-trade",
-        "sourceHash": "d436cd113dff89d37bf542fff2fc6fccdfe5b395d20cb856b7dc9794e5a0a889",
+        "sourceHash": "d8451528c5f423e9bcb9a34a3d35e8f773c4ddbda5920c0f9199a261c2b4006c",
         "adapterName": "historicalLastTradeProbabilityPolicy",
         "policyVersionId": "5d31910a-9d53-4e50-ac96-88c7b656b36e"
       }

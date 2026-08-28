@@ -2,8 +2,8 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-28T07:38:13.000Z",
-  "sourceCommit": "6ff3799c0d0c611bcf393d2c7319dbf2467f7f47",
+  "producedAt": "2026-08-28T07:38:43.000Z",
+  "sourceCommit": "97df2fa3c044600986a9126d4e13d040805b3b64",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
@@ -139,14 +139,14 @@
     },
     {
       "path": "evidence/deep-audit/production-remediation-report.json",
-      "sha256": "74bb8f8915a5949710450b7af7a979bbc34e41fb891b85e7dbb510c50d437997",
+      "sha256": "f145452a458c3e9fcf0faec782b8bc15bb68c39864ef0535fb36d9c0d13b3902",
       "bytes": 4726,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },
     {
       "path": "evidence/deep-audit/s3d-remediation-report.json",
-      "sha256": "6663be33847e59ac62d5dfda40eabf09bd238242c8260ef6d59837a3af1b358a",
+      "sha256": "e11843ee5e9d60da3593144b6e9ba7822700224888a3ef48162a79376875d849",
       "bytes": 4419,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
@@ -405,7 +405,7 @@
     },
     {
       "path": "evidence/proven/manifest.json",
-      "sha256": "fb12fb18670c05e5c961efb24d94b88dd5aad36766da99dd996cc4b4d28c2c79",
+      "sha256": "4908498e63b0c304d72c4401d6f1985aba9be10c20d8d3b998abd295c54f9e0f",
       "bytes": 1319,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
@@ -447,21 +447,21 @@
     },
     {
       "path": "evidence/replay/policy-002-catalog.json",
-      "sha256": "5beb6e90424fda03c549b87efab0f37e508eeb14aa199507442bbd31a177afbd",
+      "sha256": "cf78da41c8e36d38d96aa9f9a333d8039aca232eaa21999907adb9779b784ca9",
       "bytes": 2305,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },
     {
       "path": "evidence/replay/replay-002-report.json",
-      "sha256": "294e97cca382ec9de1f70611953a92e5f2cd682af9dc44d8ca449af52e7a53eb",
+      "sha256": "83c7dc25d2a5ae404f7d0890971a8e1c777ebadff341fb6b40d68ea4c78fc93f",
       "bytes": 6339,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },
     {
       "path": "evidence/replay/replay-002-sample.json",
-      "sha256": "ed199dc607efde135504838066c025a918ea0c4f6fcb5a00d04b210bda7ba275",
+      "sha256": "fc1046a3c1b3e82db4b10b6a1d0c7d535a8cb05b6ac5c057fd7ea6a8bbcecbb0",
       "bytes": 5836,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"

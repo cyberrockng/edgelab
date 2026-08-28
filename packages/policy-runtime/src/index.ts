@@ -185,7 +185,7 @@ function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
           canonicalHistoricalFill({
             id: "yes-fill",
             fillPriceRaw: "700000000000000000",
-            kind: "TRADE",
+            kind: "DIRECT_YES",
             makerSide: "BUY_YES",
             takerSide: "SELL_YES",
             timestampSeconds: 1_787_858_800,
@@ -200,7 +200,7 @@ function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
           canonicalHistoricalFill({
             id: "no-tag",
             fillPriceRaw: "700000000000000000",
-            kind: "TRADE",
+            kind: "DIRECT_NO",
             makerSide: "BUY_NO",
             takerSide: "SELL_NO",
             timestampSeconds: 1_787_858_801,
@@ -410,12 +410,21 @@ function compareHistoricalFills(
 }
 
 function scaledPriceToProbability(priceRaw: string, quoteDecimals: number): number {
-  const numerator = Number(priceRaw);
-  const denominator = 10 ** quoteDecimals;
-  if (!Number.isFinite(numerator) || numerator < 0 || !Number.isFinite(denominator) || denominator <= 0) {
-    throw new PolicyRuntimeError("Historical fill price is not a finite non-negative number", "INVALID_PRICE");
+  if (!/^[0-9]+$/.test(priceRaw) || !Number.isInteger(quoteDecimals) || quoteDecimals < 0 || quoteDecimals > 36) {
+    throw new PolicyRuntimeError("Historical fill price scale is invalid", "INVALID_PRICE");
   }
-  return Math.min(0.95, Math.max(0.05, numerator / denominator));
+  const numerator = BigInt(priceRaw);
+  const denominator = 10n ** BigInt(quoteDecimals);
+  if (denominator <= 0n) {
+    throw new PolicyRuntimeError("Historical fill price denominator is invalid", "INVALID_PRICE");
+  }
+  const precision = 1_000_000_000_000n;
+  const scaled = (numerator * precision) / denominator;
+  const probability = Number(scaled) / Number(precision);
+  if (!Number.isFinite(probability)) {
+    throw new PolicyRuntimeError("Historical fill probability is not finite", "INVALID_PRICE");
+  }
+  return Math.min(0.95, Math.max(0.05, probability));
 }
 
 function normalizeHistoricalFillOutcome(fill: HistoricalDecisionFrame["fills"][number]): "YES" | "NO" | null {
@@ -447,6 +456,12 @@ function isPositiveRawQuantity(quantityRaw: string): boolean {
   } catch {
     return false;
   }
+}
+
+function fillHasNoTag(fill: HistoricalDecisionFrame["fills"][number]): boolean {
+  return [fill.kind, fill.makerSide, fill.takerSide]
+    .filter((value): value is string => typeof value === "string")
+    .some((value) => value.toUpperCase().includes("NO"));
 }
 
 function canonicalDreamDexYesProbability(priceRaw: string, quoteDecimals: number): number {
@@ -640,9 +655,9 @@ export const historicalPolicies: readonly HistoricalPolicyAdapter[] = [
           "HISTORICAL_LAST_TRADE",
           "PRE_CUTOFF_FILL",
           "DREAMDEX_YES_TERM_PRICE",
-          "NO_TAG_NOT_INVERTED",
+          fillHasNoTag(latestFill) ? "NO_TAG_NOT_INVERTED" : null,
           "MINT_PAIR_ELIGIBLE"
-        ].filter((code) => code !== "MINT_PAIR_ELIGIBLE" || latestFill.kind?.toUpperCase() === "MINT_A_PAIR")
+        ].filter((code): code is string => code !== null && (code !== "MINT_PAIR_ELIGIBLE" || latestFill.kind?.toUpperCase() === "MINT_A_PAIR"))
       };
     }
   }

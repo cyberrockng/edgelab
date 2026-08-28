@@ -54,7 +54,7 @@ select {
   min-width: 0;
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 18px;
   padding: 18px clamp(18px, 3vw, 36px) 36px;
   background:
@@ -85,7 +85,7 @@ select {
   z-index: 10;
   top: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 12px 0;
@@ -216,14 +216,16 @@ button:disabled {
   transform: none;
 }
 
-.runtimePills {
+.systemStatus {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(207 215 209 / 70%);
 }
 
-.runtimePills span,
+.systemStatus span,
 .statusPill {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -233,6 +235,16 @@ button:disabled {
   font-size: 0.72rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.textLink {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 12px;
+  color: #1f5b3c;
+  font-weight: 900;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }
 
 .routeMain {
@@ -1137,11 +1149,6 @@ dd {
 @media (max-width: 1180px) {
   .appHeader {
     grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .runtimePills {
-    grid-column: 1 / -1;
-    justify-content: start;
   }
 
   .heroGrid,
