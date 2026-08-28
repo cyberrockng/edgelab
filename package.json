@@ -17,6 +17,7 @@
     "lint": "eslint . --max-warnings=0",
     "evidence:import-exg003": "node scripts/import-exg003-evidence.mjs",
     "evidence:manifest": "node scripts/evidence-manifest.mjs",
+    "evidence:manifest:check": "EVIDENCE_SOURCE_COMMIT=$(node -e \"console.log(JSON.parse(require('fs').readFileSync('evidence/export/manifest.json','utf8')).sourceCommit)\") pnpm evidence:manifest && git diff --exit-code -- evidence/export/manifest.json",
     "secret:scan": "node scripts/secret-scan.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",

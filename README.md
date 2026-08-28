@@ -130,7 +130,7 @@ pnpm evidence:manifest
 DATABASE_URL=postgres://... SOMNIA_RPC_URL=https://api.infra.testnet.somnia.network/ NODE_ENV=local pnpm evidence:import-exg003
 ```
 
-`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` expects a running app and uses `E2E_BASE_URL`, defaulting to `http://localhost:3011`.
+`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` starts the local app on `http://localhost:3011` unless `E2E_BASE_URL` points at an already running deployment.
 
 ## Evidence
 

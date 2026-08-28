@@ -53,8 +53,12 @@ for (const path of files) {
   });
 }
 
-const sourceCommit = git(["rev-parse", "HEAD"]);
-const sourceCommitTime = new Date(git(["show", "-s", "--format=%cI", "HEAD"])).toISOString();
+const sourceCommitOverride = process.env.EVIDENCE_SOURCE_COMMIT?.trim();
+const sourceCommit = sourceCommitOverride === undefined || sourceCommitOverride === "" ? git(["rev-parse", "HEAD"]) : sourceCommitOverride;
+if (!/^[0-9a-f]{40}$/i.test(sourceCommit)) {
+  throw new Error("EVIDENCE_SOURCE_COMMIT must be a 40-character git commit SHA when provided.");
+}
+const sourceCommitTime = new Date(git(["show", "-s", "--format=%cI", sourceCommit])).toISOString();
 const manifest = {
   evidenceId: "EVD-007",
   task: "OBS-001",

@@ -223,6 +223,41 @@ function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
             logIndex: "6"
           })
         ])
+      },
+      {
+        name: "latest-ordering",
+        frame: canonicalHistoricalFrame([
+          canonicalHistoricalFill({
+            id: "older-direct-no",
+            fillPriceRaw: "610000000000000000",
+            kind: "DIRECT_NO",
+            makerSide: "BUY_NO",
+            takerSide: "SELL_NO",
+            timestampSeconds: 1_787_858_820,
+            blockNumber: "397066320",
+            logIndex: "3"
+          }),
+          canonicalHistoricalFill({
+            id: "same-block-latest-log",
+            fillPriceRaw: "640000000000000000",
+            kind: "BURN_A_PAIR",
+            makerSide: "SELL_YES",
+            takerSide: "SELL_NO",
+            timestampSeconds: 1_787_858_820,
+            blockNumber: "397066320",
+            logIndex: "4"
+          }),
+          canonicalHistoricalFill({
+            id: "unsupported-newest",
+            fillPriceRaw: "900000000000000000",
+            kind: "UNKNOWN",
+            makerSide: "BUY_YES",
+            takerSide: "SELL_YES",
+            timestampSeconds: 1_787_858_821,
+            blockNumber: "397066321",
+            logIndex: "5"
+          })
+        ])
       }
     ];
     return cases.map((testCase) => ({

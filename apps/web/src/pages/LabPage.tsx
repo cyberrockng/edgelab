@@ -9,7 +9,8 @@ const strategyOptions = [
     policyId: "reference-neutral",
     policyVersion: "1.0.0",
     label: "Educational neutral baseline",
-    description: "Watch-only 50 percent forecast baseline for Shannon live-shadow workflow validation."
+    description: "Watch-only 50 percent forecast baseline for Shannon live-shadow workflow validation.",
+    allowedModes: ["LIVE_SHADOW"]
   },
   {
     key: "historical-last-trade@1.1.0",
@@ -17,16 +18,25 @@ const strategyOptions = [
     policyVersion: "1.1.0",
     label: "Last-Trade Probability",
     description:
-      "Historical-only strategy using DreamDEX canonical YES-term fill prices from the latest verified pre-cutoff fill."
+      "Historical-only strategy using DreamDEX canonical YES-term fill prices from the latest verified pre-cutoff fill.",
+    allowedModes: ["HISTORICAL_REPLAY"]
   },
   {
     key: "reference-book-tilt@1.0.0",
     policyId: "reference-book-tilt",
     policyVersion: "1.0.0",
     label: "Captured-book tilt baseline",
-    description: "Shannon forward-only baseline. Historical use is disabled until book reconstruction is verified."
+    description: "Shannon forward-only baseline. Historical use is disabled until book reconstruction is verified.",
+    allowedModes: ["LIVE_SHADOW"]
   }
 ] as const;
+
+function strategyAllowsMode(
+  strategy: (typeof strategyOptions)[number],
+  candidateMode: ExperimentCreateInput["mode"]
+): boolean {
+  return (strategy.allowedModes as readonly ExperimentCreateInput["mode"][]).includes(candidateMode);
+}
 
 function intervalValue(value: string): ExperimentCreateInput["intervalSec"] {
   if (value === "900" || value === "3600") {
@@ -49,6 +59,7 @@ export default function LabPage() {
   const [windowTo, setWindowTo] = useState("");
   const [decisionOffsetSec, setDecisionOffsetSec] = useState(60);
   const selectedStrategy = strategyOptions.find((strategy) => strategy.key === strategyKey) ?? strategyOptions[0];
+  const allowedModes = selectedStrategy.allowedModes as readonly ExperimentCreateInput["mode"][];
   const experimentsQuery = useQuery({
     queryKey: ["experiments"],
     queryFn: listExperiments
@@ -108,12 +119,10 @@ export default function LabPage() {
               value={strategyKey}
               onChange={(event) => {
                 const next = event.target.value as (typeof strategyOptions)[number]["key"];
+                const nextStrategy = strategyOptions.find((strategy) => strategy.key === next) ?? strategyOptions[0];
                 setStrategyKey(next);
-                if (next === "reference-book-tilt@1.0.0") {
-                  setMode("LIVE_SHADOW");
-                }
-                if (next === "historical-last-trade@1.1.0") {
-                  setMode("HISTORICAL_REPLAY");
+                if (!strategyAllowsMode(nextStrategy, mode)) {
+                  setMode(nextStrategy.allowedModes[0]);
                 }
               }}
             >
@@ -132,8 +141,8 @@ export default function LabPage() {
                 setMode(event.target.value as ExperimentCreateInput["mode"]);
               }}
             >
-              <option value="HISTORICAL_REPLAY">Historical replay</option>
-              <option value="LIVE_SHADOW">Live shadow</option>
+              {allowedModes.includes("HISTORICAL_REPLAY") ? <option value="HISTORICAL_REPLAY">Historical replay</option> : null}
+              {allowedModes.includes("LIVE_SHADOW") ? <option value="LIVE_SHADOW">Live shadow</option> : null}
             </select>
           </label>
           <label>

@@ -248,6 +248,30 @@ describe("POLICY-001 immutable policy runtime", () => {
     expect(changedManifest.implementationHash).not.toBe(originalManifest.implementationHash);
   });
 
+  it("binds corrected historical policy identity to deterministic latest-fill ordering", () => {
+    const original = historicalPolicy("1.1.0");
+    const changed = {
+      ...original,
+      evaluate(input) {
+        const decision = original.evaluate(input);
+        const orderedCandidates = input.frame.fills
+          .filter((fill) => fill.kind === "DIRECT_NO" || fill.kind === "BURN_A_PAIR")
+          .toSorted((left, right) => right.logIndex.localeCompare(left.logIndex));
+        if (orderedCandidates.length > 1) {
+          return {
+            ...decision,
+            forecastPUp: 0.61,
+            reasonCodes: [...decision.reasonCodes, "MUTATED_LATEST_FILL_ORDER"]
+          };
+        }
+        return decision;
+      }
+    } satisfies typeof original;
+    const originalManifest = createHistoricalPolicyManifest(original);
+    const changedManifest = createHistoricalPolicyManifest(changed);
+    expect(changedManifest.implementationHash).not.toBe(originalManifest.implementationHash);
+  });
+
   it("evaluates Last-Trade Probability only from pre-cutoff historical fills", () => {
     const frameResult = buildHistoricalDecisionFrame({
       market: historicalMarket,

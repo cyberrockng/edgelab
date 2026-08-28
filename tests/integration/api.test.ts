@@ -1072,7 +1072,7 @@ describe("API-001 server contracts", () => {
     expect(V2ExperimentSchema.parse(positive.json()).data.experiment.configuration.config.decisionOffsetSec).toBe(60);
   });
 
-  it("fails explicit historical replay when the selected market is outside the configured window", async () => {
+  it("fails explicit historical replay when market overlaps but decision time is outside the configured window", async () => {
     const app = buildApp(config, { ...v2Deps(), pool });
     const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
     const sessionBody = V2SessionSchema.parse(session.json());
@@ -1092,8 +1092,8 @@ describe("API-001 server contracts", () => {
         policyId: "historical-last-trade",
         policyVersion: "1.1.0",
         marketId: apiMarketId,
-        windowFrom: "2026-08-27T14:15:00.000Z",
-        windowTo: "2026-08-27T15:15:00.000Z",
+        windowFrom: "2026-08-24T10:00:00.000Z",
+        windowTo: "2026-08-24T10:20:00.000Z",
         decisionOffsetSec: 60,
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }
@@ -1156,8 +1156,8 @@ describe("API-001 server contracts", () => {
         intervalSec: 3600,
         policyId: "historical-last-trade",
         policyVersion: "1.1.0",
-        windowFrom: "2026-08-24T10:00:00.000Z",
-        windowTo: "2026-08-24T10:20:00.000Z",
+        windowFrom: "2026-08-24T11:10:00.000Z",
+        windowTo: "2026-08-24T11:15:00.000Z",
         decisionOffsetSec: 60,
         riskEnvelopeId: "WATCH_ONLY_BOUNDED"
       }

@@ -680,6 +680,22 @@ function marketIntersectsReplayWindow(
   );
 }
 
+function replayDecisionAtSeconds(market: HistoricalMarketEvidence, decisionOffsetSec: number): number {
+  return Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionOffsetSec);
+}
+
+function marketDecisionFallsWithinReplayWindow(
+  market: HistoricalMarketEvidence,
+  window: { readonly fromSeconds: number | null; readonly toSeconds: number | null },
+  decisionOffsetSec: number
+): boolean {
+  const decisionAtSeconds = replayDecisionAtSeconds(market, decisionOffsetSec);
+  return (
+    (window.fromSeconds === null || decisionAtSeconds >= window.fromSeconds) &&
+    (window.toSeconds === null || decisionAtSeconds <= window.toSeconds)
+  );
+}
+
 async function selectHistoricalReplayMarkets(input: {
   readonly experiment: InteractiveExperimentDetailRecord;
   readonly client: HistoricalDreamDexSdkClient;
@@ -707,11 +723,14 @@ async function selectHistoricalReplayMarkets(input: {
         }
       };
     }
-    if (!marketIntersectsReplayWindow(market.value, window)) {
+    if (
+      !marketIntersectsReplayWindow(market.value, window) ||
+      !marketDecisionFallsWithinReplayWindow(market.value, window, input.experiment.configuration.decisionOffsetSec)
+    ) {
       return {
         ok: false,
         reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
-        message: `EXPLICIT_MARKET_OUTSIDE_WINDOW: ${explicitMarketId} does not intersect the configured historical window`
+        message: `EXPLICIT_MARKET_OUTSIDE_WINDOW: ${explicitMarketId} decision timestamp is outside the configured historical window`
       };
     }
     return {
@@ -769,7 +788,10 @@ async function selectHistoricalReplayMarkets(input: {
         };
       }
       seen.add(marketId);
-      if (marketIntersectsReplayWindow(market, window)) {
+      if (
+        marketIntersectsReplayWindow(market, window) &&
+        marketDecisionFallsWithinReplayWindow(market, window, input.experiment.configuration.decisionOffsetSec)
+      ) {
         selected.push(market);
       }
     }
@@ -854,7 +876,7 @@ async function executeHistoricalReplay(input: {
     if (decisionLeadSeconds < 60) {
       throw new Error("DECISION_OFFSET_UNSUPPORTED: historical replay requires an explicit lead of at least 60 seconds");
     }
-    const decisionAtSeconds = Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionLeadSeconds);
+    const decisionAtSeconds = replayDecisionAtSeconds(market, decisionLeadSeconds);
     const decisionAt = new Date(decisionAtSeconds * 1000);
     const cutoff = await resolveHistoricalCutoffBlock(
       input.historicalDreamDexConfig,
