@@ -2,14 +2,14 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-26T22:21:01.000Z",
-  "sourceCommit": "25d5c237e418608434c4b24dcecaa2fe5e91f7fd",
+  "producedAt": "2026-08-28T05:55:40.000Z",
+  "sourceCommit": "22a9ad4db90a8a2942b0152fe2c51c032b3af876",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 80,
+  "artifactCount": 88,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -85,6 +85,62 @@
       "path": "evidence/db/db-002-migration.json",
       "sha256": "b0f484eaa8191a338d4ab8ede637de0d2c86cbd32b0151a5d77809da56016e7e",
       "bytes": 2597,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-compare-desktop.png",
+      "sha256": "c4056f041e2b94d5c0b07697fb2e82a3c8600457af58af4b175b7468910f5681",
+      "bytes": 194531,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-evidence-gate-desktop.png",
+      "sha256": "a64b860344ab46b265f6bb365d76ef4f4e9366402cac95853902d6e9cd1a3ac1",
+      "bytes": 359465,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-evidence-mobile.png",
+      "sha256": "82cc65fbd162b71012f3624cfb2ae5c8f80d87137f671da4e23d7a5b9f3f3d91",
+      "bytes": 1070786,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-homepage-desktop.png",
+      "sha256": "94055d1c41804b7dc52633d7404319132a1da6cf790d20845455e9c749a812dc",
+      "bytes": 413162,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-market-detail-desktop.png",
+      "sha256": "671822b55a9292f7e2341b18baf7402c6c1108839ab3010fa6afabb3d0d43517",
+      "bytes": 340972,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-proof-desktop.png",
+      "sha256": "790618dd6764589f384df8d5a1fd38fa19a86f12a718db8b59e50dfd2fd671d9",
+      "bytes": 174811,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-proven-experiment-desktop.png",
+      "sha256": "df73b72a917089523bdd4b422bb032cb74effeba5d0470a2eee8de9687e82fbe",
+      "bytes": 168462,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/deep-audit/production-remediation-report.json",
+      "sha256": "74bb8f8915a5949710450b7af7a979bbc34e41fb891b85e7dbb510c50d437997",
+      "bytes": 4726,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },
