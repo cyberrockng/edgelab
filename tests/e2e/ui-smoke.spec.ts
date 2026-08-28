@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIResponse, type Page } from "@playwright/test";
 
 const sampleHistoricalMarketId = ["0x", "0".repeat(60), "1bb7"].join("");
 
@@ -14,6 +14,23 @@ const productRoutes = [
   { path: "/how-it-works", heading: "Evidence-gated promotion keeps the product honest." }
 ] as const;
 
+async function gotoRoute(page: Page, route: string): Promise<APIResponse | null> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await page.goto(route, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("ERR_NETWORK_CHANGED") && !message.includes("ERR_ABORTED")) {
+        throw error;
+      }
+      await page.waitForTimeout(500 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 test("homepage explains the interactive product and links to real routes", async ({ page }, testInfo) => {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
@@ -24,7 +41,7 @@ test("homepage explains the interactive product and links to real routes", async
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  const response = await page.goto("/", { waitUntil: "networkidle" });
+  const response = await gotoRoute(page, "/");
   expect(response?.ok()).toBe(true);
 
   await expect(page.getByRole("heading", { name: productRoutes[0].heading })).toBeVisible();
@@ -57,24 +74,24 @@ test("homepage explains the interactive product and links to real routes", async
 });
 
 test("market detail requires an explicit canonical plane", async ({ page }) => {
-  await page.goto(`/markets/${sampleHistoricalMarketId}`, { waitUntil: "networkidle" });
+  await gotoRoute(page, `/markets/${sampleHistoricalMarketId}`);
   await expect(page.getByRole("heading", { name: "Choose the market evidence plane before loading detail." })).toBeVisible();
   await expect(page.getByRole("link", { name: "Mainnet Historical" })).toHaveAttribute(
     "href",
     `/markets/${sampleHistoricalMarketId}?plane=mainnet-history`
   );
 
-  await page.goto(`/markets/${sampleHistoricalMarketId}?plane=bogus`, { waitUntil: "networkidle" });
+  await gotoRoute(page, `/markets/${sampleHistoricalMarketId}?plane=bogus`);
   await expect(page.getByRole("heading", { name: "Choose the market evidence plane before loading detail." })).toBeVisible();
 
-  await page.goto(`/markets/${sampleHistoricalMarketId}?plane=shannon-live`, { waitUntil: "networkidle" });
+  await gotoRoute(page, `/markets/${sampleHistoricalMarketId}?plane=shannon-live`);
   await expect(page.getByRole("heading", { name: "Shannon live market detail is not served by the mainnet history route." })).toBeVisible();
   await expect(page.getByLabel("Shannon market detail unavailable")).toContainText("SHANNON_FORWARD");
 });
 
 test("every product route mounts by direct navigation without horizontal overflow", async ({ page }) => {
   for (const route of productRoutes) {
-    const response = await page.goto(route.path, { waitUntil: "networkidle" });
+    const response = await gotoRoute(page, route.path);
     expect(response?.ok(), route.path).toBe(true);
     await expect(page.getByRole("heading", { name: route.heading })).toBeVisible();
     const layout = await page.evaluate(() => ({
@@ -86,7 +103,7 @@ test("every product route mounts by direct navigation without horizontal overflo
 });
 
 test("navigation, active route state, and keyboard focus work", async ({ page }, testInfo) => {
-  await page.goto("/", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/");
   await page.keyboard.press("Tab");
   await expect(page.locator(":focus")).toHaveText("Skip to content");
   await page.keyboard.press("Enter");
@@ -102,7 +119,7 @@ test("navigation, active route state, and keyboard focus work", async ({ page },
 });
 
 test("market filters update URL state and keep source provenance visible", async ({ page }) => {
-  await page.goto("/markets", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/markets");
   await page.getByLabel("Asset").selectOption("ETH");
   await page.getByLabel("Interval").selectOption("14400");
   await page.getByRole("button", { name: "Apply Filters" }).click();
@@ -113,7 +130,7 @@ test("market filters update URL state and keep source provenance visible", async
 });
 
 test("strategy lab creates a persisted research-session experiment", async ({ page }) => {
-  await page.goto("/lab", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/lab");
   await page.getByLabel("Experiment name").fill(`E2E replay ${String(Date.now())}`);
   await page.getByLabel("Strategy").selectOption("historical-last-trade@1.1.0");
   await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
@@ -129,7 +146,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
 });
 
 test("proven experiment path exposes captured replay without favorable-data claims", async ({ page }) => {
-  await page.goto("/lab/proven-experiment", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/lab/proven-experiment");
   const workspace = page.getByRole("region", { name: "Proven experiment workspace" });
   await expect(page.getByRole("heading", { name: "Inspect a captured real-evidence replay." })).toBeVisible();
   await expect(workspace).toContainText("PUBLIC PROVEN");
@@ -142,7 +159,7 @@ test("proven experiment path exposes captured replay without favorable-data clai
 });
 
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
-  await page.goto("/evidence/proven-experiment", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/evidence/proven-experiment");
   const gate = page.getByRole("region", { name: "Evidence gate" });
   await expect(gate).toContainText("INSUFFICIENT EVIDENCE");
   await expect(gate).toContainText("MIN_SAMPLE_NOT_MET");
@@ -153,7 +170,7 @@ test("evidence route does not manufacture a final verdict in the browser", async
 });
 
 test("truthful DreamDEX proof remains reachable", async ({ page }) => {
-  await page.goto("/proof", { waitUntil: "networkidle" });
+  await gotoRoute(page, "/proof");
 
   const chain = page.getByLabel("DreamDEX lifecycle proof");
   await expect(chain).toContainText("EXPIRED");
