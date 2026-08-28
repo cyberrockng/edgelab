@@ -89,7 +89,11 @@ export default function ComparePage() {
       <section className="routeHero">
         <p className="eyebrow">Strategy Comparison</p>
         <h1>Compare evidence dimensions, not vanity scores.</h1>
-        <p>Choose two to four persisted assessments. EdgeLab preserves source plane, sample size, forecast metrics, linked execution state, and PnL availability.</p>
+        <p>
+          Choose two to four persisted assessments. EdgeLab preserves source plane, sample size,
+          forecast metrics, linked execution state, and PnL availability so a candidate cannot win
+          by collapsing evidence into a single score.
+        </p>
       </section>
       <section className="routePanel" aria-label="Strategy comparison">
         {comparisonsQuery.isLoading ? <div className="stateBox">Loading saved comparisons...</div> : null}
@@ -193,7 +197,7 @@ export default function ComparePage() {
               <p className="eyebrow">Public Read-Only Comparison</p>
               <h2>Corrected historical replay versus neutral baseline</h2>
             </div>
-            <span className="statusPill">Demo evidence; no capital authorization</span>
+            <span className="statusPill">Qualification evidence; no capital authorization</span>
           </div>
           {provenQuery.isError ? (
             <div className="stateBox errorState" role="alert">

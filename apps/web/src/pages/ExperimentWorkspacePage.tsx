@@ -86,7 +86,10 @@ export default function ExperimentWorkspacePage() {
         <section className="routeHero">
           <p className="eyebrow">Proven Experiment</p>
           <h1>Inspect a captured real-evidence replay.</h1>
-          <p>This public path is reproducible from sanitized artifacts and does not claim favorable performance.</p>
+          <p>
+            This public path is reproducible from sanitized artifacts. If the verdict blocks
+            progression, that is EdgeLab protecting the builder from overconfidence.
+          </p>
         </section>
         <section className="routePanel" aria-label="Proven experiment workspace">
           {provenQuery.isLoading ? <div className="stateBox">Loading proven experiment...</div> : null}
@@ -101,6 +104,9 @@ export default function ExperimentWorkspacePage() {
                 <span className="statusPill">PUBLIC PROVEN</span>
                 <span className="statusPill">{proven.source.plane}</span>
                 <span className="statusPill">No blockchain write</span>
+                {proven.verdict === "INSUFFICIENT_EVIDENCE" ? (
+                  <span className="statusPill emphasisPill">Protection triggered</span>
+                ) : null}
               </div>
               <h2>{proven.title}</h2>
               <p>{proven.selectionDisclosure}</p>

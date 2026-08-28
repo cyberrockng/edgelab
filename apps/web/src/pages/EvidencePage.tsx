@@ -55,6 +55,7 @@ export default function EvidencePage() {
   ] as const;
   const gateRows = evidence?.gateRows ?? placeholderRows;
   const gateVerdict = evidence?.assessment.verdict.replaceAll("_", " ") ?? "AWAITING SERVER EVALUATION";
+  const protectionTriggered = evidence?.assessment.verdict === "INSUFFICIENT_EVIDENCE";
   const gateDetail =
     evidence === null
       ? "The browser does not manufacture PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
@@ -78,9 +79,16 @@ export default function EvidencePage() {
           </small>
         </div>
         <div className={`gateDecision status-${normalizeStatus(evidence?.assessment.verdict ?? "pending")}`}>
-          <span>Decision</span>
+          <span>{protectionTriggered ? "Protection Triggered" : "Decision"}</span>
           <strong>{gateVerdict}</strong>
           <p>{gateDetail}</p>
+          {protectionTriggered ? (
+            <p className="decisionNote">
+              EdgeLab found real evidence, evaluated it, and blocked advancement because the
+              support is not yet strong enough. This is a non-advancing integrity result, not a
+              profitability claim.
+            </p>
+          ) : null}
           {evidence !== null ? (
             <dl className="factGrid compactFacts">
               <div>
@@ -147,7 +155,11 @@ export default function EvidencePage() {
         <div className={`gateOutput ${evidence === null ? "neutralGate" : "verifiedGate"}`}>
           <span>Gate output</span>
           <strong>{gateVerdict}</strong>
-          <p>{gateDetail}</p>
+          <p>
+            {protectionTriggered
+              ? "Promotion remains blocked until the missing evidence is collected and a new server evaluation permits progression."
+              : gateDetail}
+          </p>
         </div>
       </section>
     </div>

@@ -685,6 +685,13 @@ dd {
   line-height: 1.4;
 }
 
+.decisionNote {
+  padding: 10px 12px;
+  border: 1px solid rgb(217 197 150 / 42%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 6%);
+}
+
 .gateDecision .factGrid {
   margin: 6px 0 0;
 }
@@ -806,6 +813,26 @@ dd {
   border-color: #e7b3aa;
   color: #8c2e22;
   background: #fff4f1;
+}
+
+.status-insufficient-evidence {
+  border-color: #d9c596;
+  background:
+    linear-gradient(180deg, rgb(217 197 150 / 15%), transparent),
+    var(--rail);
+}
+
+.emphasisPill {
+  border-color: #d9c596;
+  color: #5e4816;
+  background: #fff8e6;
+}
+
+.thesisPanel {
+  border-color: #d9c596;
+  background:
+    linear-gradient(90deg, rgb(217 197 150 / 16%), transparent 60%),
+    #fbfbf6;
 }
 
 .status-verified .statusPill,

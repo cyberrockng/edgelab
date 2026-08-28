@@ -2,8 +2,8 @@
   "evidenceId": "EVD-007",
   "task": "OBS-001",
   "producer": "Codex execution agent",
-  "producedAt": "2026-08-28T06:07:05.000Z",
-  "sourceCommit": "1eeb0369b6a3509b8a467f4f632d6e7c449ea47a",
+  "producedAt": "2026-08-28T06:59:40.000Z",
+  "sourceCommit": "4535b3c0a3bb9ea09a95e5ed157262095dce1355",
   "sourceVersions": {
     "somniaMarketsSdk": "0.28.1",
     "network": "Somnia Shannon Testnet",

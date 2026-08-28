@@ -5,8 +5,17 @@ export default function HowItWorksPage() {
         <p className="eyebrow">Methodology</p>
         <h1>Evidence-gated promotion keeps the product honest.</h1>
         <p>
-          EdgeLab qualifies strategies through historical reality, forward evidence, and execution
-          reality while preserving strict network and evidence boundaries.
+          EdgeLab complements trading terminals, market-structure tools, and AI agents by deciding
+          whether a DreamDEX strategy has enough real evidence to advance.
+        </p>
+      </section>
+      <section className="routePanel compactPanel thesisPanel" aria-label="Positioning">
+        <span className="label">Positioning</span>
+        <h2>EdgeLab is the qualification gate, not the execution venue.</h2>
+        <p>
+          Other products may size orders, classify liquidity, or automate decisions. EdgeLab's job
+          is narrower: preserve provenance, prevent look-ahead, separate forecast quality from
+          tradeability and PnL, then return a deterministic progression verdict.
         </p>
       </section>
       <section className="methodGrid" aria-label="EdgeLab method">

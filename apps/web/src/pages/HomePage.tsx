@@ -10,8 +10,9 @@ export default function HomePage() {
           <p className="eyebrow">DreamDEX strategy qualification lab</p>
           <h1>Test a DreamDEX strategy before putting capital behind it.</h1>
           <p>
-            EdgeLab uses authentic DreamDEX historical evidence, forward/live-shadow validation,
-            and bounded Shannon execution proof to decide whether a strategy may advance through a scoped evidence gate.
+            EdgeLab is the promotion layer before trading terminals and autonomous agents. It
+            combines authentic DreamDEX history, forward/live-shadow validation, and bounded
+            Shannon execution proof to decide whether a strategy has earned progression.
           </p>
           <div className="actionRow">
             <Link className="primaryAction large" to="/lab">
@@ -43,9 +44,19 @@ export default function HomePage() {
           </div>
           <div className="modelGate">
             <span>Evidence Gate</span>
-            <strong>PROMOTE TO FORWARD / HOLD / REJECT / INSUFFICIENT</strong>
+            <strong>advance only when evidence earns it</strong>
           </div>
         </div>
+      </section>
+
+      <section className="routePanel compactPanel thesisPanel" aria-label="EdgeLab thesis">
+        <span className="label">Judge-ready thesis</span>
+        <h2>A strategy does not graduate because it looks promising once.</h2>
+        <p>
+          EdgeLab forces every candidate through the same evidence chain: historical reality,
+          forward observation, execution proof, and a server-authored verdict. If the evidence is
+          thin, the product blocks advancement instead of manufacturing confidence.
+        </p>
       </section>
 
       <section className="threeColumn" aria-label="What judges can inspect">
