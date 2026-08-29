@@ -487,6 +487,7 @@ const ReplayMaxMarkets = 100;
 const ReplayPageLimit = 100;
 const ReplayMaxMarketScanRows = 1_000;
 const ReplayMaxSourceRows = 10_000;
+const HistoricalReplayPageTimeoutMs = 15_000;
 
 function serializeReplayRun(record: ReplayRunRecord | ReplayRunDetailRecord) {
   return {
@@ -604,15 +605,42 @@ function minBlock(values: readonly string[]): string | null {
   return min?.toString() ?? null;
 }
 
+async function withHistoricalReplayTimeout<T>(
+  operation: Promise<HistoricalDreamDexReadResult<T>>,
+  label: string
+): Promise<HistoricalDreamDexReadResult<T>> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutResult = new Promise<HistoricalDreamDexReadResult<T>>((resolve) => {
+    timeout = setTimeout(() => {
+      resolve({
+        ok: false,
+        reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+        message: `HISTORICAL_REPLAY_SOURCE_TIMEOUT: ${label} exceeded ${String(HistoricalReplayPageTimeoutMs)}ms`
+      });
+    }, HistoricalReplayPageTimeoutMs);
+  });
+  try {
+    return await Promise.race([operation, timeoutResult]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 async function fetchPagedHistoricalRows<T>(
   readPage: (page: HistoricalPageOptions) => Promise<HistoricalDreamDexReadResult<HistoricalRowsPage<T>>>,
-  maxRows: number
+  maxRows: number,
+  label = "historical rows"
 ): Promise<HistoricalDreamDexReadResult<{ readonly rows: readonly T[]; readonly hasMore: boolean }>> {
   const rows: T[] = [];
   let offset = 0;
   let hasMore = true;
   while (hasMore && rows.length < maxRows) {
-    const page = await readPage({ limit: Math.min(ReplayPageLimit, maxRows - rows.length), offset });
+    const page = await withHistoricalReplayTimeout(
+      readPage({ limit: Math.min(ReplayPageLimit, maxRows - rows.length), offset }),
+      `${label} page offset ${String(offset)}`
+    );
     if (!page.ok) {
       return page;
     }
@@ -625,14 +653,15 @@ async function fetchPagedHistoricalRows<T>(
 
 async function fetchPagedHistoricalCandles(
   readPage: (page: HistoricalPageOptions) => Promise<HistoricalDreamDexReadResult<readonly HistoricalCandleEvidence[]>>,
-  maxRows: number
+  maxRows: number,
+  label = "historical candles"
 ): Promise<HistoricalDreamDexReadResult<{ readonly rows: readonly HistoricalCandleEvidence[]; readonly hasMore: boolean }>> {
   const rows: HistoricalCandleEvidence[] = [];
   let offset = 0;
   let hasMore = true;
   while (hasMore && rows.length < maxRows) {
     const limit = Math.min(ReplayPageLimit, maxRows - rows.length);
-    const page = await readPage({ limit, offset });
+    const page = await withHistoricalReplayTimeout(readPage({ limit, offset }), `${label} page offset ${String(offset)}`);
     if (!page.ok) {
       return page;
     }
@@ -647,6 +676,7 @@ interface HistoricalReplayMarketSelection {
   readonly markets: readonly HistoricalMarketEvidence[];
   readonly pagesRead: number;
   readonly scannedCount: number;
+  readonly duplicateCount: number;
   readonly filteredCount: number;
   readonly sourceCompleteness: "COMPLETE";
   readonly windowFromSeconds: number | null;
@@ -715,6 +745,7 @@ async function selectHistoricalReplayMarkets(input: {
           markets: [],
           pagesRead: 0,
           scannedCount: 0,
+          duplicateCount: 0,
           filteredCount: 0,
           sourceCompleteness: "COMPLETE",
           windowFromSeconds: window.fromSeconds,
@@ -739,6 +770,7 @@ async function selectHistoricalReplayMarkets(input: {
         markets: [market.value],
         pagesRead: 1,
         scannedCount: 1,
+        duplicateCount: 0,
         filteredCount: 1,
         sourceCompleteness: "COMPLETE",
         windowFromSeconds: window.fromSeconds,
@@ -752,6 +784,7 @@ async function selectHistoricalReplayMarkets(input: {
   const selected: HistoricalMarketEvidence[] = [];
   const seen = new Set<string>();
   let scannedCount = 0;
+  let duplicateCount = 0;
   let pagesRead = 0;
   let hasMore = true;
   let offset = 0;
@@ -781,11 +814,8 @@ async function selectHistoricalReplayMarkets(input: {
       scannedCount += 1;
       const marketId = market.stableMarketId.toLowerCase();
       if (seen.has(marketId)) {
-        return {
-          ok: false,
-          reasonCode: "DREAMDEX_HISTORICAL_MALFORMED_MARKET",
-          message: `HISTORICAL_MARKET_SOURCE_DUPLICATE: duplicate market ${marketId}`
-        };
+        duplicateCount += 1;
+        continue;
       }
       seen.add(marketId);
       if (
@@ -818,6 +848,7 @@ async function selectHistoricalReplayMarkets(input: {
       markets: selected,
       pagesRead,
       scannedCount,
+      duplicateCount,
       filteredCount: selected.length,
       sourceCompleteness: "COMPLETE",
       windowFromSeconds: window.fromSeconds,
@@ -865,6 +896,7 @@ async function executeHistoricalReplay(input: {
       sourceCompleteness: markets.value.sourceCompleteness,
       selectionPagesRead: markets.value.pagesRead,
       selectionRowsScanned: markets.value.scannedCount,
+      selectionDuplicateRowsSkipped: markets.value.duplicateCount,
       selectionFilteredCount: markets.value.filteredCount,
       windowFromSeconds: markets.value.windowFromSeconds,
       windowToSeconds: markets.value.windowToSeconds,
@@ -876,49 +908,53 @@ async function executeHistoricalReplay(input: {
     if (decisionLeadSeconds < 60) {
       throw new Error("DECISION_OFFSET_UNSUPPORTED: historical replay requires an explicit lead of at least 60 seconds");
     }
-    const decisionAtSeconds = replayDecisionAtSeconds(market, decisionLeadSeconds);
-    const decisionAt = new Date(decisionAtSeconds * 1000);
-    const cutoff = await resolveHistoricalCutoffBlock(
-      input.historicalDreamDexConfig,
-      decisionAtSeconds,
-      input.historicalRpcFetch
-    );
-    if (!cutoff.ok) {
-      throw new Error(`CUTOFF_BLOCK_UNAVAILABLE: ${cutoff.message}`);
-    }
-    const candles = await fetchPagedHistoricalCandles(
-      (page) =>
-        listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
-          fromSec: market.tradingStartSeconds,
-          toSec: decisionAtSeconds,
-          ...page
-        }),
-      500
-    );
-    if (!candles.ok) {
-      throw new Error(candles.message);
-    }
-    const orders = await fetchPagedHistoricalRows(
-      (page) =>
-        listHistoricalOrdersByMarket(
-          input.historicalDreamDexConfig,
-          market.stableMarketId,
-          page,
-          input.historicalIndexerFetch
-        ),
-      ReplayMaxSourceRows
-    );
-    if (!orders.ok) {
-      throw new Error(orders.message);
-    }
-    const fills = await fetchPagedHistoricalRows(
-      (page) =>
-        listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
-      ReplayMaxSourceRows
-    );
-    if (!fills.ok) {
-      throw new Error(fills.message);
-    }
+    try {
+      const decisionAtSeconds = replayDecisionAtSeconds(market, decisionLeadSeconds);
+      const decisionAt = new Date(decisionAtSeconds * 1000);
+      const cutoff = await resolveHistoricalCutoffBlock(
+        input.historicalDreamDexConfig,
+        decisionAtSeconds,
+        input.historicalRpcFetch
+      );
+      if (!cutoff.ok) {
+        throw new Error(`CUTOFF_BLOCK_UNAVAILABLE: ${cutoff.message}`);
+      }
+      const candles = await fetchPagedHistoricalCandles(
+        (page) =>
+          listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
+            fromSec: market.tradingStartSeconds,
+            toSec: decisionAtSeconds,
+            ...page
+          }),
+        500,
+        `candles ${market.stableMarketId}`
+      );
+      if (!candles.ok) {
+        throw new Error(candles.message);
+      }
+      const orders = await fetchPagedHistoricalRows(
+        (page) =>
+          listHistoricalOrdersByMarket(
+            input.historicalDreamDexConfig,
+            market.stableMarketId,
+            page,
+            input.historicalIndexerFetch
+          ),
+        ReplayMaxSourceRows,
+        `orders ${market.stableMarketId}`
+      );
+      if (!orders.ok) {
+        throw new Error(orders.message);
+      }
+      const fills = await fetchPagedHistoricalRows(
+        (page) =>
+          listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
+        ReplayMaxSourceRows,
+        `fills ${market.stableMarketId}`
+      );
+      if (!fills.ok) {
+        throw new Error(fills.message);
+      }
     const cutoffBlock = cutoff.value.blockNumber;
     const blocks = [
       ...orders.value.rows.flatMap((order) => [order.placedAtBlock, order.lastUpdatedAtBlock]),
@@ -1041,6 +1077,39 @@ async function executeHistoricalReplay(input: {
         lastOutcomeLoadedAt: outcomeLoadedAt.toISOString()
       }
     });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Historical source read failed";
+      const sourceFailure =
+        message.startsWith("HISTORICAL_REPLAY_SOURCE_TIMEOUT") ||
+        message.startsWith("SOURCE_BLOCKED") ||
+        message.startsWith("CUTOFF_BLOCK_UNAVAILABLE") ||
+        message.startsWith("DREAMDEX_HISTORICAL_READ_FAILED");
+      if (!sourceFailure) {
+        throw error;
+      }
+      const exclusionReason = `SOURCE_UNAVAILABLE|${message}`;
+      processedCount += 1;
+      outputItems.push({
+        marketId: market.stableMarketId,
+        frameHash: null,
+        cutoffBlock: null,
+        action: "ABSTAIN",
+        outcome: null,
+        exclusionReason
+      });
+      await updateReplayProgress(input.pool, {
+        replayRunId: input.replayRun.id,
+        selectedCount: selectedMarkets.length,
+        processedCount,
+        scoredCount,
+        excludedCount: processedCount - scoredCount,
+        checkpoints: {
+          stage: "SOURCE_MARKET_EXCLUDED",
+          lastMarketId: market.stableMarketId,
+          lastExclusionReason: exclusionReason
+        }
+      });
+    }
   }
   const outputHash = sha256(stableJson(outputItems));
   return await completeReplayRun(input.pool, {
@@ -1061,6 +1130,7 @@ async function executeHistoricalReplay(input: {
       sourceCompleteness: markets.value.sourceCompleteness,
       selectionPagesRead: markets.value.pagesRead,
       selectionRowsScanned: markets.value.scannedCount,
+      selectionDuplicateRowsSkipped: markets.value.duplicateCount,
       selectionFilteredCount: markets.value.filteredCount,
       decisionOffsetSec: input.experiment.configuration.decisionOffsetSec,
       windowFromSeconds: markets.value.windowFromSeconds,
@@ -1658,7 +1728,7 @@ function buildProvenExperiment() {
       evidenceRoute: "/evidence/proven-experiment",
       exportPath: "evidence/proven/manifest.json",
       selectionDisclosure:
-        "Representative single-market captured run selected for reproducibility and completeness, not favorability.",
+        "Captured real-evidence qualification artifact. It is selected for reproducibility and source completeness, not for a favorable verdict.",
       source: {
         plane: stringField(source, "plane"),
         chainId: numberField(source, "chainId"),

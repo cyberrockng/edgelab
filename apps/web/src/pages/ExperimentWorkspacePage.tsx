@@ -84,11 +84,11 @@ export default function ExperimentWorkspacePage() {
     return (
       <div className="pageStack">
         <section className="routeHero">
-          <p className="eyebrow">Proven Experiment</p>
-          <h1>Inspect a captured real-evidence replay.</h1>
+          <p className="eyebrow">Proven Qualification</p>
+          <h1>Inspect a captured DreamDEX evidence run.</h1>
           <p>
-            This public path is reproducible from sanitized artifacts. If the verdict blocks
-            progression, that is EdgeLab protecting the builder from overconfidence.
+            This public path is reproducible from sanitized artifacts. A blocked verdict means
+            the strategy has not earned advancement under the current evidence rules.
           </p>
         </section>
         <section className="routePanel" aria-label="Proven experiment workspace">
@@ -105,7 +105,7 @@ export default function ExperimentWorkspacePage() {
                 <span className="statusPill">{proven.source.plane}</span>
                 <span className="statusPill">No blockchain write</span>
                 {proven.verdict === "INSUFFICIENT_EVIDENCE" ? (
-                  <span className="statusPill emphasisPill">Protection triggered</span>
+                  <span className="statusPill emphasisPill">Qualification incomplete</span>
                 ) : null}
               </div>
               <h2>{proven.title}</h2>

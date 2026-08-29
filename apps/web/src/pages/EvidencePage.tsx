@@ -55,7 +55,7 @@ export default function EvidencePage() {
   ] as const;
   const gateRows = evidence?.gateRows ?? placeholderRows;
   const gateVerdict = evidence?.assessment.verdict.replaceAll("_", " ") ?? "AWAITING SERVER EVALUATION";
-  const protectionTriggered = evidence?.assessment.verdict === "INSUFFICIENT_EVIDENCE";
+  const qualificationIncomplete = evidence?.assessment.verdict === "INSUFFICIENT_EVIDENCE";
   const gateDetail =
     evidence === null
       ? "The browser does not manufacture PROMOTE TO FORWARD OBSERVATION, HOLD, REJECT, or INSUFFICIENT EVIDENCE."
@@ -82,13 +82,13 @@ export default function EvidencePage() {
           </small>
         </div>
         <div className={`gateDecision status-${normalizeStatus(evidence?.assessment.verdict ?? "pending")}`}>
-          <span>{protectionTriggered ? "Protection Triggered" : "Decision"}</span>
+          <span>{qualificationIncomplete ? "Qualification incomplete" : "Decision"}</span>
           <strong>{gateVerdict}</strong>
           <p>{gateDetail}</p>
-          {protectionTriggered ? (
+          {qualificationIncomplete ? (
             <p className="decisionNote">
-              EdgeLab found real evidence, evaluated it, and blocked advancement because support is
-              not yet strong enough.
+              EdgeLab found real DreamDEX evidence and evaluated it. Advancement remains closed
+              because the support set is not yet strong enough.
             </p>
           ) : null}
           {evidence !== null ? (
@@ -158,8 +158,8 @@ export default function EvidencePage() {
           <span>Gate output</span>
           <strong>{gateVerdict}</strong>
           <p>
-            {protectionTriggered
-              ? "Promotion remains blocked until the missing evidence is collected and a new server evaluation permits progression."
+            {qualificationIncomplete
+              ? "Advancement remains unavailable until missing evidence is collected and a new server evaluation permits progression."
               : gateDetail}
           </p>
         </div>

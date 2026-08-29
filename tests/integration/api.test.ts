@@ -508,6 +508,15 @@ function paginatedHistoricalClient(): HistoricalDreamDexSdkClient {
   };
 }
 
+function duplicateHistoricalMarketClient(): HistoricalDreamDexSdkClient {
+  return {
+    ...historicalClient(),
+    listPastBinaryMarkets() {
+      return Promise.resolve([binaryMarket, binaryMarket]);
+    }
+  };
+}
+
 function liveClient(): DreamDexSdkClient {
   return {
     listLiveBinaryMarkets() {
@@ -810,7 +819,8 @@ describe("API-001 server contracts", () => {
       }
     });
     expect(detail.statusCode).toBe(200);
-    expect(body.data.provenExperiment.selectionDisclosure).toContain("not favorability");
+    expect(body.data.provenExperiment.selectionDisclosure).toContain("source completeness");
+    expect(body.data.provenExperiment.selectionDisclosure).toContain("not for a favorable verdict");
     expect(body.data.provenExperiment.replay).toMatchObject({
       processedCount: 1,
       scoredCount: 1,
@@ -1170,6 +1180,72 @@ describe("API-001 server contracts", () => {
         cookie: cookies,
         "x-csrf-token": sessionBody.data.csrfToken,
         "idempotency-key": "api-paginated-selection-replay"
+      }
+    });
+    let replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: { cookie: cookies }
+    });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = V2ReplaySchema.parse(replayReload.json()).data.replay;
+      if (current?.status === "COMPLETED") {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      replayReload = await app.inject({
+        method: "GET",
+        url: `/api/v2/experiments/${experimentId}/replay`,
+        headers: { cookie: cookies }
+      });
+    }
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(replay.statusCode, JSON.stringify(replay.json())).toBe(202);
+    const completed = V2ReplaySchema.parse(replayReload.json()).data.replay;
+    expect(completed?.status).toBe("COMPLETED");
+    expect(completed?.selectedCount).toBe(1);
+    expect(completed?.processedCount).toBe(1);
+    expect(completed?.decisions?.[0]?.marketId).toBe(apiMarketId.toLowerCase());
+  });
+
+  it("deduplicates repeated historical market source rows during replay selection", async () => {
+    const app = buildApp(config, { ...v2Deps(), historicalDreamDexClient: duplicateHistoricalMarketClient(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-dedupe-selection-create"
+      },
+      payload: {
+        name: "Duplicate source replay",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
+        windowFrom: "2026-08-24T11:10:00.000Z",
+        windowTo: "2026-08-24T11:15:00.000Z",
+        decisionOffsetSec: 60,
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-dedupe-selection-replay"
       }
     });
     let replayReload = await app.inject({
