@@ -120,8 +120,9 @@ export default function ComparePage() {
         ) : null}
         {assessments.length === 0 ? (
           <div className="stateBox">
-            No private assessments exist for this research session yet. The public comparison below remains available for
-            product review; run and evaluate at least two experiments to save your own comparison.
+            No private assessments exist for this research session yet. The public comparison below shows how EdgeLab
+            separates historical qualification, forward observation, and execution proof; run and evaluate at least two
+            experiments to save your own comparison.
           </div>
         ) : (
           <>
@@ -195,7 +196,7 @@ export default function ComparePage() {
           <div className="sectionHeader">
             <div>
               <p className="eyebrow">Public Read-Only Comparison</p>
-              <h2>Corrected historical replay versus neutral baseline</h2>
+              <h2>One experiment, three evidence planes</h2>
             </div>
             <span className="statusPill">Qualification evidence; no capital authorization</span>
           </div>
@@ -204,22 +205,22 @@ export default function ComparePage() {
               {apiErrorMessage(provenQuery.error)}
             </div>
           ) : null}
-          <div className="policyMatrix" role="table" aria-label="Public evidence comparison">
+          <div className="policyMatrix publicMatrix" role="table" aria-label="Public evidence comparison">
             <div role="row">
-              <span role="columnheader">Strategy</span>
+              <span role="columnheader">Evidence phase</span>
               <span role="columnheader">Evidence plane</span>
               <span role="columnheader">Observations</span>
-              <span role="columnheader">Verdict scope</span>
+              <span role="columnheader">Supports</span>
               <span role="columnheader">Missing evidence</span>
               <span role="columnheader">Does not authorize</span>
             </div>
             <div role="row">
-              <span role="cell" data-label="Strategy">historical-last-trade@1.1.0</span>
+              <span role="cell" data-label="Evidence phase">Historical qualification</span>
               <span role="cell" data-label="Evidence plane">MAINNET_HISTORICAL</span>
               <span role="cell" data-label="Observations">
                 {provenQuery.data?.data.provenExperiment.sampleSize ?? "Loading"}
               </span>
-              <span role="cell" data-label="Verdict scope">
+              <span role="cell" data-label="Supports">
                 {provenQuery.data?.data.provenExperiment.evidenceGate.decision.promotionScope ?? "NOT_APPLICABLE"}
               </span>
               <span role="cell" data-label="Missing evidence">
@@ -228,12 +229,20 @@ export default function ComparePage() {
               <span role="cell" data-label="Does not authorize">mainnet trading, autonomous execution, profit claims</span>
             </div>
             <div role="row">
-              <span role="cell" data-label="Strategy">reference-neutral@1.0.0</span>
-              <span role="cell" data-label="Evidence plane">SHANNON_FORWARD workflow baseline</span>
-              <span role="cell" data-label="Observations">NOT AVAILABLE</span>
-              <span role="cell" data-label="Verdict scope">NOT_APPLICABLE</span>
-              <span role="cell" data-label="Missing evidence">Historical replay, evaluation, execution linkage</span>
-              <span role="cell" data-label="Does not authorize">capital execution or profitability claims</span>
+              <span role="cell" data-label="Evidence phase">Forward observation</span>
+              <span role="cell" data-label="Evidence plane">SHANNON_FORWARD</span>
+              <span role="cell" data-label="Observations">Collect through live-shadow workspace</span>
+              <span role="cell" data-label="Supports">continued observation only</span>
+              <span role="cell" data-label="Missing evidence">experiment-linked forward sample</span>
+              <span role="cell" data-label="Does not authorize">testnet order placement or capital claims</span>
+            </div>
+            <div role="row">
+              <span role="cell" data-label="Evidence phase">Execution proof</span>
+              <span role="cell" data-label="Evidence plane">SHANNON_EXECUTION</span>
+              <span role="cell" data-label="Observations">one verified no-fill lifecycle</span>
+              <span role="cell" data-label="Supports">DreamDEX write/cancel boundary proof</span>
+              <span role="cell" data-label="Missing evidence">experiment-linked fills and realized PnL</span>
+              <span role="cell" data-label="Does not authorize">mainnet trading or autonomous execution</span>
             </div>
           </div>
           <div className="actionRow">

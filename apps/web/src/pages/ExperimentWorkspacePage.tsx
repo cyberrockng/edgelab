@@ -87,8 +87,8 @@ export default function ExperimentWorkspacePage() {
           <p className="eyebrow">Proven Qualification</p>
           <h1>Inspect a captured DreamDEX evidence run.</h1>
           <p>
-            This public path is reproducible from sanitized artifacts. A blocked verdict means
-            the strategy has not earned advancement under the current evidence rules.
+            This public path is reproducible from sanitized artifacts. It shows how historical
+            qualification produces a bounded next action without authorizing capital execution.
           </p>
         </section>
         <section className="routePanel" aria-label="Proven experiment workspace">
@@ -110,6 +110,23 @@ export default function ExperimentWorkspacePage() {
               </div>
               <h2>{proven.title}</h2>
               <p>{proven.selectionDisclosure}</p>
+              <div className="progressionHub" aria-label="Proven experiment progression">
+                <div>
+                  <span className="label">1. Historical qualification</span>
+                  <strong>{proven.assessment.verdict.replaceAll("_", " ")}</strong>
+                  <p>{proven.sampleSize} scored observations from {proven.replay.processedCount} processed markets.</p>
+                </div>
+                <div>
+                  <span className="label">2. Forward observation</span>
+                  <strong>{proven.evidenceGate.decision.nextPermittedAction.replaceAll("_", " ")}</strong>
+                  <p>Next phase remains separate from historical evidence and must be collected forward.</p>
+                </div>
+                <div>
+                  <span className="label">3. Execution proof</span>
+                  <strong>Verified separately</strong>
+                  <p>Shannon execution proof demonstrates protocol write boundaries, not this strategy's PnL.</p>
+                </div>
+              </div>
               <dl className="factGrid">
                 <div>
                   <dt>Strategy</dt>
@@ -203,7 +220,10 @@ export default function ExperimentWorkspacePage() {
       <section className="routeHero">
         <p className="eyebrow">Experiment Workspace</p>
         <h1>Run replay, observe forward decisions, and evaluate evidence.</h1>
-        <p>Server state will remain authoritative; this route already supports direct refresh.</p>
+        <p>
+          The workspace is the product hub: run historical qualification, collect forward evidence,
+          evaluate the result, then open the Evidence Gate for the next permitted action.
+        </p>
       </section>
       <section className="routePanel" aria-label="Experiment workspace state">
         <div className="sourceBar">
@@ -228,6 +248,23 @@ export default function ExperimentWorkspacePage() {
           <>
             <h2>{experiment.name}</h2>
             <p className="monoText">{experiment.experimentId}</p>
+            <div className="progressionHub" aria-label="Experiment progression">
+              <div>
+                <span className="label">1. Historical qualification</span>
+                <strong>{replay?.status ?? (isHistoricalReplay ? "READY" : "NOT SELECTED")}</strong>
+                <p>{isHistoricalReplay ? "Replay uses bounded mainnet history with pre-outcome frames." : "This experiment is configured for live shadow."}</p>
+              </div>
+              <div>
+                <span className="label">2. Forward observation</span>
+                <strong>{isLiveShadow ? `${String(liveShadow?.decisionCount ?? 0)} decisions` : "Available after qualification"}</strong>
+                <p>Forward decisions are captured before outcomes and remain separate from historical replay.</p>
+              </div>
+              <div>
+                <span className="label">3. Evidence Gate</span>
+                <strong>{assessment === null ? "WAITING FOR EVALUATION" : assessment.verdict.replaceAll("_", " ")}</strong>
+                <p>The server-authored verdict decides the next allowed testing step.</p>
+              </div>
+            </div>
             <dl className="factGrid">
               <div>
                 <dt>Status</dt>

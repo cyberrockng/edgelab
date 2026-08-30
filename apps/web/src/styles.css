@@ -59,7 +59,6 @@ select {
   padding: 18px clamp(18px, 3vw, 36px) 36px;
   background:
     linear-gradient(180deg, rgb(17 24 22 / 4%), transparent 280px),
-    repeating-linear-gradient(90deg, rgb(17 24 22 / 5%) 0 1px, transparent 1px 92px),
     #eef1ec;
 }
 
@@ -226,6 +225,7 @@ button:disabled {
 }
 
 .systemStatus span,
+.systemStatus a,
 .statusPill {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -234,7 +234,12 @@ button:disabled {
   color: #2e3834;
   font-size: 0.72rem;
   font-weight: 900;
+  text-decoration: none;
   white-space: nowrap;
+}
+
+.systemStatus a {
+  color: #1f5b3c;
 }
 
 .textLink {
@@ -277,10 +282,20 @@ button:disabled {
 .proofSection {
   max-width: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  box-shadow: 0 18px 50px rgb(17 24 22 / 8%);
+  box-shadow: 0 14px 36px rgb(17 24 22 / 7%);
+}
+
+.routeHero,
+.routePanel,
+.modelPanel,
+.threeColumn > article,
+.methodGrid > article,
+.controlPanel,
+.chainProof,
+.proofSection {
+  border: 1px solid rgb(207 215 209 / 78%);
 }
 
 .heroCopy {
@@ -391,6 +406,46 @@ p {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 18px;
+}
+
+.progressionHub {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid #26332e;
+  border-radius: 8px;
+  background: #17211d;
+}
+
+.progressionHub div {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 6%);
+}
+
+.progressionHub strong,
+.progressionHub p,
+.progressionHub .label {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.progressionHub strong {
+  margin-top: 8px;
+  color: #f8faf7;
+  font-size: 1.05rem;
+}
+
+.progressionHub p {
+  margin-top: 6px;
+  color: #cad6d0;
+}
+
+.progressionHub .label {
+  color: #9fc7b0;
 }
 
 .flowStep {
@@ -708,6 +763,12 @@ dd {
   margin: 6px 0 0;
 }
 
+.verdictLead {
+  color: #f7e6c9 !important;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
 .compactFacts {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -871,6 +932,10 @@ dd {
 .policyMatrix [role="row"] {
   display: grid;
   grid-template-columns: 1.18fr 1fr 0.74fr 0.84fr 0.78fr 0.94fr 0.92fr 0.78fr 0.9fr;
+}
+
+.policyMatrix.publicMatrix [role="row"] {
+  grid-template-columns: 1.05fr 0.95fr 0.92fr 1fr 1.08fr 1.08fr;
 }
 
 .policyMatrix [role="row"] + [role="row"] {
@@ -1213,6 +1278,7 @@ dd {
   .threeColumn,
   .methodGrid,
   .workspaceFlow,
+  .progressionHub,
   .factGrid {
     grid-template-columns: 1fr;
   }

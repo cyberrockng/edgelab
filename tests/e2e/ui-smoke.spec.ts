@@ -57,7 +57,7 @@ test("homepage explains the interactive product and links to real routes", async
   await expect(page.getByRole("link", { name: "View verified execution" })).toHaveAttribute("href", "/proof");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical Reality");
   await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Evidence Gate");
-  await expect(page.getByLabel("Product boundary")).toContainText("Insufficient evidence is a protection mechanism");
+  await expect(page.getByLabel("Product boundary")).toContainText("Promotion means forward observation");
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
@@ -156,6 +156,16 @@ test("proven experiment path exposes captured replay without favorable-data clai
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
   await expect(page).toHaveURL("/evidence/proven-experiment");
   await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
+});
+
+test("public comparison separates evidence phases without fake strategy performance", async ({ page }) => {
+  await gotoRoute(page, "/compare");
+  const comparison = page.getByRole("region", { name: "Public comparison" });
+  await expect(comparison).toContainText("One experiment, three evidence planes");
+  await expect(comparison).toContainText("Historical qualification");
+  await expect(comparison).toContainText("Forward observation");
+  await expect(comparison).toContainText("Execution proof");
+  await expect(comparison).toContainText("mainnet trading, autonomous execution, profit claims");
 });
 
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {

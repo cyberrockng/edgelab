@@ -24,7 +24,6 @@ const navItems = [
   { to: "/markets", label: "Markets" },
   { to: "/lab", label: "Lab" },
   { to: "/compare", label: "Compare" },
-  { to: "/proof", label: "Proof" },
   { to: "/how-it-works", label: "Methodology" }
 ] as const;
 
@@ -101,6 +100,7 @@ function RootLayout() {
         <Outlet />
       </main>
       <footer className="systemStatus" aria-label="System status">
+        <Link to="/proof">Verified Shannon proof</Link>
         <span>Mainnet {SOMNIA_MAINNET_CHAIN_ID} read-only historical research</span>
         <span>Shannon {SOMNIA_SHANNON_CHAIN_ID} forward and human-authorized execution</span>
         <span>DreamDEX SDK {DREAMDEX_MARKETS_SDK_VERSION}</span>

@@ -12,7 +12,7 @@ export default function HomePage() {
           <p>
             EdgeLab is the promotion layer before trading terminals and autonomous agents. It
             combines authentic DreamDEX history, forward/live-shadow validation, and bounded
-            Shannon execution proof to decide whether a strategy has earned progression.
+            Shannon execution proof to decide the next safe testing step.
           </p>
           <div className="actionRow">
             <Link className="primaryAction large" to="/lab">
@@ -57,15 +57,18 @@ export default function HomePage() {
         <article>
           <span className="label">Explore</span>
           <h2>DreamDEX markets become the research source.</h2>
-          <p>Historical market routes are ready for verified mainnet data, filters, provenance, and detail views.</p>
+          <p>Browse verified mainnet markets, filter by asset and interval, then open a real market as the evidence source.</p>
           <Link className="textLink" to="/markets?plane=mainnet-history">
             Explore DreamDEX history
           </Link>
         </article>
         <article>
           <span className="label">Operate</span>
-          <h2>Experiments are application state.</h2>
-          <p>Strategy Lab routes create fresh runs or inspect a captured public replay with real evidence.</p>
+          <h2>The workspace is where evidence becomes a decision.</h2>
+          <p>Create a strategy experiment, run historical qualification, evaluate the result, then open the Evidence Gate.</p>
+          <Link className="textLink" to="/lab">
+            Start in Strategy Lab
+          </Link>
         </article>
         <article>
           <span className="label">Verify</span>
@@ -83,11 +86,11 @@ export default function HomePage() {
 
       <section className="routePanel compactPanel" aria-label="Product boundary">
         <span className="label">Integrity boundary</span>
-        <h2>Insufficient evidence is a protection mechanism, not the homepage outcome.</h2>
+        <h2>Promotion means forward observation, not capital execution.</h2>
         <p>
-          Historical replay can only promote a strategy to forward observation. Bounded Shannon
-          review remains separate, conditional, and human-authorized. The Evidence Gate route
-          shows that reasoning after a real experiment has an evaluation result.
+          Historical replay can only promote a strategy to forward observation. Tradeability,
+          execution proof, and PnL stay separate, and bounded Shannon execution remains
+          conditional and human-authorized.
         </p>
       </section>
     </div>

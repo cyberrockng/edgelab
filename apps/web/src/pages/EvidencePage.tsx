@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { apiErrorMessage, fetchEvidenceGate, fetchProvenExperiment, minimumSample } from "../data.js";
 
 function normalizeStatus(status: string): string {
@@ -8,6 +8,26 @@ function normalizeStatus(status: string): string {
 
 function validUuid(value: string | undefined): value is string {
   return value !== undefined && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function displayToken(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function verdictLead(verdict: string | null): string {
+  if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
+    return "Advance to forward observation.";
+  }
+  if (verdict === "HOLD") {
+    return "Keep observing before advancement.";
+  }
+  if (verdict === "REJECT") {
+    return "Stop this strategy version.";
+  }
+  if (verdict === "INSUFFICIENT_EVIDENCE") {
+    return "Do not advance yet.";
+  }
+  return "Run evaluation first.";
 }
 
 export default function EvidencePage() {
@@ -54,7 +74,7 @@ export default function EvidencePage() {
     }
   ] as const;
   const gateRows = evidence?.gateRows ?? placeholderRows;
-  const gateVerdict = evidence?.assessment.verdict.replaceAll("_", " ") ?? "AWAITING SERVER EVALUATION";
+  const gateVerdict = displayToken(evidence?.assessment.verdict ?? "AWAITING SERVER EVALUATION");
   const qualificationIncomplete = evidence?.assessment.verdict === "INSUFFICIENT_EVIDENCE";
   const gateDetail =
     evidence === null
@@ -84,6 +104,7 @@ export default function EvidencePage() {
         <div className={`gateDecision status-${normalizeStatus(evidence?.assessment.verdict ?? "pending")}`}>
           <span>{qualificationIncomplete ? "Qualification incomplete" : "Decision"}</span>
           <strong>{gateVerdict}</strong>
+          <p className="verdictLead">{verdictLead(evidence?.assessment.verdict ?? null)}</p>
           <p>{gateDetail}</p>
           {qualificationIncomplete ? (
             <p className="decisionNote">
@@ -95,7 +116,7 @@ export default function EvidencePage() {
             <dl className="factGrid compactFacts">
               <div>
                 <dt>Next allowed action</dt>
-                <dd>{evidence.decision.nextPermittedAction.replaceAll("_", " ")}</dd>
+                <dd>{displayToken(evidence.decision.nextPermittedAction)}</dd>
               </div>
               <div>
                 <dt>Missing evidence</dt>
@@ -147,7 +168,7 @@ export default function EvidencePage() {
             {evidence.progression.stages.map((stage) => (
               <div className={`stageNode status-${normalizeStatus(stage.status)}`} key={stage.stage}>
                 <span>{stage.stage}</span>
-                <strong>{stage.status.replaceAll("_", " ")}</strong>
+                <strong>{displayToken(stage.status)}</strong>
                 <p>{stage.plane}</p>
                 <small>{stage.detail}</small>
               </div>
@@ -162,6 +183,14 @@ export default function EvidencePage() {
               ? "Advancement remains unavailable until missing evidence is collected and a new server evaluation permits progression."
               : gateDetail}
           </p>
+          <div className="actionRow">
+            <Link className="primaryAction" to={isProvenExperiment ? "/lab/proven-experiment" : `/lab/${encodeURIComponent(experimentId ?? "")}`}>
+              Open Workspace
+            </Link>
+            <Link className="secondaryAction" to="/compare">
+              Compare Evidence
+            </Link>
+          </div>
         </div>
       </section>
     </div>
