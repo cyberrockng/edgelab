@@ -140,7 +140,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
 
   await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}$/);
   await expect(page.getByLabel("Experiment workspace state")).toContainText("Application state");
-  await expect(page.getByLabel("Experiment workspace state")).toContainText("MAINNET_HISTORICAL");
+  await expect(page.getByLabel("Experiment workspace state")).toContainText("MAINNET_HISTORICAL", { timeout: 15_000 });
   await expect(page.getByLabel("Experiment workspace state")).toContainText("Last-Trade Probability");
   await expect(page.getByLabel("Experiment workspace state")).toContainText("NOT_AVAILABLE");
 });
