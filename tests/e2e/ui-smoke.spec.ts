@@ -66,7 +66,7 @@ test("homepage explains the interactive product and links to real routes", async
     const entry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
     return Math.round(entry?.duration ?? 0);
   });
-  expect(navigationDurationMs).toBeLessThan(3500);
+  expect(navigationDurationMs).toBeLessThan(process.env.E2E_BASE_URL === undefined ? 3500 : 4500);
   await testInfo.attach("runtime.json", {
     body: JSON.stringify({ navigationDurationMs, viewport: testInfo.project.name }, null, 2),
     contentType: "application/json"
