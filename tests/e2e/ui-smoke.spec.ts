@@ -22,7 +22,7 @@ async function gotoRoute(page: Page, route: string): Promise<APIResponse | null>
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("ERR_NETWORK_CHANGED") && !message.includes("ERR_ABORTED")) {
+      if (!message.includes("ERR_NETWORK_CHANGED") && !message.includes("ERR_ABORTED") && !message.includes("Timeout")) {
         throw error;
       }
       await page.waitForTimeout(500 * (attempt + 1));
