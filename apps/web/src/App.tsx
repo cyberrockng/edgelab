@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
   createBrowserRouter,
   Link,
@@ -9,17 +9,16 @@ import {
 } from "react-router-dom";
 import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_MAINNET_CHAIN_ID, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
 import { capturedSummarySource } from "./data.js";
-
-const HomePage = lazy(() => import("./pages/HomePage.js"));
-const MarketsPage = lazy(() => import("./pages/MarketsPage.js"));
-const MarketDetailPage = lazy(() => import("./pages/MarketDetailPage.js"));
-const LabPage = lazy(() => import("./pages/LabPage.js"));
-const ExperimentWorkspacePage = lazy(() => import("./pages/ExperimentWorkspacePage.js"));
-const ComparePage = lazy(() => import("./pages/ComparePage.js"));
-const EvidencePage = lazy(() => import("./pages/EvidencePage.js"));
-const ProofPage = lazy(() => import("./pages/ProofPage.js"));
-const HowItWorksPage = lazy(() => import("./pages/HowItWorksPage.js"));
-const NotFoundPage = lazy(() => import("./pages/NotFoundPage.js"));
+import HomePage from "./pages/HomePage.js";
+import MarketsPage from "./pages/MarketsPage.js";
+import MarketDetailPage from "./pages/MarketDetailPage.js";
+import LabPage from "./pages/LabPage.js";
+import ExperimentWorkspacePage from "./pages/ExperimentWorkspacePage.js";
+import ComparePage from "./pages/ComparePage.js";
+import EvidencePage from "./pages/EvidencePage.js";
+import ProofPage from "./pages/ProofPage.js";
+import HowItWorksPage from "./pages/HowItWorksPage.js";
+import NotFoundPage from "./pages/NotFoundPage.js";
 
 const navItems = [
   { to: "/markets", label: "Markets" },
@@ -51,16 +50,6 @@ function routeTitleFromPath(pathname: string): string {
     "how-it-works": "How It Works"
   };
   return titles[firstSegment] ?? "Route Not Found";
-}
-
-function RouteFallback() {
-  return (
-    <section className="routePanel" aria-label="Loading route">
-      <p className="eyebrow">Loading</p>
-      <h1>Preparing EdgeLab route.</h1>
-      <p>Route code is loading. No evidence is fabricated while the product view initializes.</p>
-    </section>
-  );
 }
 
 function RootLayout() {
@@ -109,9 +98,7 @@ function RootLayout() {
         </Link>
       </header>
       <main id="main-content" ref={mainRef} tabIndex={-1} className="routeMain">
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet />
-        </Suspense>
+        <Outlet />
       </main>
       <footer className="systemStatus" aria-label="System status">
         <span>Mainnet {SOMNIA_MAINNET_CHAIN_ID} read-only historical research</span>
