@@ -1,6 +1,6 @@
 {
   "taskId": "ARTIFACT-001",
-  "capturedAt": "2026-08-25T13:58:30+01:00",
+  "capturedAt": "2026-08-30T12:19:33.827Z",
   "capability": "Public Proven Experiment exposes a deterministic captured real-evidence replay path",
   "publicRoutes": [
     "/lab/proven-experiment",
@@ -16,18 +16,22 @@
     "writePolicy": "read-only-no-mainnet-signer"
   },
   "result": {
-    "verdict": "INSUFFICIENT_EVIDENCE",
-    "sampleSize": 0,
-    "excludedCount": 1,
+    "verdict": "PROMOTE_TO_FORWARD_OBSERVATION",
+    "sampleSize": 36,
+    "selectedCount": 97,
+    "processedCount": 97,
+    "scoredCount": 36,
+    "excludedCount": 61,
     "pnlStatus": "NOT_AVAILABLE",
-    "selectionBasis": "reproducibility and completeness, not favorability"
+    "selectionBasis": "reproducibility and source completeness, not favorability"
   },
   "integrity": {
     "serverAuthoredEvidenceGate": true,
     "futureDataLeakageClaimedAbsent": true,
     "bookReconstructionUsed": false,
     "fabricatedPerformance": false,
-    "blockchainWriteDuringArtifact001": false
+    "blockchainWriteDuringArtifact001": false,
+    "promotionScope": "PROMOTE_TO_FORWARD_OBSERVATION"
   },
   "export": {
     "path": "evidence/proven/manifest.json",
@@ -38,9 +42,9 @@
     ]
   },
   "testEvidence": {
-    "focusedServerTypecheck": "PASS",
-    "focusedWebTypecheck": "PASS",
-    "integrationApiProvenExperiment": "PASS"
+    "broadHistoricalReplay": "PASS",
+    "scoredSampleThreshold": "PASS",
+    "evaluationRecomputed": "PASS"
   },
   "sensitiveData": "Sanitized public replay and evaluation metadata only"
 }

@@ -17,6 +17,7 @@ import {
   listHistoricalOrdersByMarket,
   normalizeHistoricalPagination,
   normalizeBinaryMarket,
+  resolveHistoricalCutoffBlockAfter,
   resolveHistoricalCutoffBlock,
   validateMainnetHistoricalDreamDexConfig,
   validateDreamDexReadConfig,
@@ -350,6 +351,46 @@ describe("HIST-001 DreamDEX historical source contract", () => {
     expect(beforeT).toMatchObject({ ok: true, value: { blockNumber: "4", timestampSeconds: 104 } });
     expect(atNextT).toMatchObject({ ok: true, value: { blockNumber: "5", timestampSeconds: 105 } });
     expect(afterT).toMatchObject({ ok: true, value: { blockNumber: "6", timestampSeconds: 106 } });
+  });
+
+  it("resolves later cutoff blocks from a previous chronological lower-bound hint", async () => {
+    const requestedTags: string[] = [];
+    const rpcFetch: HistoricalRpcFetch = (_input, init) => {
+      const request = JSON.parse(init.body) as {
+        readonly id: number;
+        readonly params: readonly [string, boolean];
+      };
+      const tag = request.params[0];
+      requestedTags.push(tag);
+      const blockNumber = tag === "finalized" ? 100 : Number(BigInt(tag));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              number: `0x${blockNumber.toString(16)}`,
+              hash: `0x${blockNumber.toString(16).padStart(64, "0")}`,
+              timestamp: `0x${(1000 + blockNumber).toString(16)}`
+            }
+          })
+      });
+    };
+
+    const first = await resolveHistoricalCutoffBlock(mainnetHistoricalConfig, 1050, rpcFetch);
+    expect(first).toMatchObject({ ok: true, value: { blockNumber: "49", timestampSeconds: 1049 } });
+    requestedTags.length = 0;
+
+    if (!first.ok) {
+      throw new Error("first cutoff did not resolve");
+    }
+    const hinted = await resolveHistoricalCutoffBlockAfter(mainnetHistoricalConfig, 1060, first.value, rpcFetch);
+
+    expect(hinted).toMatchObject({ ok: true, value: { blockNumber: "59", timestampSeconds: 1059 } });
+    expect(requestedTags).not.toContain("0x0");
+    expect(requestedTags).toEqual(expect.arrayContaining(["finalized", "0x32", "0x3b"]));
   });
 });
 

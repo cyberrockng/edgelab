@@ -1,23 +1,27 @@
 {
-  "task": "S3D-001 current Proven Experiment manifest",
-  "generatedAt": "2026-08-27T19:47:05.839Z",
+  "task": "S3D current Proven Experiment manifest",
+  "generatedAt": "2026-08-30T12:19:33.827Z",
   "status": "REGENERATED_ACTIVE_CURRENT",
   "supersedes": [
-    "fresh-audit static no-fill 1.1.0 metadata patch",
-    "all active 1.0.0-derived public proof"
+    "single-market historical-last-trade@1.1.0 insufficient-evidence public artifact"
   ],
-  "experimentId": "5a335947-1f13-4367-a3ba-b842467b200e",
-  "replayRunId": "35bd7b5e-0e42-49e1-b79d-38fd3221c92d",
+  "experimentId": "a586460c-3046-48a0-b2de-a1aa69d42677",
+  "replayRunId": "46e66dd5-e51f-48dc-b5c4-2c134c98f262",
   "sourcePlane": "MAINNET_HISTORICAL",
-  "selectedMarketId": "0x0000000000000000000000000000000000000000000000000000000000001e09",
+  "selectedMarketId": null,
   "policy": "historical-last-trade@1.1.0",
   "sourceHash": "149346eea14d0b1b58579d38be7f62d43fa27ba546168f66ffd7873d733abe38",
   "implementationHash": "2b55050552bd63f2f9b00129706f9ace9b88225c8c0b6955c1ff040634678f75",
-  "configHash": "2ca6d071f3fcdf36716a3706dd453d50a8cf1e7b3628652e9e457d6eebb7c5e8",
-  "replayEvidenceHash": "b61483733d08bbe96eda523e8296a70502ec8f78e7d4b9b0482b7da29d4ef57e",
-  "evaluationEvidenceHash": "533e62c9e8f6962d31c1d56ffd585594612e9f0e8dfa8dd4f37d2bfe00167e42",
-  "verdict": "INSUFFICIENT_EVIDENCE",
-  "progressionScope": "NOT_APPLICABLE",
-  "nextPermittedAction": "COLLECT_MORE_EVIDENCE",
-  "note": "Generated through the public v2 application API against the built production bundle. Historical mainnet evidence remains read-only and does not authorize capital execution."
+  "configHash": "cd517e4e3cea11979ac2d7519d5210882bc8158a5cd9d3e9703e17b972337b80",
+  "replayEvidenceHash": "33ad2136e44a0c127472e7f49933e9a2da1c25559f4c253cffe990b2ea008969",
+  "evaluationEvidenceHash": "1fdeafa503bdc17b6592039e9b6c220d052563aa04c328e8460033133f0e3ced",
+  "verdict": "PROMOTE_TO_FORWARD_OBSERVATION",
+  "sampleSize": 36,
+  "selectedCount": 97,
+  "processedCount": 97,
+  "scoredCount": 36,
+  "excludedCount": 61,
+  "progressionScope": "PROMOTE_TO_FORWARD_OBSERVATION",
+  "nextPermittedAction": "START_FORWARD_OBSERVATION",
+  "note": "Generated from a completed 97-market authenticated application replay against authentic DreamDEX mainnet historical evidence. Historical mainnet evidence remains read-only and authorizes only forward observation, not capital execution."
 }

@@ -885,6 +885,7 @@ export async function createReplayRun(
     readonly idempotencyKey: string;
     readonly idempotencyHash: string;
     readonly capability: string;
+    readonly deadlineAt?: Date;
     readonly checkpoints?: Record<string, unknown>;
   }
 ): Promise<ReplayRunRecord> {
@@ -931,8 +932,8 @@ export async function createReplayRun(
           frozen_now, deadline_at, capability, source_version, query_version,
           input_hash, idempotency_key, idempotency_hash, checkpoints
         )
-        VALUES ($1, $2, $3, 'MAINNET_HISTORICAL', 'QUEUED', $4::timestamptz, $4::timestamptz + interval '5 minutes',
-          $5, $6, $7, $8, $9, $10, $11::jsonb)
+        VALUES ($1, $2, $3, 'MAINNET_HISTORICAL', 'QUEUED', $4::timestamptz, COALESCE($5::timestamptz, $4::timestamptz + interval '5 minutes'),
+          $6, $7, $8, $9, $10, $11, $12::jsonb)
         RETURNING ${replayRunColumns}
       `,
       [
@@ -940,6 +941,7 @@ export async function createReplayRun(
         input.configurationId,
         input.sessionId,
         input.frozenNow,
+        input.deadlineAt ?? null,
         input.capability,
         input.sourceVersion,
         input.queryVersion,
@@ -1213,6 +1215,57 @@ export async function failReplayRun(
     row.experiment_id
   ]);
   return mapReplayRunRow(row);
+}
+
+export async function expireStaleReplayRuns(
+  pool: pg.Pool,
+  input: {
+    readonly staleAfterMs: number;
+    readonly now?: Date;
+  }
+): Promise<number> {
+  const now = input.now ?? new Date();
+  const result = await pool.query<{ readonly experiment_id: string }>(
+    `
+      WITH expired AS (
+        UPDATE replay_runs
+        SET status = 'FAILED',
+            error_code = CASE
+              WHEN deadline_at IS NOT NULL AND deadline_at <= $2::timestamptz
+                THEN 'REPLAY_DEADLINE_EXCEEDED'
+              ELSE 'REPLAY_HEARTBEAT_STALE'
+            END,
+            checkpoints = checkpoints || jsonb_build_object(
+              'watchdogExpiredAt', $2::timestamptz,
+              'watchdogStaleAfterMs', $1::integer
+            ),
+            completed_at = $2::timestamptz
+        WHERE status IN ('QUEUED', 'RUNNING')
+          AND cancel_requested_at IS NULL
+          AND (
+            (deadline_at IS NOT NULL AND deadline_at <= $2::timestamptz)
+            OR (
+              last_heartbeat_at IS NOT NULL
+              AND last_heartbeat_at < ($2::timestamptz - ($1::double precision * interval '1 millisecond'))
+            )
+          )
+        RETURNING experiment_id
+      )
+      SELECT experiment_id FROM expired
+    `,
+    [input.staleAfterMs, now]
+  );
+  if (result.rows.length > 0) {
+    await pool.query(
+      `
+        UPDATE experiments
+        SET status = 'FAILED', updated_at = now()
+        WHERE id = ANY($1::uuid[])
+      `,
+      [result.rows.map((row) => row.experiment_id)]
+    );
+  }
+  return result.rows.length;
 }
 
 export async function persistReplayDecision(

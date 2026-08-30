@@ -840,6 +840,103 @@ export async function resolveHistoricalCutoffBlock(
   };
 }
 
+export async function resolveHistoricalCutoffBlockAfter(
+  config: MainnetHistoricalDreamDexConfig,
+  decisionAtSeconds: number,
+  lowerBound: HistoricalCutoffBlock,
+  fetchImpl: HistoricalRpcFetch = fetch
+): Promise<HistoricalDreamDexReadResult<HistoricalCutoffBlock>> {
+  const validated = ensureHistoricalConfig(config);
+  if (!validated.ok) {
+    return validated;
+  }
+  if (!Number.isSafeInteger(decisionAtSeconds) || decisionAtSeconds <= 0) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_BOUNDS_INVALID",
+      message: "Historical decision time must be a positive integer epoch second"
+    };
+  }
+  if (lowerBound.timestampSeconds >= decisionAtSeconds) {
+    return resolveHistoricalCutoffBlock(validated.value, decisionAtSeconds, fetchImpl);
+  }
+  const lowerNumber = BigInt(lowerBound.blockNumber);
+  let requestId = 1;
+  const finalized = await readHistoricalRpcBlock(validated.value, "finalized", requestId, fetchImpl);
+  requestId += 1;
+  if (!finalized.ok) {
+    return finalized;
+  }
+  let selected = {
+    number: lowerNumber,
+    hash: lowerBound.blockHash,
+    timestampSeconds: lowerBound.timestampSeconds
+  };
+  if (finalized.value.timestampSeconds < decisionAtSeconds) {
+    selected = finalized.value;
+  } else {
+    let step = 1n;
+    let upper = finalized.value.number - 1n;
+    let firstAtOrAfter: bigint | null = null;
+    while (selected.number + step <= upper) {
+      const candidateNumber = selected.number + step;
+      const candidate = await readHistoricalRpcBlock(
+        validated.value,
+        `0x${candidateNumber.toString(16)}`,
+        requestId,
+        fetchImpl
+      );
+      requestId += 1;
+      if (!candidate.ok) {
+        return candidate;
+      }
+      if (candidate.value.timestampSeconds < decisionAtSeconds) {
+        selected = candidate.value;
+        step *= 2n;
+        continue;
+      }
+      firstAtOrAfter = candidate.value.number;
+      upper = candidate.value.number - 1n;
+      break;
+    }
+    if (firstAtOrAfter === null && selected.number < upper) {
+      firstAtOrAfter = upper + 1n;
+    }
+    let low = selected.number + 1n;
+    let high = firstAtOrAfter === null ? upper : firstAtOrAfter - 1n;
+    while (low <= high) {
+      const midpoint = low + (high - low) / 2n;
+      const candidate = await readHistoricalRpcBlock(
+        validated.value,
+        `0x${midpoint.toString(16)}`,
+        requestId,
+        fetchImpl
+      );
+      requestId += 1;
+      if (!candidate.ok) {
+        return candidate;
+      }
+      if (candidate.value.timestampSeconds < decisionAtSeconds) {
+        selected = candidate.value;
+        low = midpoint + 1n;
+      } else {
+        high = midpoint - 1n;
+      }
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      blockNumber: selected.number.toString(),
+      blockHash: selected.hash,
+      timestampSeconds: selected.timestampSeconds,
+      decisionAtSeconds,
+      finalityTag: "finalized",
+      rule: "GREATEST_FINALIZED_BLOCK_STRICTLY_BEFORE_DECISION_AT"
+    }
+  };
+}
+
 export function normalizeHistoricalPagination(
   options: HistoricalPageOptions = {}
 ): NormalizedHistoricalPage {

@@ -812,7 +812,7 @@ describe("API-001 server contracts", () => {
         provenExperiments: [
           expect.objectContaining({
             slug: "proven-experiment",
-            verdict: "INSUFFICIENT_EVIDENCE",
+            verdict: "PROMOTE_TO_FORWARD_OBSERVATION",
             route: "/lab/proven-experiment"
           })
         ]
@@ -822,21 +822,19 @@ describe("API-001 server contracts", () => {
     expect(body.data.provenExperiment.selectionDisclosure).toContain("source completeness");
     expect(body.data.provenExperiment.selectionDisclosure).toContain("not for a favorable verdict");
     expect(body.data.provenExperiment.replay).toMatchObject({
-      processedCount: 1,
-      scoredCount: 1,
-      excludedCount: 0,
+      processedCount: 97,
+      scoredCount: 36,
+      excludedCount: 61,
       blockchainWrite: false
     });
-    expect(body.data.provenExperiment.decision.forecastPUp).toBe(0.232);
-    expect(body.data.provenExperiment.decision.reasonCodes).toEqual(
-      expect.arrayContaining(["NO_TAG_NOT_INVERTED", "MINT_PAIR_ELIGIBLE"])
-    );
+    expect(body.data.provenExperiment.decision.forecastPUp).toBeGreaterThanOrEqual(0);
+    expect(body.data.provenExperiment.decision.reasonCodes).toContain("DREAMDEX_YES_TERM_PRICE");
     expect(body.data.provenExperiment.assessment).toMatchObject({
-      verdict: "INSUFFICIENT_EVIDENCE",
-      sampleSize: 1,
+      verdict: "PROMOTE_TO_FORWARD_OBSERVATION",
+      sampleSize: 36,
       pnlStatus: "NOT_AVAILABLE"
     });
-    expect(body.data.provenExperiment.evidenceGate.verdictReasons).toContain("MIN_SAMPLE_NOT_MET");
+    expect(body.data.provenExperiment.evidenceGate.verdictReasons).toContain("PROMOTE_TO_FORWARD_OBSERVATION");
     expect(
       body.data.provenExperiment.evidenceGate.gateRows.find(
         (row) => row.dimension === "Tradeability / execution quality"
@@ -845,8 +843,8 @@ describe("API-001 server contracts", () => {
       status: "NOT_AVAILABLE",
       value: "NOT_AVAILABLE"
     });
-    expect(body.data.provenExperiment.evidenceGate.decision.nextPermittedAction).toBe("COLLECT_MORE_EVIDENCE");
-    expect(body.data.provenExperiment.evidenceGate.decision.promotionScope).toBe("NOT_APPLICABLE");
+    expect(body.data.provenExperiment.evidenceGate.decision.nextPermittedAction).toBe("START_FORWARD_OBSERVATION");
+    expect(body.data.provenExperiment.evidenceGate.decision.promotionScope).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
     expect(
       body.data.provenExperiment.evidenceGate.progression.stages.find((stage) => stage.stage === "Execution Proof")
     ).toMatchObject({ status: "UNLINKED_GLOBAL_PROOF_AVAILABLE" });

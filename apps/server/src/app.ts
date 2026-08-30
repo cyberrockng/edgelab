@@ -29,6 +29,7 @@ import {
   createInteractiveExperiment,
   createReplayRun,
   createResearchSession,
+  expireStaleReplayRuns,
   failReplayRun,
   findReplayRunByInputHash,
   findActiveResearchSessionByTokenHash,
@@ -63,6 +64,7 @@ import {
   listHistoricalFillsByMarket,
   listHistoricalOrdersByMarket,
   resolveHistoricalCutoffBlock,
+  resolveHistoricalCutoffBlockAfter,
   type DreamDexReadConfig,
   type DreamDexSdkClient,
   type HistoricalDreamDexReadResult,
@@ -74,6 +76,7 @@ import {
   type HistoricalMarketFilters,
   type HistoricalPageOptions,
   type HistoricalRowsPage,
+  type HistoricalCutoffBlock,
   type MainnetHistoricalDreamDexConfig
 } from "@edgelab/dreamdex";
 import { runMetricAssessment } from "@edgelab/evaluate";
@@ -117,6 +120,7 @@ const RateWindowMs = 60_000;
 const MaxExperimentsPerSession = 20;
 const MaxReplayRunsPerSession = 20;
 const MaxComparisonsPerSession = 10;
+const ReplayHeartbeatStaleAfterMs = 120_000;
 const ModuleDir = dirname(fileURLToPath(import.meta.url));
 const ExperimentIntervalSecSchema = z.union([z.literal(900), z.literal(3600)]);
 const ExperimentCreateSchema = z.object({
@@ -488,6 +492,7 @@ const ReplayPageLimit = 100;
 const ReplayMaxMarketScanRows = 1_000;
 const ReplayMaxSourceRows = 10_000;
 const HistoricalReplayPageTimeoutMs = 15_000;
+const HistoricalReplayDeadlineMs = 30 * 60_000;
 
 function serializeReplayRun(record: ReplayRunRecord | ReplayRunDetailRecord) {
   return {
@@ -889,7 +894,12 @@ async function executeHistoricalReplay(input: {
   let processedCount = 0;
   let scoredCount = 0;
   const outputItems: unknown[] = [];
-  const selectedMarkets = markets.value.markets;
+  const selectedMarkets = [...markets.value.markets].sort((left, right) => {
+    const leftDecisionAt = replayDecisionAtSeconds(left, input.experiment.configuration.decisionOffsetSec);
+    const rightDecisionAt = replayDecisionAtSeconds(right, input.experiment.configuration.decisionOffsetSec);
+    return leftDecisionAt - rightDecisionAt || left.stableMarketId.localeCompare(right.stableMarketId);
+  });
+  let previousCutoff: HistoricalCutoffBlock | null = null;
   await updateReplayProgress(input.pool, {
     replayRunId: input.replayRun.id,
     selectedCount: selectedMarkets.length,
@@ -917,46 +927,58 @@ async function executeHistoricalReplay(input: {
     try {
       const decisionAtSeconds = replayDecisionAtSeconds(market, decisionLeadSeconds);
       const decisionAt = new Date(decisionAtSeconds * 1000);
+      const cutoffOperation: Promise<HistoricalDreamDexReadResult<HistoricalCutoffBlock>> =
+        previousCutoff === null
+          ? resolveHistoricalCutoffBlock(input.historicalDreamDexConfig, decisionAtSeconds, input.historicalRpcFetch)
+          : resolveHistoricalCutoffBlockAfter(
+              input.historicalDreamDexConfig,
+              decisionAtSeconds,
+              previousCutoff,
+              input.historicalRpcFetch
+            );
       const cutoff = await withHistoricalReplayTimeout(
-        resolveHistoricalCutoffBlock(input.historicalDreamDexConfig, decisionAtSeconds, input.historicalRpcFetch),
+        cutoffOperation,
         `cutoff block ${market.stableMarketId}`
       );
       if (!cutoff.ok) {
         throw new Error(`CUTOFF_BLOCK_UNAVAILABLE: ${cutoff.message}`);
       }
-      const candles = await fetchPagedHistoricalCandles(
-        (page) =>
-          listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
-            fromSec: market.tradingStartSeconds,
-            toSec: decisionAtSeconds,
-            ...page
-          }),
-        500,
-        `candles ${market.stableMarketId}`
-      );
+      previousCutoff = cutoff.value;
+      const [candles, orders, fills] = await Promise.all([
+        fetchPagedHistoricalCandles(
+          (page) =>
+            listHistoricalCandles(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.poolAddress, 300, {
+              fromSec: market.tradingStartSeconds,
+              toSec: decisionAtSeconds,
+              ...page
+            }),
+          500,
+          `candles ${market.stableMarketId}`
+        ),
+        fetchPagedHistoricalRows(
+          (page) =>
+            listHistoricalOrdersByMarket(
+              input.historicalDreamDexConfig,
+              market.stableMarketId,
+              page,
+              input.historicalIndexerFetch
+            ),
+          ReplayMaxSourceRows,
+          `orders ${market.stableMarketId}`
+        ),
+        fetchPagedHistoricalRows(
+          (page) =>
+            listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
+          ReplayMaxSourceRows,
+          `fills ${market.stableMarketId}`
+        )
+      ]);
       if (!candles.ok) {
         throw new Error(candles.message);
       }
-      const orders = await fetchPagedHistoricalRows(
-        (page) =>
-          listHistoricalOrdersByMarket(
-            input.historicalDreamDexConfig,
-            market.stableMarketId,
-            page,
-            input.historicalIndexerFetch
-          ),
-        ReplayMaxSourceRows,
-        `orders ${market.stableMarketId}`
-      );
       if (!orders.ok) {
         throw new Error(orders.message);
       }
-      const fills = await fetchPagedHistoricalRows(
-        (page) =>
-          listHistoricalFillsByMarket(input.historicalDreamDexConfig, market.stableMarketId, page, input.historicalIndexerFetch),
-        ReplayMaxSourceRows,
-        `fills ${market.stableMarketId}`
-      );
       if (!fills.ok) {
         throw new Error(fills.message);
       }
@@ -1031,14 +1053,7 @@ async function executeHistoricalReplay(input: {
       reasonCodes: decision.reasonCodes,
       exclusionReason: decisionExclusionReason
     });
-    const outcomeMarket = await withHistoricalReplayTimeout(
-      getHistoricalBinaryMarket(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.stableMarketId),
-      `outcome market ${market.stableMarketId}`
-    );
-    if (!outcomeMarket.ok) {
-      throw new Error(`OUTCOME_SOURCE_UNAVAILABLE: ${outcomeMarket.message}`);
-    }
-    const outcome = normalizeOutcome(outcomeMarket.value?.winningOutcome ?? null);
+    const outcome = normalizeOutcome(market.winningOutcome);
     const outcomeExclusionReason = outcome === null ? "OUTCOME_UNAVAILABLE_OR_UNMAPPED" : null;
     const outcomeLoadedAt = new Date();
     await persistReplayOutcome(input.pool, {
@@ -1050,6 +1065,8 @@ async function executeHistoricalReplay(input: {
         plane: "MAINNET_HISTORICAL",
         chainId: SOMNIA_MAINNET_CHAIN_ID,
         marketId: market.stableMarketId,
+        source: "listPastBinaryMarkets",
+        outcomeEmbargo: "winningOutcome withheld from historical decision frame and policy input",
         loadedAfterDecisionId: persistedDecision.id,
         decisionCommittedAt: persistedDecision.createdAt.toISOString()
       }
@@ -1998,6 +2015,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       .catch(async (error: unknown) => {
         const message = error instanceof Error ? error.message : "REPLAY_FAILED";
         if (message.includes("REPLAY_CANCELLED_OR_DEADLINE_EXCEEDED")) {
+          const pool = requirePool(deps);
+          await expireStaleReplayRuns(pool, { staleAfterMs: ReplayHeartbeatStaleAfterMs });
           return;
         }
         const pool = requirePool(deps);
@@ -2722,6 +2741,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         return await v2Error(reply, 409, "HISTORICAL_POLICY_UNSUPPORTED", "Experiment policy is not approved for historical replay", false, request.id);
       }
       const inputHash = experimentReplayInputHash(experiment);
+      await expireStaleReplayRuns(pool, { staleAfterMs: ReplayHeartbeatStaleAfterMs });
       const existing = await findReplayRunByInputHash(pool, {
         sessionId: session.id,
         experimentId: experiment.experimentId,
@@ -2757,6 +2777,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         experimentId: experiment.experimentId,
         configurationId: experiment.configuration.id,
         frozenNow: new Date(),
+        deadlineAt: new Date(Date.now() + HistoricalReplayDeadlineMs),
         sourceVersion: ReplaySourceVersion,
         queryVersion: ReplayQueryVersion,
         inputHash,

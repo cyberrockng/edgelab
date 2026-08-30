@@ -7,9 +7,12 @@ import {
   appendAuditEvent,
   createInteractiveExperiment,
   createPool,
+  createReplayRun,
   createResearchSession,
+  expireStaleReplayRuns,
   migrations,
   runMigrations,
+  startReplayRun,
   upsertPolicyVersion
 } from "@edgelab/db";
 
@@ -352,5 +355,112 @@ describe("DB-001 schema and recovery controls", () => {
     expect(duplicate.experimentId).toBe(created.experimentId);
     expect(duplicate.configurationId).toBe(created.configurationId);
     expect(duplicate.idempotentReplay).toBe(true);
+  });
+
+  it("expires stale replay runs so they do not block future qualifications", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const session = await createResearchSession(pool, {
+      tokenHash: "1".repeat(64),
+      csrfHash: "2".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const created = await createInteractiveExperiment(pool, {
+      sessionId: session.id,
+      name: "Stale replay watchdog",
+      createIdempotencyKey: "create-stale-watchdog",
+      configuration: {
+        mode: "HISTORICAL_REPLAY",
+        assets: ["BTC"],
+        intervals: [900],
+        decisionOffsetSec: 60,
+        ruleVersion: "interactive-2.0.0",
+        config: {
+          sourcePlane: "MAINNET_HISTORICAL",
+          bookReconstruction: "SOURCE_INCOMPLETE"
+        },
+        configHash: "4".repeat(64)
+      }
+    });
+    const replay = await createReplayRun(pool, {
+      sessionId: session.id,
+      experimentId: created.experimentId,
+      configurationId: created.configurationId,
+      frozenNow: new Date(),
+      sourceVersion: "dreamdex-mainnet-history@0.28.1",
+      queryVersion: "watchdog-test",
+      inputHash: "5".repeat(64),
+      idempotencyKey: "stale-watchdog-replay",
+      idempotencyHash: "6".repeat(64),
+      capability: "SOURCE_INCOMPLETE",
+      checkpoints: { stage: "TEST_RUNNING" }
+    });
+    await startReplayRun(pool, replay.id);
+    await pool.query(
+      `
+        UPDATE replay_runs
+        SET last_heartbeat_at = now() - interval '10 minutes',
+            deadline_at = now() + interval '10 minutes'
+        WHERE id = $1
+      `,
+      [replay.id]
+    );
+
+    const expired = await expireStaleReplayRuns(pool, { staleAfterMs: 120_000 });
+    const rows = await pool.query<{ status: string; error_code: string | null; checkpoints: Record<string, unknown> }>(
+      "SELECT status, error_code, checkpoints FROM replay_runs WHERE id = $1",
+      [replay.id]
+    );
+
+    expect(expired).toBe(1);
+    expect(rows.rows[0]?.status).toBe("FAILED");
+    expect(rows.rows[0]?.error_code).toBe("REPLAY_HEARTBEAT_STALE");
+    expect(rows.rows[0]?.checkpoints.watchdogStaleAfterMs).toBe(120_000);
+  });
+
+  it("allows bounded replay deadlines larger than the default smoke window", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const session = await createResearchSession(pool, {
+      tokenHash: "7".repeat(64),
+      csrfHash: "8".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const created = await createInteractiveExperiment(pool, {
+      sessionId: session.id,
+      name: "Wide replay deadline",
+      createIdempotencyKey: "create-wide-deadline",
+      configuration: {
+        mode: "HISTORICAL_REPLAY",
+        assets: ["BTC"],
+        intervals: [900],
+        decisionOffsetSec: 60,
+        ruleVersion: "interactive-2.0.0",
+        config: {
+          sourcePlane: "MAINNET_HISTORICAL",
+          bookReconstruction: "SOURCE_INCOMPLETE"
+        },
+        configHash: "9".repeat(64)
+      }
+    });
+    const frozenNow = new Date("2026-08-30T11:00:00.000Z");
+    const deadlineAt = new Date("2026-08-30T11:30:00.000Z");
+
+    const replay = await createReplayRun(pool, {
+      sessionId: session.id,
+      experimentId: created.experimentId,
+      configurationId: created.configurationId,
+      frozenNow,
+      deadlineAt,
+      sourceVersion: "dreamdex-mainnet-history@0.28.1",
+      queryVersion: "deadline-test",
+      inputHash: "a".repeat(64),
+      idempotencyKey: "wide-deadline-replay",
+      idempotencyHash: "b".repeat(64),
+      capability: "SOURCE_INCOMPLETE"
+    });
+
+    const rows = await pool.query<{ deadline_at: Date }>("SELECT deadline_at FROM replay_runs WHERE id = $1", [replay.id]);
+    expect(rows.rows[0]?.deadline_at.toISOString()).toBe(deadlineAt.toISOString());
   });
 });

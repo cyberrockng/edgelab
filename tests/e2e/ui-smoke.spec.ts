@@ -150,20 +150,20 @@ test("proven experiment path exposes captured replay without favorable-data clai
   const workspace = page.getByRole("region", { name: "Proven experiment workspace" });
   await expect(page.getByRole("heading", { name: "Inspect a captured DreamDEX evidence run." })).toBeVisible();
   await expect(workspace).toContainText("PUBLIC PROVEN");
-  await expect(workspace).toContainText("INSUFFICIENT EVIDENCE");
+  await expect(workspace).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(workspace).toContainText("NOT_AVAILABLE");
   await expect(workspace).toContainText("reproducibility and source completeness");
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
   await expect(page).toHaveURL("/evidence/proven-experiment");
-  await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("MIN_SAMPLE_NOT_MET");
+  await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
 });
 
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await gotoRoute(page, "/evidence/proven-experiment");
   const gate = page.getByRole("region", { name: "Evidence gate" });
-  await expect(gate).toContainText("INSUFFICIENT EVIDENCE");
-  await expect(gate).toContainText("Qualification incomplete");
-  await expect(gate).toContainText("MIN_SAMPLE_NOT_MET");
+  await expect(gate).toContainText("PROMOTE TO FORWARD OBSERVATION");
+  await expect(gate).toContainText("Historical replay evidence meets sample, Brier score, and calibration thresholds");
+  await expect(gate).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
   await expect(gate).toContainText("MAINNET_HISTORICAL");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Forecast sample");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("PnL");
