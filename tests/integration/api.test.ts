@@ -1278,6 +1278,79 @@ describe("API-001 server contracts", () => {
     expect(completed?.decisions?.[0]?.marketId).toBe(apiMarketId.toLowerCase());
   });
 
+  it("completes replay with excluded evidence when a market source read fails", async () => {
+    const failingIndexerFetch: HistoricalIndexerFetch = () =>
+      Promise.resolve({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve({ errors: [{ message: "source unavailable" }] })
+      });
+    const app = buildApp(config, { ...v2Deps(), pool, historicalIndexerFetch: failingIndexerFetch });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-source-failure-create"
+      },
+      payload: {
+        name: "Source failure replay",
+        mode: "HISTORICAL_REPLAY",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "historical-last-trade",
+        policyVersion: "1.1.0",
+        marketId: apiMarketId,
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-source-failure-replay"
+      }
+    });
+    let replayReload = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/replay`,
+      headers: { cookie: cookies }
+    });
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const current = V2ReplaySchema.parse(replayReload.json()).data.replay;
+      if (current?.status === "COMPLETED") {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      replayReload = await app.inject({
+        method: "GET",
+        url: `/api/v2/experiments/${experimentId}/replay`,
+        headers: { cookie: cookies }
+      });
+    }
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(replay.statusCode, JSON.stringify(replay.json())).toBe(202);
+    const completed = V2ReplaySchema.parse(replayReload.json()).data.replay;
+    expect(completed, JSON.stringify(completed)).toMatchObject({
+      status: "COMPLETED",
+      selectedCount: 1,
+      processedCount: 1,
+      scoredCount: 0,
+      excludedCount: 1
+    });
+  }, 10_000);
+
   it("creates experiments when built-in policy rows already contain full immutable manifests", async () => {
     const app = buildApp(config, { ...v2Deps(), pool });
     const policies = await app.inject({ method: "GET", url: "/api/v2/policies" });

@@ -9,7 +9,7 @@
     "network": "Somnia Shannon Testnet",
     "chainId": 50312
   },
-  "artifactCount": 88,
+  "artifactCount": 89,
   "artifacts": [
     {
       "path": "evidence/api/api-001-report.json",
@@ -463,6 +463,13 @@
       "path": "evidence/replay/replay-002-sample.json",
       "sha256": "0ddcfa2d4b290fb3a041e97a2c2b8415021b83ad0ab3035a4c5bd452c26cd6c3",
       "bytes": 5836,
+      "evidenceClass": "CAPTURED",
+      "redaction": "public or sanitized repository evidence only"
+    },
+    {
+      "path": "evidence/replay/replay-source-resilience-2026-08-30.json",
+      "sha256": "efd5b3ea7ef8e1c0b2705e115b4e1e6a051fa4dd3043787ba0e15be782ee367b",
+      "bytes": 3212,
       "evidenceClass": "CAPTURED",
       "redaction": "public or sanitized repository evidence only"
     },

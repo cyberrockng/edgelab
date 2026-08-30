@@ -1,0 +1,75 @@
+{
+  "task": "Broad historical evidence search and replay source resilience",
+  "capturedAt": "2026-08-30T07:22:00.000Z",
+  "baselineSha": "36c86bdd64b0c04510afd806251ac79eae6752c0",
+  "status": "SOURCE_RESILIENCE_HARDENED_PROVEN_EXPERIMENT_NOT_REPLACED",
+  "purpose": "Determine whether a wider authentic DreamDEX historical window could safely replace the current one-market Proven Experiment without fabrication, cherry-picking, or threshold changes.",
+  "sourcePlane": {
+    "network": "Somnia Mainnet",
+    "chainId": 5031,
+    "mode": "READ_ONLY_HISTORICAL_RESEARCH",
+    "blockchainWrites": "NONE"
+  },
+  "policy": {
+    "policyId": "historical-last-trade",
+    "version": "1.1.0",
+    "decisionOffsetSec": 60,
+    "windowSec": 900,
+    "canonicalFillSemantics": "fillPriceRaw / 10^quoteDecimals is canonical YES/UP probability"
+  },
+  "candidateWindow": {
+    "asset": "BTC",
+    "intervalSec": 900,
+    "windowFrom": "2026-08-27T09:59:00.000Z",
+    "windowTo": "2026-08-28T09:59:00.000Z",
+    "selectedMarkets": 97
+  },
+  "observedReplayAttempts": [
+    {
+      "experimentId": "3feec005-62da-4c5a-8aa1-ad684fb3972a",
+      "replayRunId": "1082810e-73c1-4e6c-b606-681d3e71d84d",
+      "result": "INTERRUPTED_FOR_CODE_FIX",
+      "lastObserved": {
+        "status": "RUNNING",
+        "selectedCount": 97,
+        "processedCount": 25,
+        "scoredCount": 10,
+        "excludedCount": 15
+      },
+      "finding": "Orders/fills/candles and cutoff source errors were being excluded, but an unbounded outcome read could stall the broad replay."
+    },
+    {
+      "experimentId": "ce32d8e1-806b-44d1-b148-dc49d30fd658",
+      "replayRunId": "1016cc20-3ac3-477b-9d1d-f69327ebc2fb",
+      "result": "INTERRUPTED_AFTER_STALL",
+      "lastObserved": {
+        "status": "RUNNING",
+        "selectedCount": 97,
+        "processedCount": 28,
+        "scoredCount": 11,
+        "excludedCount": 17
+      },
+      "finding": "Outcome source reads were timeout-bounded, but the broad replay still stalled before producing a completed auditable artifact."
+    }
+  ],
+  "implementedCorrection": {
+    "runtime": "Historical replay now converts rejected source reads into DREAMDEX_HISTORICAL_READ_FAILED results, timeout-wraps cutoff and outcome source reads, and classifies HTTP/deadline/outcome source failures as per-market excluded evidence.",
+    "regressionTest": "tests/integration/api.test.ts: completes replay with excluded evidence when a market source read fails",
+    "provenExperimentReplacement": "NOT_PERFORMED"
+  },
+  "integrityDecision": {
+    "currentProvenExperiment": "UNCHANGED",
+    "reason": "The wider evidence candidate did not reach COMPLETED replay state, so it cannot replace the current public Proven Experiment.",
+    "thresholdChange": "NONE",
+    "fabrication": "NONE",
+    "cherryPicking": "NONE"
+  },
+  "nextTechnicalNeed": {
+    "summary": "Broad replay needs throughput/state hardening before a wider completed artifact can become public proof.",
+    "likelyWork": [
+      "cache or batch historical cutoff block resolution",
+      "add a replay job watchdog for stalled RUNNING jobs",
+      "capture per-market source stage in checkpoints before every external read"
+    ]
+  }
+}

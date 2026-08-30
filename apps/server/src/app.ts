@@ -621,6 +621,12 @@ async function withHistoricalReplayTimeout<T>(
   });
   try {
     return await Promise.race([operation, timeoutResult]);
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_HISTORICAL_READ_FAILED",
+      message: error instanceof Error ? error.message : `${label} failed`
+    };
   } finally {
     if (timeout !== undefined) {
       clearTimeout(timeout);
@@ -911,10 +917,9 @@ async function executeHistoricalReplay(input: {
     try {
       const decisionAtSeconds = replayDecisionAtSeconds(market, decisionLeadSeconds);
       const decisionAt = new Date(decisionAtSeconds * 1000);
-      const cutoff = await resolveHistoricalCutoffBlock(
-        input.historicalDreamDexConfig,
-        decisionAtSeconds,
-        input.historicalRpcFetch
+      const cutoff = await withHistoricalReplayTimeout(
+        resolveHistoricalCutoffBlock(input.historicalDreamDexConfig, decisionAtSeconds, input.historicalRpcFetch),
+        `cutoff block ${market.stableMarketId}`
       );
       if (!cutoff.ok) {
         throw new Error(`CUTOFF_BLOCK_UNAVAILABLE: ${cutoff.message}`);
@@ -1026,10 +1031,9 @@ async function executeHistoricalReplay(input: {
       reasonCodes: decision.reasonCodes,
       exclusionReason: decisionExclusionReason
     });
-    const outcomeMarket = await getHistoricalBinaryMarket(
-      input.historicalDreamDexClient,
-      input.historicalDreamDexConfig,
-      market.stableMarketId
+    const outcomeMarket = await withHistoricalReplayTimeout(
+      getHistoricalBinaryMarket(input.historicalDreamDexClient, input.historicalDreamDexConfig, market.stableMarketId),
+      `outcome market ${market.stableMarketId}`
     );
     if (!outcomeMarket.ok) {
       throw new Error(`OUTCOME_SOURCE_UNAVAILABLE: ${outcomeMarket.message}`);
@@ -1081,8 +1085,11 @@ async function executeHistoricalReplay(input: {
       const message = error instanceof Error ? error.message : "Historical source read failed";
       const sourceFailure =
         message.startsWith("HISTORICAL_REPLAY_SOURCE_TIMEOUT") ||
+        message.startsWith("DreamDEX historical read deadline exceeded") ||
+        message.startsWith("DreamDEX historical indexer returned HTTP") ||
         message.startsWith("SOURCE_BLOCKED") ||
         message.startsWith("CUTOFF_BLOCK_UNAVAILABLE") ||
+        message.startsWith("OUTCOME_SOURCE_UNAVAILABLE") ||
         message.startsWith("DREAMDEX_HISTORICAL_READ_FAILED");
       if (!sourceFailure) {
         throw error;
