@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { apiErrorMessage, createExperiment, listExperiments, type ExperimentCreateInput } from "../data.js";
+import { apiErrorMessage, createExperiment, fetchProvenExperiments, listExperiments, type ExperimentCreateInput } from "../data.js";
 
 const strategyOptions = [
   {
@@ -45,16 +45,27 @@ function intervalValue(value: string): ExperimentCreateInput["intervalSec"] {
   return 3600;
 }
 
+function assetValue(value: string | null): ExperimentCreateInput["asset"] {
+  return value === "ETH" ? "ETH" : "BTC";
+}
+
+function modeValue(value: string | null): ExperimentCreateInput["mode"] {
+  return value === "live-shadow" ? "LIVE_SHADOW" : "HISTORICAL_REPLAY";
+}
+
 export default function LabPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const seededMarketId = searchParams.get("market");
-  const [name, setName] = useState(seededMarketId === null ? "BTC historical qualification" : "Market-selected qualification");
-  const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>("historical-last-trade@1.1.0");
-  const [mode, setMode] = useState<ExperimentCreateInput["mode"]>("HISTORICAL_REPLAY");
-  const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>("BTC");
-  const [interval, setInterval] = useState("3600");
+  const initialMode = modeValue(searchParams.get("mode"));
+  const [name, setName] = useState(searchParams.get("name") ?? (seededMarketId === null ? "BTC historical qualification" : "Market-selected qualification"));
+  const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>(
+    initialMode === "LIVE_SHADOW" ? "reference-neutral@1.0.0" : "historical-last-trade@1.1.0"
+  );
+  const [mode, setMode] = useState<ExperimentCreateInput["mode"]>(initialMode);
+  const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>(assetValue(searchParams.get("asset")));
+  const [interval, setInterval] = useState(searchParams.get("interval") === "900" ? "900" : "3600");
   const [windowFrom, setWindowFrom] = useState("");
   const [windowTo, setWindowTo] = useState("");
   const [decisionOffsetSec, setDecisionOffsetSec] = useState(60);
@@ -63,6 +74,10 @@ export default function LabPage() {
   const experimentsQuery = useQuery({
     queryKey: ["experiments"],
     queryFn: listExperiments
+  });
+  const provenQuery = useQuery({
+    queryKey: ["proven-experiments", "lab"],
+    queryFn: fetchProvenExperiments
   });
   const createMutation = useMutation({
     mutationFn: () =>
@@ -258,6 +273,44 @@ export default function LabPage() {
             </div>
           ) : null}
         </article>
+      </section>
+
+      <section className="routePanel" aria-label="Captured experiment library">
+        <div className="sourceBar">
+          <span className="statusPill">Captured real evidence</span>
+          <span className="statusPill">No fabricated performance</span>
+          <span className="statusPill">More runs come from new replay exports</span>
+        </div>
+        <h2>Captured experiment library</h2>
+        <p>
+          EdgeLab currently ships with the first captured real-evidence qualification. Create
+          additional experiments above to grow this library without changing thresholds or inventing outcomes.
+        </p>
+        {provenQuery.isLoading ? <div className="stateBox">Loading captured experiments...</div> : null}
+        {provenQuery.isError ? (
+          <div className="stateBox errorState" role="alert">
+            {apiErrorMessage(provenQuery.error)}
+          </div>
+        ) : null}
+        {provenQuery.data?.data.provenExperiments.map((proven) => (
+          <div className="experimentRow" key={proven.slug}>
+            <div>
+              <strong>{proven.title}</strong>
+              <small>
+                {proven.policy} / {proven.sourcePlane} / {proven.sampleSize} scored observations /{" "}
+                {proven.verdict.replaceAll("_", " ")}
+              </small>
+            </div>
+            <div className="actionRow">
+              <Link className="secondaryAction inlineAction" to={proven.route}>
+                Open
+              </Link>
+              <a className="secondaryAction inlineAction" href={`/api/v2/proven-experiments/${proven.slug}/report`} target="_blank" rel="noreferrer">
+                Export Report
+              </a>
+            </div>
+          </div>
+        ))}
       </section>
 
       <section className="routePanel" aria-label="Recent experiments">

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { DREAMDEX_MARKETS_SDK_VERSION } from "@edgelab/domain";
+import { Link } from "react-router-dom";
 import { apiErrorMessage, fetchExecutionProof } from "../data.js";
 
 export default function ProofPage() {
@@ -30,6 +31,14 @@ export default function ProofPage() {
           <span className="label">Lifecycle</span>
           <h2>Approval to terminal reconciliation.</h2>
           <p>Mainnet research data is not mixed with Shannon execution evidence.</p>
+          <div className="actionRow">
+            <Link className="secondaryAction" to="/evidence/proven-experiment">
+              See Evidence Gate Relationship
+            </Link>
+            <a className="secondaryAction" href="/api/v2/proven-experiments/proven-experiment/report" target="_blank" rel="noreferrer">
+              Export Experiment Report
+            </a>
+          </div>
         </div>
         {proof === null && !proofQuery.isLoading ? (
           <div className="stateBox statusWarning">Proof source is unavailable; no captured lifecycle is substituted.</div>

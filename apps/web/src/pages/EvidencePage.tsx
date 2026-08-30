@@ -187,6 +187,18 @@ export default function EvidencePage() {
             <Link className="primaryAction" to={isProvenExperiment ? "/lab/proven-experiment" : `/lab/${encodeURIComponent(experimentId ?? "")}`}>
               Open Workspace
             </Link>
+            <a
+              className="secondaryAction"
+              href={
+                isProvenExperiment
+                  ? "/api/v2/proven-experiments/proven-experiment/report"
+                  : `/api/v2/experiments/${encodeURIComponent(experimentId ?? "")}/report`
+              }
+              target="_blank"
+              rel="noreferrer"
+            >
+              Export Report
+            </a>
             <Link className="secondaryAction" to="/compare">
               Compare Evidence
             </Link>

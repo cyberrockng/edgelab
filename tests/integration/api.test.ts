@@ -179,6 +179,31 @@ const V2HistoricalPageSchema = z.object({
     source: z.object({ plane: z.string() })
   })
 });
+const V2ExperimentReportSchema = z.object({
+  data: z.object({
+    report: z.object({
+      title: z.string(),
+      exportPolicy: z.object({
+        sanitized: z.literal(true),
+        blockchainWrite: z.literal(false),
+        privateSecretsIncluded: z.literal(false)
+      }),
+      boundaries: z.object({
+        mainnet: z.literal("READ_ONLY_HISTORICAL_RESEARCH"),
+        shannonForward: z.literal("PRE_OUTCOME_LIVE_SHADOW_OBSERVATION"),
+        shannonExecution: z.literal("HUMAN_AUTHORIZED_TESTNET_EXECUTION_ONLY")
+      }),
+      executionProofRelationship: z.object({
+        plane: z.literal("SHANNON_EXECUTION"),
+        proofRoute: z.literal("/proof")
+      })
+    })
+  }),
+  meta: z.object({
+    reportType: z.literal("sanitized-experiment-report"),
+    blockchainWrite: z.literal(false)
+  })
+});
 const V2LiveMarketsSchema = z.object({
   data: z.object({
     markets: z.array(
@@ -803,7 +828,9 @@ describe("API-001 server contracts", () => {
     const app = buildApp(config, v2Deps());
     const list = await app.inject({ method: "GET", url: "/api/v2/proven-experiments" });
     const detail = await app.inject({ method: "GET", url: "/api/v2/proven-experiments/proven-experiment" });
+    const report = await app.inject({ method: "GET", url: "/api/v2/proven-experiments/proven-experiment/report" });
     const body = V2ProvenExperimentSchema.parse(detail.json());
+    const reportBody = V2ExperimentReportSchema.parse(report.json());
     await app.close();
 
     expect(list.statusCode).toBe(200);
@@ -819,6 +846,9 @@ describe("API-001 server contracts", () => {
       }
     });
     expect(detail.statusCode).toBe(200);
+    expect(report.statusCode).toBe(200);
+    expect(reportBody.data.report.title).toBe("EdgeLab Proven Experiment Report");
+    expect(reportBody.data.report.executionProofRelationship.proofRoute).toBe("/proof");
     expect(body.data.provenExperiment.selectionDisclosure).toContain("source completeness");
     expect(body.data.provenExperiment.selectionDisclosure).toContain("not for a favorable verdict");
     expect(body.data.provenExperiment.replay).toMatchObject({
@@ -1650,6 +1680,50 @@ describe("API-001 server contracts", () => {
     });
     expect(reloaded.statusCode).toBe(200);
     expect(V2LiveShadowSchema.parse(reloaded.json()).data.liveShadow.decisionCount).toBe(1);
+  });
+
+  it("exports a sanitized experiment report for session-owned experiments", async () => {
+    const app = buildApp(config, { ...v2Deps(), pool });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookies = cookieHeader(session);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v2/experiments",
+      headers: {
+        cookie: cookies,
+        "x-csrf-token": sessionBody.data.csrfToken,
+        "idempotency-key": "api-create-report-export"
+      },
+      payload: {
+        name: "Report export smoke",
+        mode: "LIVE_SHADOW",
+        asset: "BTC",
+        intervalSec: 3600,
+        policyId: "reference-neutral",
+        policyVersion: "1.0.0",
+        riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+      }
+    });
+    const experimentId = V2ExperimentSchema.parse(create.json()).data.experiment.experimentId;
+    const report = await app.inject({
+      method: "GET",
+      url: `/api/v2/experiments/${experimentId}/report`,
+      headers: { cookie: cookies }
+    });
+    const missing = await app.inject({
+      method: "GET",
+      url: "/api/v2/experiments/00000000-0000-0000-0000-000000000000/report",
+      headers: { cookie: cookies }
+    });
+    const reportBody = V2ExperimentReportSchema.parse(report.json());
+    await app.close();
+
+    expect(create.statusCode).toBe(201);
+    expect(report.statusCode).toBe(200);
+    expect(reportBody.data.report.title).toBe("EdgeLab Experiment Report");
+    expect(reportBody.data.report.exportPolicy.privateSecretsIncluded).toBe(false);
+    expect(missing.statusCode).toBe(404);
   });
 
   it("saves and reloads ordered comparisons from immutable owned assessments", async () => {

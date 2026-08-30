@@ -1286,6 +1286,44 @@ async function loadOwnedAssessmentSummaries(
   return result.rows;
 }
 
+async function loadLatestAssessmentDetail(
+  pool: pg.Pool,
+  input: { readonly sessionId: string; readonly experimentId: string }
+): Promise<AssessmentDetailRow | null> {
+  const result = await pool.query<AssessmentDetailRow>(
+    `
+      SELECT
+        evidence_assessments.id AS assessment_id,
+        metric_runs.id AS metric_run_id,
+        experiments.id AS experiment_id,
+        experiments.name AS experiment_name,
+        evidence_assessments.verdict,
+        evidence_assessments.reason_codes,
+        metric_runs.sample_size,
+        metric_runs.exclusion_count,
+        metric_runs.brier_score,
+        metric_runs.calibration_bias,
+        metric_runs.neutral_baseline_delta,
+        metric_runs.execution_metrics,
+        metric_runs.pnl_status,
+        metric_runs.evidence_plane,
+        metric_runs.replay_run_id,
+        metric_runs.promotion_scope,
+        evidence_assessments.thresholds,
+        evidence_assessments.created_at
+      FROM evidence_assessments
+      JOIN metric_runs ON metric_runs.id = evidence_assessments.metric_run_id
+      JOIN experiments ON experiments.id = metric_runs.experiment_id
+      WHERE experiments.id = $1
+        AND experiments.created_by_session_id = $2
+      ORDER BY evidence_assessments.created_at DESC
+      LIMIT 1
+    `,
+    [input.experimentId, input.sessionId]
+  );
+  return result.rows[0] ?? null;
+}
+
 function numberFromRecord(record: Record<string, unknown>, key: string, fallback: number): number {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -1842,6 +1880,43 @@ function buildProvenExperiment() {
   };
 }
 
+function buildProvenExperimentReport() {
+  const proven = buildProvenExperiment().provenExperiment;
+  return {
+    report: {
+      reportId: `proven:${proven.slug}`,
+      title: "EdgeLab Proven Experiment Report",
+      generatedAt: new Date().toISOString(),
+      source: proven.source,
+      experiment: proven.experiment,
+      replay: proven.replay,
+      assessment: proven.assessment,
+      evidenceGate: proven.evidenceGate,
+      executionProofRelationship: {
+        plane: "SHANNON_EXECUTION",
+        status: "UNLINKED_GLOBAL_PROOF_AVAILABLE",
+        proofRoute: "/proof",
+        detail:
+          "EXG-003 proves the DreamDEX Shannon write/cancel lifecycle separately. It is not counted as this historical experiment's tradeability, fill, or PnL evidence."
+      },
+      exportPolicy: {
+        format: "application/json",
+        sanitized: true,
+        blockchainWrite: false,
+        privateSecretsIncluded: false
+      },
+      boundaries: {
+        mainnet: "READ_ONLY_HISTORICAL_RESEARCH",
+        shannonForward: "PRE_OUTCOME_LIVE_SHADOW_OBSERVATION",
+        shannonExecution: "HUMAN_AUTHORIZED_TESTNET_EXECUTION_ONLY",
+        promotionScope: proven.evidenceGate.decision.promotionScope,
+        doesNotAuthorize: proven.evidenceGate.decision.doesNotAuthorize
+      },
+      reproducibility: proven.reproducibility
+    }
+  };
+}
+
 async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string; readonly comparisonId: string }) {
   const result = await pool.query<{
     comparison_id: string;
@@ -2249,6 +2324,30 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     }
   });
 
+  app.get("/api/v2/proven-experiments/:slug/report", (request, reply) => {
+    const params = z.object({ slug: z.literal("proven-experiment") }).safeParse(request.params);
+    if (!params.success) {
+      return v2Error(reply, 404, "PROVEN_EXPERIMENT_NOT_FOUND", "Proven Experiment report was not found", false, request.id);
+    }
+    try {
+      return v2Data(buildProvenExperimentReport(), {
+        sourcePlane: "MAINNET_HISTORICAL",
+        publicProven: true,
+        blockchainWrite: false,
+        reportType: "sanitized-experiment-report"
+      });
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "PROVEN_EXPERIMENT_REPORT_UNAVAILABLE",
+        error instanceof Error ? error.message : "Proven Experiment report unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
   app.post("/api/v2/research-session", async (request, reply) => {
     try {
       const pool = requirePool(deps);
@@ -2575,6 +2674,83 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "EXPERIMENT_DETAIL_UNAVAILABLE",
         error instanceof Error ? error.message : "Experiment detail unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/report", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      const replay = await getLatestReplayRunForExperiment(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      const assessment = await loadLatestAssessmentDetail(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      const liveShadow = await loadLiveShadowState(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
+      return v2Data(
+        {
+          report: {
+            reportId: `experiment:${params.data.experimentId}`,
+            title: "EdgeLab Experiment Report",
+            generatedAt: new Date().toISOString(),
+            experiment: serializeExperiment(experiment),
+            replay: replay === null ? null : serializeReplayRun(replay),
+            evidenceGate: buildEvidenceGate({ row: assessment, experimentId: params.data.experimentId }),
+            liveShadow,
+            executionProofRelationship: {
+              plane: "SHANNON_EXECUTION",
+              status: assessment?.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? "GLOBAL_PROOF_AVAILABLE_NOT_LINKED" : "NOT_LINKED",
+              proofRoute: "/proof",
+              detail:
+                "EXG-003 remains a separate Shannon proof unless a future human-authorized execution is linked to this exact experiment."
+            },
+            exportPolicy: {
+              format: "application/json",
+              sanitized: true,
+              blockchainWrite: false,
+              privateSecretsIncluded: false
+            },
+            boundaries: {
+              mainnet: "READ_ONLY_HISTORICAL_RESEARCH",
+              shannonForward: "PRE_OUTCOME_LIVE_SHADOW_OBSERVATION",
+              shannonExecution: "HUMAN_AUTHORIZED_TESTNET_EXECUTION_ONLY"
+            }
+          },
+          csrfToken: ensured.csrfToken
+        },
+        {
+          ownership: "research-session",
+          applicationWrite: false,
+          blockchainWrite: false,
+          reportType: "sanitized-experiment-report"
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXPERIMENT_REPORT_UNAVAILABLE",
+        error instanceof Error ? error.message : "Experiment report unavailable",
         true,
         request.id
       );
@@ -2933,40 +3109,13 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     try {
       const pool = requirePool(deps);
       const ensured = await ensureResearchSession(pool, config, request, reply);
-      const result = await pool.query<AssessmentDetailRow>(
-        `
-          SELECT
-            evidence_assessments.id AS assessment_id,
-            metric_runs.id AS metric_run_id,
-            experiments.id AS experiment_id,
-            experiments.name AS experiment_name,
-            evidence_assessments.verdict,
-            evidence_assessments.reason_codes,
-            metric_runs.sample_size,
-            metric_runs.exclusion_count,
-            metric_runs.brier_score,
-            metric_runs.calibration_bias,
-            metric_runs.neutral_baseline_delta,
-            metric_runs.execution_metrics,
-            metric_runs.pnl_status,
-            metric_runs.evidence_plane,
-            metric_runs.replay_run_id,
-            metric_runs.promotion_scope,
-            evidence_assessments.thresholds,
-            evidence_assessments.created_at
-          FROM evidence_assessments
-          JOIN metric_runs ON metric_runs.id = evidence_assessments.metric_run_id
-          JOIN experiments ON experiments.id = metric_runs.experiment_id
-          WHERE experiments.id = $1
-            AND experiments.created_by_session_id = $2
-          ORDER BY evidence_assessments.created_at DESC
-          LIMIT 1
-        `,
-        [params.data.experimentId, ensured.session.id]
-      );
+      const assessment = await loadLatestAssessmentDetail(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
       return v2Data(
         {
-          ...buildEvidenceGate({ row: result.rows[0] ?? null, experimentId: params.data.experimentId }),
+          ...buildEvidenceGate({ row: assessment, experimentId: params.data.experimentId }),
           csrfToken: ensured.csrfToken
         },
         {

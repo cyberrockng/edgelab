@@ -195,9 +195,15 @@ export default function ExperimentWorkspacePage() {
                 </div>
               </section>
               <div className="actionRow">
+                <Link className="primaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
+                  Start Forward Observation
+                </Link>
                 <Link className="primaryAction" to="/evidence/proven-experiment">
                   View Evidence Gate
                 </Link>
+                <a className="secondaryAction" href="/api/v2/proven-experiments/proven-experiment/report" target="_blank" rel="noreferrer">
+                  Export Report
+                </a>
                 <Link className="secondaryAction" to="/compare">
                   Compare Evidence
                 </Link>
@@ -538,6 +544,24 @@ export default function ExperimentWorkspacePage() {
                         {reason.replaceAll("_", " ")}
                       </span>
                     ))}
+                  </div>
+                  <div className="actionRow">
+                    {assessment.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? (
+                      <Link
+                        className="primaryAction"
+                        to={`/lab?mode=live-shadow&asset=${encodeURIComponent(experiment.configuration.assets[0] ?? "BTC")}&interval=${encodeURIComponent(String(experiment.configuration.intervals[0] ?? 3600))}&name=${encodeURIComponent(`${experiment.name} forward observation`)}`}
+                      >
+                        Start Forward Observation
+                      </Link>
+                    ) : null}
+                    <a
+                      className="secondaryAction"
+                      href={`/api/v2/experiments/${encodeURIComponent(experiment.experimentId)}/report`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Export Report
+                    </a>
                   </div>
                 </>
               ) : (

@@ -153,6 +153,8 @@ test("proven experiment path exposes captured replay without favorable-data clai
   await expect(workspace).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(workspace).toContainText("NOT_AVAILABLE");
   await expect(workspace).toContainText("reproducibility and source completeness");
+  await expect(workspace.getByRole("link", { name: "Start Forward Observation" })).toHaveAttribute("href", /mode=live-shadow/);
+  await expect(workspace.getByRole("link", { name: "Export Report" })).toHaveAttribute("href", /proven-experiments\/proven-experiment\/report/);
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
   await expect(page).toHaveURL("/evidence/proven-experiment");
   await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
@@ -168,12 +170,28 @@ test("public comparison separates evidence phases without fake strategy performa
   await expect(comparison).toContainText("mainnet trading, autonomous execution, profit claims");
 });
 
+test("strategy lab exposes captured experiments and live-shadow starter state", async ({ page }) => {
+  await gotoRoute(page, "/lab");
+  await expect(page.getByRole("region", { name: "Captured experiment library" })).toContainText("Proven replay");
+  await expect(page.getByRole("region", { name: "Captured experiment library" }).getByRole("link", { name: "Export Report" })).toHaveAttribute(
+    "href",
+    /proven-experiments\/proven-experiment\/report/
+  );
+
+  await gotoRoute(page, "/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation");
+  await expect(page.getByLabel("Experiment name")).toHaveValue("BTC forward observation");
+  await expect(page.getByLabel("Mode")).toHaveValue("LIVE_SHADOW");
+  await expect(page.getByLabel("Strategy")).toHaveValue("reference-neutral@1.0.0");
+  await expect(page.getByLabel("Interval")).toHaveValue("900");
+});
+
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
   await gotoRoute(page, "/evidence/proven-experiment");
   const gate = page.getByRole("region", { name: "Evidence gate" });
   await expect(gate).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(gate).toContainText("Historical replay evidence meets sample, Brier score, and calibration thresholds");
   await expect(gate).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
+  await expect(gate.getByRole("link", { name: "Export Report" })).toHaveAttribute("href", /proven-experiments\/proven-experiment\/report/);
   await expect(gate).toContainText("MAINNET_HISTORICAL");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Forecast sample");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("PnL");
