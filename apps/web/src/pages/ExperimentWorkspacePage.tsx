@@ -73,6 +73,7 @@ export default function ExperimentWorkspacePage() {
   const replay = replayQuery.data?.data.replay ?? null;
   const liveShadow =
     liveShadowMutation.data?.data.liveShadow ?? liveShadowQuery.data?.data.liveShadow ?? null;
+  const liveObservation = liveShadowMutation.data?.data.observation ?? null;
   const assessment =
     evaluationMutation.data?.data.assessment ?? evaluationQuery.data?.data.assessment ?? null;
   const replayReady = replay?.status === "COMPLETED" || replay?.status === "SUCCEEDED";
@@ -127,6 +128,37 @@ export default function ExperimentWorkspacePage() {
                   <p>Shannon execution proof demonstrates protocol write boundaries, not this strategy's PnL.</p>
                 </div>
               </div>
+              <section className="resultPanel" aria-label="Evidence expansion path">
+                <div className="sectionHeader">
+                  <div>
+                    <p className="eyebrow">Evidence Expansion</p>
+                    <h2>What improves the product from here?</h2>
+                  </div>
+                  <span className="statusPill">No fabricated runs</span>
+                </div>
+                <div className="progressionHub">
+                  <div>
+                    <span className="label">More real experiments</span>
+                    <strong>Supported through Lab exports</strong>
+                    <p>Create new historical replays from authentic DreamDEX windows, evaluate them, then export reports.</p>
+                  </div>
+                  <div>
+                    <span className="label">Forward observation</span>
+                    <strong>Next permitted action</strong>
+                    <p>Start a Shannon live-shadow workspace and persist pre-outcome decisions without a wallet signature.</p>
+                  </div>
+                  <div>
+                    <span className="label">Execution linkage</span>
+                    <strong>Human gate required</strong>
+                    <p>Current EXG-003 proof is global. Linking execution to this candidate requires a future approved wallet action.</p>
+                  </div>
+                  <div>
+                    <span className="label">Reporting</span>
+                    <strong>Exportable now</strong>
+                    <p>Use sanitized JSON reports for audit, reproducibility, and demo preparation.</p>
+                  </div>
+                </div>
+              </section>
               <dl className="factGrid">
                 <div>
                   <dt>Strategy</dt>
@@ -437,6 +469,24 @@ export default function ExperimentWorkspacePage() {
                     <dd>NONE</dd>
                   </div>
                 </dl>
+                {liveObservation !== null ? (
+                  <div className="decisionList" aria-label="Latest live-shadow capture result">
+                    <div className="decisionRow">
+                      <span>Markets discovered</span>
+                      <span>{liveObservation.discoveredMarketCount}</span>
+                      <span>Lease</span>
+                      <span>{liveObservation.leaseAcquired ? "ACQUIRED" : "REUSED"}</span>
+                    </div>
+                    {liveObservation.observed.map((row) => (
+                      <div className="decisionRow" key={row.marketId}>
+                        <span className="monoText">{compactId(row.marketId)}</span>
+                        <span>{row.skipped ? row.reasonCode ?? "SKIPPED" : "OBSERVED"}</span>
+                        <span>{row.insertedDecisionCount} inserted</span>
+                        <span>{row.reusedDecisionCount} reused</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </section>
             ) : null}
             <section className="resultPanel" aria-label="Replay result">
@@ -562,6 +612,9 @@ export default function ExperimentWorkspacePage() {
                     >
                       Export Report
                     </a>
+                    <Link className="secondaryAction" to="/proof">
+                      Review Execution Proof Boundary
+                    </Link>
                   </div>
                 </>
               ) : (

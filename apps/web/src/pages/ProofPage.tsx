@@ -69,6 +69,32 @@ export default function ProofPage() {
             PnL {proof.reconciliation.pnlStatus}.
           </div>
         )}
+        <section className="resultPanel" aria-label="Experiment proof relationship">
+          <div className="sectionHeader">
+            <div>
+              <p className="eyebrow">Relationship to Strategy Evidence</p>
+              <h2>Verified protocol proof, not automatic promotion evidence.</h2>
+            </div>
+            <span className="statusPill">SHANNON_EXECUTION</span>
+          </div>
+          <div className="progressionHub">
+            <div>
+              <span className="label">What it proves</span>
+              <strong>Bounded DreamDEX lifecycle</strong>
+              <p>Approval, order submission, no fill, OrderExpired, and escrow reconciliation are publicly inspectable.</p>
+            </div>
+            <div>
+              <span className="label">What it does not prove</span>
+              <strong>No realized PnL claim</strong>
+              <p>This global proof does not show that a historical strategy received a fill or made profit.</p>
+            </div>
+            <div>
+              <span className="label">How to link later</span>
+              <strong>Human authorization required</strong>
+              <p>A future candidate-specific execution proof would require a separate owner-approved wallet signature.</p>
+            </div>
+          </div>
+        </section>
         {proof === null ? (
           <div className="stateBox">Public chain references load only from the proof API.</div>
         ) : (

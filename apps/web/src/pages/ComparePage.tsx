@@ -16,6 +16,13 @@ function metric(value: number | null): string {
   return value === null ? "NOT AVAILABLE" : value.toFixed(4);
 }
 
+function signedMetric(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "NOT AVAILABLE";
+  }
+  return value > 0 ? `+${value.toFixed(4)}` : value.toFixed(4);
+}
+
 function AssessmentRow({ item }: { readonly item: AssessmentSummaryRecord & { readonly displayOrder?: number } }) {
   return (
     <div role="row">
@@ -196,9 +203,29 @@ export default function ComparePage() {
           <div className="sectionHeader">
             <div>
               <p className="eyebrow">Public Read-Only Comparison</p>
-              <h2>One experiment, three evidence planes</h2>
+              <h2>One proven experiment, three maturity gaps.</h2>
             </div>
             <span className="statusPill">Qualification evidence; no capital authorization</span>
+          </div>
+          <div className="progressionHub" aria-label="Decision-useful public comparison">
+            <div>
+              <span className="label">Historical signal</span>
+              <strong>{provenQuery.data?.data.provenExperiment.assessment.verdict.replaceAll("_", " ") ?? "Loading"}</strong>
+              <p>
+                {provenQuery.data?.data.provenExperiment.sampleSize ?? "Loading"} scored observations;
+                neutral delta {signedMetric(provenQuery.data?.data.provenExperiment.assessment.neutralBaselineDelta)}.
+              </p>
+            </div>
+            <div>
+              <span className="label">Forward evidence</span>
+              <strong>Not yet linked</strong>
+              <p>Use the Strategy Lab forward-observation starter to collect pre-outcome Shannon decisions.</p>
+            </div>
+            <div>
+              <span className="label">Execution evidence</span>
+              <strong>Global proof only</strong>
+              <p>EXG-003 verifies DreamDEX order lifecycle behavior but is not counted as this experiment's PnL.</p>
+            </div>
           </div>
           {provenQuery.isError ? (
             <div className="stateBox errorState" role="alert">
@@ -251,6 +278,9 @@ export default function ComparePage() {
             </Link>
             <Link className="secondaryAction" to="/evidence/proven-experiment">
               Open Evidence Gate
+            </Link>
+            <Link className="secondaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
+              Start Forward Observation
             </Link>
           </div>
         </section>

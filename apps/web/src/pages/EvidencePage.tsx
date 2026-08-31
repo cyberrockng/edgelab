@@ -175,6 +175,34 @@ export default function EvidencePage() {
             ))}
           </div>
         ) : null}
+        {evidence !== null ? (
+          <section className="resultPanel" aria-label="Next evidence to collect">
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">Next Evidence</p>
+                <h2>{displayToken(evidence.decision.nextPermittedAction)}</h2>
+              </div>
+              <span className="statusPill">Boundary preserved</span>
+            </div>
+            <div className="progressionHub">
+              <div>
+                <span className="label">Collect forward sample</span>
+                <strong>Application write only</strong>
+                <p>Open a live-shadow workspace and persist pre-outcome decisions on Shannon.</p>
+              </div>
+              <div>
+                <span className="label">Keep proof separate</span>
+                <strong>Global EXG-003 available</strong>
+                <p>Execution proof is inspectable, but it does not become this experiment's tradeability evidence automatically.</p>
+              </div>
+              <div>
+                <span className="label">Export audit trail</span>
+                <strong>Sanitized report</strong>
+                <p>Share the report endpoint when you need reproducibility without exposing secrets.</p>
+              </div>
+            </div>
+          </section>
+        ) : null}
         <div className={`gateOutput ${evidence === null ? "neutralGate" : "verifiedGate"}`}>
           <span>Gate output</span>
           <strong>{gateVerdict}</strong>
@@ -186,6 +214,12 @@ export default function EvidencePage() {
           <div className="actionRow">
             <Link className="primaryAction" to={isProvenExperiment ? "/lab/proven-experiment" : `/lab/${encodeURIComponent(experimentId ?? "")}`}>
               Open Workspace
+            </Link>
+            <Link
+              className="secondaryAction"
+              to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation"
+            >
+              Start Forward Observation
             </Link>
             <a
               className="secondaryAction"

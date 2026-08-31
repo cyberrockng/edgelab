@@ -155,6 +155,8 @@ test("proven experiment path exposes captured replay without favorable-data clai
   await expect(workspace).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(workspace).toContainText("NOT_AVAILABLE");
   await expect(workspace).toContainText("reproducibility and source completeness");
+  await expect(page.getByRole("region", { name: "Evidence expansion path" })).toContainText("More real experiments");
+  await expect(page.getByRole("region", { name: "Evidence expansion path" })).toContainText("Human gate required");
   await expect(workspace.getByRole("link", { name: "Start Forward Observation" })).toHaveAttribute("href", /mode=live-shadow/);
   await expect(workspace.getByRole("link", { name: "Export Report" })).toHaveAttribute("href", /proven-experiments\/proven-experiment\/report/);
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
@@ -165,11 +167,14 @@ test("proven experiment path exposes captured replay without favorable-data clai
 test("public comparison separates evidence phases without fake strategy performance", async ({ page }) => {
   await gotoRoute(page, "/compare");
   const comparison = page.getByRole("region", { name: "Public comparison" });
-  await expect(comparison).toContainText("One experiment, three evidence planes");
+  await expect(comparison).toContainText("One proven experiment, three maturity gaps");
+  await expect(comparison.getByLabel("Decision-useful public comparison")).toContainText("Historical signal");
+  await expect(comparison.getByLabel("Decision-useful public comparison")).toContainText("neutral delta");
   await expect(comparison).toContainText("Historical qualification");
   await expect(comparison).toContainText("Forward observation");
   await expect(comparison).toContainText("Execution proof");
   await expect(comparison).toContainText("mainnet trading, autonomous execution, profit claims");
+  await expect(comparison.getByRole("link", { name: "Start Forward Observation" })).toHaveAttribute("href", /mode=live-shadow/);
 });
 
 test("strategy lab exposes captured experiments and live-shadow starter state", async ({ page }) => {
@@ -199,7 +204,9 @@ test("evidence route does not manufacture a final verdict in the browser", async
   await expect(gate).toContainText("Historical replay evidence meets sample, Brier score, and calibration thresholds");
   await expect(gate).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
   await expect(gate.getByRole("link", { name: "Export Report" })).toHaveAttribute("href", /proven-experiments\/proven-experiment\/report/);
+  await expect(gate.getByRole("link", { name: "Start Forward Observation" })).toHaveAttribute("href", /mode=live-shadow/);
   await expect(gate).toContainText("MAINNET_HISTORICAL");
+  await expect(page.getByRole("region", { name: "Next evidence to collect" })).toContainText("Global EXG-003 available");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Forecast sample");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("PnL");
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Tradeability / execution quality");
@@ -214,6 +221,8 @@ test("truthful DreamDEX proof remains reachable", async ({ page }) => {
   await expect(chain).toContainText("DreamDEX emitted OrderExpired, not OrderCancelled");
   await expect(chain).toContainText("No fill was observed");
   await expect(chain).toContainText("escrow returned");
+  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText("not automatic promotion evidence");
+  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText("Human authorization required");
 
   const proof = page.getByLabel("Technical proof details");
   await expect(proof.getByRole("link", { name: /Approval/ })).toHaveAttribute("href", /shannon-explorer/);
