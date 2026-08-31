@@ -181,7 +181,12 @@ test("strategy lab exposes captured experiments and live-shadow starter state", 
   );
 
   await gotoRoute(page, "/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation");
-  await expect(page.getByLabel("Experiment name")).toHaveValue("BTC forward observation");
+  await expect(page.getByRole("heading", { name: "Create an evidence-backed strategy experiment." })).toBeVisible({
+    timeout: process.env.E2E_BASE_URL === undefined ? 5_000 : 15_000
+  });
+  await expect(page.getByLabel("Experiment name")).toHaveValue("BTC forward observation", {
+    timeout: process.env.E2E_BASE_URL === undefined ? 5_000 : 15_000
+  });
   await expect(page.getByLabel("Mode")).toHaveValue("LIVE_SHADOW");
   await expect(page.getByLabel("Strategy")).toHaveValue("reference-neutral@1.0.0");
   await expect(page.getByLabel("Interval")).toHaveValue("900");
