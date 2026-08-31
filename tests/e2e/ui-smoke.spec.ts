@@ -90,6 +90,7 @@ test("market detail requires an explicit canonical plane", async ({ page }) => {
 });
 
 test("every product route mounts by direct navigation without horizontal overflow", async ({ page }) => {
+  test.setTimeout(process.env.E2E_BASE_URL === undefined ? 30_000 : 75_000);
   for (const route of productRoutes) {
     const response = await gotoRoute(page, route.path);
     expect(response?.ok(), route.path).toBe(true);
@@ -136,6 +137,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
   await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
   await page.getByLabel("Asset universe").selectOption("BTC");
   await page.getByLabel("Interval").selectOption("3600");
+  await expect(page.getByRole("button", { name: "Create Experiment" })).toBeEnabled({ timeout: 15_000 });
   await page.getByRole("button", { name: "Create Experiment" }).click();
 
   await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}$/, { timeout: 15_000 });

@@ -99,6 +99,8 @@ export default function LabPage() {
       await navigate(`/lab/${response.data.experiment.experimentId}`);
     }
   });
+  const researchSessionReady = experimentsQuery.isSuccess && typeof experimentsQuery.data.data.csrfToken === "string";
+  const createDisabled = createMutation.isPending || !researchSessionReady;
 
   return (
     <div className="pageStack">
@@ -113,7 +115,9 @@ export default function LabPage() {
           aria-label="Experiment draft"
           onSubmit={(event) => {
             event.preventDefault();
-            createMutation.mutate();
+            if (researchSessionReady) {
+              createMutation.mutate();
+            }
           }}
         >
           <label>
@@ -227,8 +231,8 @@ export default function LabPage() {
               <option value="WATCH_ONLY_BOUNDED">Research only / watch only</option>
             </select>
           </label>
-          <button type="submit" aria-describedby="lab-write-status" disabled={createMutation.isPending}>
-            {createMutation.isPending ? "Creating..." : "Create Experiment"}
+          <button type="submit" aria-describedby="lab-write-status" disabled={createDisabled}>
+            {createMutation.isPending ? "Creating..." : researchSessionReady ? "Create Experiment" : "Preparing Session..."}
           </button>
         </form>
         <article className="routePanel" id="lab-write-status" aria-live="polite">
@@ -262,6 +266,11 @@ export default function LabPage() {
             </div>
           </dl>
           {seededMarketId !== null ? <p className="monoText">Seed market: {seededMarketId}</p> : null}
+          {!researchSessionReady && !experimentsQuery.isError ? (
+            <div className="stateBox" role="status">
+              Preparing a wallet-free research session...
+            </div>
+          ) : null}
           {createMutation.isError ? (
             <div className="stateBox errorState" role="alert">
               {apiErrorMessage(createMutation.error)}
