@@ -17,7 +17,7 @@ import {
 } from "@edgelab/db";
 
 const connectionString =
-  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
+  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab_test";
 
 const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
 

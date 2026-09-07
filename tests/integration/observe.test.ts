@@ -11,7 +11,7 @@ import type { DreamDexReadConfig, DreamDexSdkClient } from "@edgelab/dreamdex";
 import type { BinaryMarket } from "@somnia-chain/markets-sdk";
 
 const connectionString =
-  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
+  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab_test";
 
 const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
 
@@ -23,7 +23,7 @@ const config: DreamDexReadConfig = {
   sdkVersion: "0.28.1"
 };
 
-const fixedNow = new Date("2026-08-24T15:30:00.000Z");
+const fixedNow = new Date("2026-08-24T15:59:30.000Z");
 const owner = "0x0000000000000000000000000000000000000ace";
 
 function market(expiry: string): BinaryMarket {
@@ -118,7 +118,7 @@ async function seedExperiment(): Promise<string> {
   const experiment = await pool.query<{ id: string }>(
     `
       INSERT INTO experiments(owner_address, policy_a_id, policy_b_id, risk_envelope_id, rule_version, decision_offset_sec)
-      VALUES ($1, $2, $3, $4, 'observe-rules-1', 0)
+      VALUES ($1, $2, $3, $4, 'observe-rules-1', 60)
       RETURNING id
     `,
     [owner, policyA, policyB, risk.rows[0]?.id]
@@ -143,7 +143,12 @@ async function counts(): Promise<{ episodes: number; snapshots: number; decision
   };
 }
 
-async function observe(experimentId: string, row: BinaryMarket, holderId: string): Promise<ObserveExperimentResult> {
+async function observe(
+  experimentId: string,
+  row: BinaryMarket,
+  holderId: string,
+  observationNow = fixedNow
+): Promise<ObserveExperimentResult> {
   return observeExperiment({
     pool,
     dreamDexClient: clientWith(row),
@@ -152,7 +157,7 @@ async function observe(experimentId: string, row: BinaryMarket, holderId: string
     policyAdapters: referencePolicies,
     holderId,
     leaseTtlMs: 1,
-    clock: { now: () => fixedNow },
+    clock: { now: () => observationNow },
     intervals: [900]
   });
 }
@@ -187,6 +192,36 @@ describe("OBSERVE-001 live-shadow observation pipeline", () => {
     await expect(counts()).resolves.toEqual({ episodes: 1, snapshots: 1, decisions: 2 });
   });
 
+  it("preserves the DreamDEX discovery reason when no requested market is available", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const experimentId = await seedExperiment();
+    const nonMatchingMarket = { ...market("1787587200"), asset: "ETH" } as BinaryMarket;
+    const result = await observeExperiment({
+      pool,
+      dreamDexClient: clientWith(nonMatchingMarket),
+      dreamDexConfig: config,
+      experimentId,
+      policyAdapters: referencePolicies,
+      holderId: randomUUID(),
+      leaseTtlMs: 1,
+      clock: { now: () => fixedNow },
+      assets: ["BTC"],
+      intervals: [900]
+    });
+
+    expect(result).toMatchObject({
+      leaseAcquired: true,
+      discoveredMarketCount: 0,
+      observed: [],
+      discoveryIssue: {
+        reasonCode: "DREAMDEX_NO_ELIGIBLE_MARKET",
+        message: "No BTC/ETH Trading successor market matched the requested intervals"
+      }
+    });
+    await expect(counts()).resolves.toEqual({ episodes: 0, snapshots: 0, decisions: 0 });
+  });
+
   it("rejects already-expired markets before snapshot or decision writes", async () => {
     await resetPublicSchema();
     await runMigrations(pool);
@@ -198,6 +233,26 @@ describe("OBSERVE-001 live-shadow observation pipeline", () => {
       insertedDecisionCount: 0,
       skipped: true,
       reasonCode: "MARKET_ALREADY_EXPIRED"
+    });
+    await expect(counts()).resolves.toEqual({ episodes: 1, snapshots: 0, decisions: 0 });
+  });
+
+  it("defers capture until the configured pre-expiry decision window", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const experimentId = await seedExperiment();
+    const result = await observe(
+      experimentId,
+      market("1787587200"),
+      randomUUID(),
+      new Date("2026-08-24T15:30:00.000Z")
+    );
+
+    expect(result.observed[0]).toMatchObject({
+      snapshotId: null,
+      insertedDecisionCount: 0,
+      skipped: true,
+      reasonCode: "DECISION_WINDOW_NOT_OPEN"
     });
     await expect(counts()).resolves.toEqual({ episodes: 1, snapshots: 0, decisions: 0 });
   });

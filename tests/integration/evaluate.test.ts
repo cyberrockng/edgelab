@@ -3,7 +3,7 @@ import { createPool, runMigrations } from "@edgelab/db";
 import { hashCanonicalEvaluationInput, runMetricAssessment } from "@edgelab/evaluate";
 
 const connectionString =
-  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
+  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab_test";
 
 const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
 const owner = "0x0000000000000000000000000000000000000efe";
@@ -42,7 +42,7 @@ async function seedMetricExperiment(): Promise<{ experimentId: string; policyVer
   const experiment = await pool.query<{ id: string }>(
     `
       INSERT INTO experiments(owner_address, policy_a_id, policy_b_id, risk_envelope_id, rule_version, decision_offset_sec)
-      VALUES ($1, $2, $3, $4, 'metric-rules-1', 0)
+      VALUES ($1, $2, $3, $4, 'metric-rules-1', 900)
       RETURNING id
     `,
     [owner, policyA.rows[0]?.id, policyB.rows[0]?.id, risk.rows[0]?.id]
@@ -50,10 +50,10 @@ async function seedMetricExperiment(): Promise<{ experimentId: string; policyVer
   const experimentId = experiment.rows[0]?.id ?? "";
   const policyVersionId = policyA.rows[0]?.id ?? "";
   const outcomes = [
-    { marketId: "metric-market-1", forecast: 0.8, winner: "YES", voided: false },
-    { marketId: "metric-market-2", forecast: 0.4, winner: "NO", voided: false },
-    { marketId: "metric-market-3", forecast: 0.6, winner: "YES", voided: false },
-    { marketId: "metric-market-4", forecast: 0.9, winner: null, voided: true }
+    { marketId: "metric-market-1", forecast: 0.8, winner: "YES", voided: false, capturedAt: "2026-08-24T15:44:59.000Z" },
+    { marketId: "metric-market-2", forecast: 0.4, winner: "NO", voided: false, capturedAt: "2026-08-24T15:45:00.000Z" },
+    { marketId: "metric-market-3", forecast: 0.6, winner: "YES", voided: false, capturedAt: "2026-08-24T15:45:00.000Z" },
+    { marketId: "metric-market-4", forecast: 0.9, winner: null, voided: true, capturedAt: "2026-08-24T15:45:00.000Z" }
   ];
 
   for (const [index, item] of outcomes.entries()) {
@@ -72,10 +72,10 @@ async function seedMetricExperiment(): Promise<{ experimentId: string; policyVer
     const snapshot = await pool.query<{ id: string }>(
       `
         INSERT INTO market_snapshots(episode_id, chain_id, captured_at, snapshot_hash, evidence_class, payload)
-        VALUES ($1, 50312, '2026-08-24T15:45:00.000Z', $2, 'MOCK', '{}'::jsonb)
+        VALUES ($1, 50312, $2, $3, 'MOCK', '{}'::jsonb)
         RETURNING id
       `,
-      [episode.rows[0]?.id, String(index + 1).repeat(64)]
+      [episode.rows[0]?.id, item.capturedAt, String(index + 1).repeat(64)]
     );
     await pool.query(
       `
@@ -83,7 +83,7 @@ async function seedMetricExperiment(): Promise<{ experimentId: string; policyVer
           experiment_id, episode_id, policy_version_id, snapshot_id, decision_offset_sec,
           forecast_p_up, action, reason_codes, decided_at, policy_hash, risk_hash
         )
-        VALUES ($1, $2, $3, $4, 0, $5, 'WATCH_ONLY', ARRAY['TEST'], '2026-08-24T15:50:00.000Z', $6, $7)
+        VALUES ($1, $2, $3, $4, 900, $5, 'WATCH_ONLY', ARRAY['TEST'], '2026-08-24T15:50:00.000Z', $6, $7)
       `,
       [
         experimentId,
@@ -132,8 +132,8 @@ describe("METRIC-001 persisted assessment", () => {
     });
 
     expect(result.verdict).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
-    expect(result.sampleSize).toBe(3);
-    expect(result.exclusionCount).toBe(1);
+    expect(result.sampleSize).toBe(2);
+    expect(result.exclusionCount).toBe(2);
     expect(result.pnlStatus).toBe("NOT_AVAILABLE");
 
     const rows = await pool.query<{
@@ -151,10 +151,10 @@ describe("METRIC-001 persisted assessment", () => {
       `,
       [result.metricRunId]
     );
-    expect(rows.rows[0]?.brier_score).toBeCloseTo(0.12, 12);
+    expect(rows.rows[0]?.brier_score).toBeCloseTo(0.16, 12);
     expect(rows.rows[0]?.pnl_status).toBe("NOT_AVAILABLE");
     expect(rows.rows[0]?.verdict).toBe("PROMOTE_TO_FORWARD_OBSERVATION");
-    expect(rows.rows[0]?.evaluation_version).toBe("edgelab-evaluation-v2");
+    expect(rows.rows[0]?.evaluation_version).toBe("edgelab-evaluation-v3");
     expect(rows.rows[0]?.canonical_input.rows?.map((row) => row.forecastPUp)).toContain(0.8);
     expect(rows.rows[0]?.canonical_input.rows?.every((row) => row.action === "WATCH_ONLY")).toBe(true);
 
@@ -217,7 +217,7 @@ describe("METRIC-001 persisted assessment", () => {
       winner: "YES",
       thresholds: { minSampleSize: 30 },
       promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
-      evaluationVersion: "edgelab-evaluation-v2"
+      evaluationVersion: "edgelab-evaluation-v3"
     };
     const changes: Record<string, unknown> = {
       forecastPUp: 0.4,
@@ -231,7 +231,7 @@ describe("METRIC-001 persisted assessment", () => {
       winner: "NO",
       thresholds: { minSampleSize: 31 },
       promotionScope: "FORWARD_WINDOW",
-      evaluationVersion: "edgelab-evaluation-v3"
+      evaluationVersion: "edgelab-evaluation-v4"
     };
     const baseline = hashCanonicalEvaluationInput(base);
     for (const [key, value] of Object.entries(changes)) {

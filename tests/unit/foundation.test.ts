@@ -68,7 +68,11 @@ describe("foundation boundaries", () => {
       book: { bids: [{ priceRaw: "1000", quantityRaw: "1000" }], asks: [] }
     });
 
-    const decision = evaluatePolicy(referencePolicies[1], {
+    const adapter = referencePolicies.find((policy) => policy.policyId === "reference-book-tilt");
+    if (adapter === undefined) {
+      throw new Error("Missing reference-book-tilt policy");
+    }
+    const decision = evaluatePolicy(adapter, {
       snapshot,
       decidedAt: "2026-08-24T13:00:01.000Z",
       snapshotHash: "a".repeat(64)

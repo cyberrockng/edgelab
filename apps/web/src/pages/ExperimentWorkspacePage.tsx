@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
+import { ExecutionLifecycleSummary } from "../components/ExecutionLifecycleSummary.js";
 import {
   apiErrorMessage,
   compactId,
   evaluateExperiment,
+  fetchExperimentExecution,
   fetchExperimentDetail,
   fetchLatestEvaluation,
   fetchLiveShadowState,
   fetchProvenExperiment,
   fetchReplayRun,
+  minimumSample,
   observeLiveShadow,
   runHistoricalReplay
 } from "../data.js";
@@ -46,6 +49,11 @@ export default function ExperimentWorkspacePage() {
     enabled: canLoad,
     queryKey: ["experiment", experimentId, "live-shadow"],
     queryFn: () => fetchLiveShadowState(experimentId ?? "")
+  });
+  const executionQuery = useQuery({
+    enabled: canLoad,
+    queryKey: ["experiment", experimentId, "execution"],
+    queryFn: () => fetchExperimentExecution(experimentId ?? "")
   });
   const replayMutation = useMutation({
     mutationFn: () => runHistoricalReplay(experimentId ?? ""),
@@ -86,10 +94,11 @@ export default function ExperimentWorkspacePage() {
       <div className="pageStack">
         <section className="routeHero">
           <p className="eyebrow">Proven Qualification</p>
-          <h1>Inspect a captured DreamDEX evidence run.</h1>
+          <h1>This strategy earned observation, not execution.</h1>
           <p>
-            This public path is reproducible from sanitized artifacts. It shows how historical
-            qualification produces a bounded next action without authorizing capital execution.
+            This public path is the judge-facing EdgeLab verdict: historical DreamDEX evidence
+            passed the qualification gate, the next allowed step is Shannon forward observation,
+            and capital exposure remains blocked until stronger live proof exists.
           </p>
         </section>
         <section className="routePanel" aria-label="Proven experiment workspace">
@@ -109,23 +118,44 @@ export default function ExperimentWorkspacePage() {
                   <span className="statusPill emphasisPill">Qualification incomplete</span>
                 ) : null}
               </div>
-              <h2>{proven.title}</h2>
-              <p>{proven.selectionDisclosure}</p>
-              <div className="progressionHub" aria-label="Proven experiment progression">
+              <div className="sectionHeader">
                 <div>
-                  <span className="label">1. Historical qualification</span>
-                  <strong>{proven.assessment.verdict.replaceAll("_", " ")}</strong>
+                  <h2>{proven.title}</h2>
+                  <p>{proven.selectionDisclosure}</p>
+                </div>
+                <span className="statusPill emphasisPill">Judge verdict ready</span>
+              </div>
+              <div className="verdictCard standaloneVerdict" aria-label="Current public verdict">
+                <span>EdgeLab public verdict</span>
+                <strong>{proven.assessment.verdict.replaceAll("_", " ")}</strong>
+                <p>
+                  {proven.sampleSize} scored observations, Brier{" "}
+                  {proven.assessment.brierScore === null ? "not available" : proven.assessment.brierScore.toFixed(4)},
+                  calibration bias{" "}
+                  {proven.assessment.calibrationBias === null
+                    ? "not available"
+                    : proven.assessment.calibrationBias.toFixed(4)}.
+                  The strategy advances only to forward observation.
+                </p>
+              </div>
+              <div className="verdictLadder" aria-label="Proven experiment progression">
+                <div className="ladderStep complete">
+                  <span>01</span>
+                  <strong>Historical qualification passed</strong>
                   <p>{proven.sampleSize} scored observations from {proven.replay.processedCount} processed markets.</p>
                 </div>
-                <div>
-                  <span className="label">2. Forward observation</span>
+                <div className="ladderStep current">
+                  <span>02</span>
                   <strong>{proven.evidenceGate.decision.nextPermittedAction.replaceAll("_", " ")}</strong>
-                  <p>Next phase remains separate from historical evidence and must be collected forward.</p>
+                  <p>Next phase must be collected forward before outcomes on Shannon live-shadow mode.</p>
+                  <Link className="textLink" to="/observation">
+                    View OBSERVE-001 proof
+                  </Link>
                 </div>
-                <div>
-                  <span className="label">3. Execution proof</span>
-                  <strong>Verified separately</strong>
-                  <p>Shannon execution proof demonstrates protocol write boundaries, not this strategy's PnL.</p>
+                <div className="ladderStep blocked">
+                  <span>03</span>
+                  <strong>Execution exposure blocked</strong>
+                  <p>EXG-003 is verified separately and does not count as this strategy's fill or PnL evidence.</p>
                 </div>
               </div>
               <section className="resultPanel" aria-label="Evidence expansion path">
@@ -229,6 +259,9 @@ export default function ExperimentWorkspacePage() {
               <div className="actionRow">
                 <Link className="primaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
                   Start Forward Observation
+                </Link>
+                <Link className="secondaryAction" to="/observation">
+                  View Observation Proof
                 </Link>
                 <Link className="primaryAction" to="/evidence/proven-experiment">
                   View Evidence Gate
@@ -373,12 +406,12 @@ export default function ExperimentWorkspacePage() {
                 <div>
                   <h3>Evidence Evaluation</h3>
                   <p>
-                    Converts persisted replay decisions into an evidence-gated verdict. Forecast quality,
-                    tradeability, sufficiency, and PnL remain separate.
+                    Converts persisted decisions and settled outcomes into a deterministic verdict.
+                    Forward qualification and current order executability remain separate.
                   </p>
                   <button
                     type="button"
-                    disabled={!replayReady || evaluationMutation.isPending}
+                    disabled={(!replayReady && !(isLiveShadow && (liveShadow?.decisionCount ?? 0) > 0)) || evaluationMutation.isPending}
                     onClick={() => {
                       evaluationMutation.mutate();
                     }}
@@ -398,9 +431,19 @@ export default function ExperimentWorkspacePage() {
                   <h3>Decision Gate</h3>
                   <p>The verdict is server-authored from persisted evidence, not computed by the browser.</p>
                   {assessment !== null ? (
-                    <Link className="primaryAction" to={`/evidence/${encodeURIComponent(experiment.experimentId)}`}>
-                      View Evidence Gate
-                    </Link>
+                    <div className="actionRow">
+                      <Link className="primaryAction" to={`/evidence/${encodeURIComponent(experiment.experimentId)}`}>
+                        View Evidence Gate
+                      </Link>
+                      {assessment.verdict === "STRATEGY_QUALIFIED" ? (
+                        <Link
+                          className="primaryAction"
+                          to={`/execution-candidate?experimentId=${encodeURIComponent(experiment.experimentId)}`}
+                        >
+                          Revalidate Execution Candidate
+                        </Link>
+                      ) : null}
+                    </div>
                   ) : (
                     <span className="statusPill">Waiting for evaluation</span>
                   )}
@@ -453,6 +496,34 @@ export default function ExperimentWorkspacePage() {
                     <dd>{liveShadow?.decisionCount ?? 0}</dd>
                   </div>
                   <div>
+                    <dt>Eligible settled decisions</dt>
+                    <dd>
+                      {liveShadow?.eligibleDecisionCount ?? 0}/{minimumSample} per track
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Remaining to evaluation</dt>
+                    <dd>
+                      {Math.max(0, minimumSample - (liveShadow?.eligibleDecisionCount ?? 0))}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Abstentions</dt>
+                    <dd>{liveShadow?.abstentionCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Pending outcomes</dt>
+                    <dd>{liveShadow?.pendingOutcomeCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Outside decision window</dt>
+                    <dd>{liveShadow?.timingExcludedDecisionCount ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt>Excluded / data errors</dt>
+                    <dd>{liveShadow?.excludedEpisodeCount ?? 0}</dd>
+                  </div>
+                  <div>
                     <dt>Latest market</dt>
                     <dd className="monoText">
                       {liveShadow?.latestMarketId === null || liveShadow?.latestMarketId === undefined
@@ -477,6 +548,11 @@ export default function ExperimentWorkspacePage() {
                       <span>Lease</span>
                       <span>{liveObservation.leaseAcquired ? "ACQUIRED" : "REUSED"}</span>
                     </div>
+                    {liveObservation.discoveryIssue !== undefined ? (
+                      <div className="stateBox" role="status">
+                        {liveObservation.discoveryIssue.reasonCode}: {liveObservation.discoveryIssue.message}
+                      </div>
+                    ) : null}
                     {liveObservation.observed.map((row) => (
                       <div className="decisionRow" key={row.marketId}>
                         <span className="monoText">{compactId(row.marketId)}</span>
@@ -621,6 +697,15 @@ export default function ExperimentWorkspacePage() {
                 <div className="stateBox">Run replay, then evaluate evidence to produce a verdict.</div>
               )}
             </section>
+            {executionQuery.isError ? (
+              <div className="stateBox errorState" role="alert">
+                {apiErrorMessage(executionQuery.error)}
+              </div>
+            ) : null}
+            {executionQuery.data?.data.executionLifecycle !== null &&
+            executionQuery.data?.data.executionLifecycle !== undefined ? (
+              <ExecutionLifecycleSummary lifecycle={executionQuery.data.data.executionLifecycle} />
+            ) : null}
           </>
         ) : null}
         <div className="actionRow">

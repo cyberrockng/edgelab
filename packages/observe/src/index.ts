@@ -7,6 +7,7 @@ import {
   discoverSuccessorMarkets,
   type DreamDexMarketEvidence,
   type DreamDexReadConfig,
+  type DreamDexReadResult,
   type DreamDexSdkClient,
   type DreamDexSnapshotEvidence
 } from "@edgelab/dreamdex";
@@ -42,7 +43,12 @@ export interface ObservedEpisodeResult {
   readonly insertedDecisionCount: number;
   readonly reusedDecisionCount: number;
   readonly skipped: boolean;
-  readonly reasonCode?: "MARKET_ALREADY_EXPIRED" | "SNAPSHOT_READ_FAILED" | "POLICY_ADAPTER_MISSING";
+  readonly reasonCode?:
+    | "DECISION_WINDOW_NOT_OPEN"
+    | "DECISION_WINDOW_MISSED"
+    | "MARKET_ALREADY_EXPIRED"
+    | "SNAPSHOT_READ_FAILED"
+    | "POLICY_ADAPTER_MISSING";
 }
 
 export interface ObserveExperimentResult {
@@ -50,6 +56,7 @@ export interface ObserveExperimentResult {
   readonly holderId: string;
   readonly discoveredMarketCount: number;
   readonly observed: readonly ObservedEpisodeResult[];
+  readonly discoveryIssue?: Omit<Extract<DreamDexReadResult<never>, { readonly ok: false }>, "ok">;
 }
 
 interface ExperimentRecord {
@@ -103,6 +110,7 @@ function toDomainSnapshot(snapshot: DreamDexSnapshotEvidence): MarketSnapshot {
     chainId: SOMNIA_SHANNON_CHAIN_ID,
     asset: snapshot.market.asset,
     intervalSeconds: snapshot.market.intervalSeconds ?? 0,
+    quoteDecimals: snapshot.market.quoteDecimals,
     capturedAt: snapshot.market.source.retrievedAt,
     source: {
       sdkVersion: snapshot.market.source.sdkVersion,
@@ -113,7 +121,19 @@ function toDomainSnapshot(snapshot: DreamDexSnapshotEvidence): MarketSnapshot {
     book: {
       bids: snapshot.book.yesBids,
       asks: snapshot.book.yesAsks
-    }
+    },
+    marketWindow: {
+      tradingStartSeconds: snapshot.market.tradingStartSeconds,
+      expirySeconds: snapshot.market.expirySeconds
+    },
+    ...(snapshot.market.lastPriceRaw === null || snapshot.market.lastTradeAtSeconds === null
+      ? {}
+      : {
+          lastTrade: {
+            priceRaw: snapshot.market.lastPriceRaw,
+            timestampSeconds: snapshot.market.lastTradeAtSeconds
+          }
+        })
   });
 }
 
@@ -304,18 +324,31 @@ async function ensureEpisode(
   return row;
 }
 
-async function loadSnapshot(pool: pg.Pool, episodeId: string): Promise<SnapshotRecord | null> {
+async function loadSnapshot(
+  pool: pg.Pool,
+  episodeId: string,
+  decisionWindowOpensAt: Date,
+  expiresAt: Date
+): Promise<SnapshotRecord | null> {
   const result = await pool.query<SnapshotRecord>(
     `
       SELECT id, snapshot_hash, payload
       FROM market_snapshots
       WHERE episode_id = $1
+        AND captured_at >= $2
+        AND captured_at < $3
       ORDER BY created_at ASC
       LIMIT 1
     `,
-    [episodeId]
+    [episodeId, decisionWindowOpensAt, expiresAt]
   );
   return result.rows[0] ?? null;
+}
+
+function forwardDecisionWindowOpensAt(market: DreamDexMarketEvidence, decisionOffsetSec: number): Date {
+  return dateFromSeconds(
+    Math.max(market.tradingStartSeconds + 1, market.expirySeconds - decisionOffsetSec)
+  );
 }
 
 async function insertSnapshot(
@@ -366,12 +399,11 @@ async function insertDecision(input: {
   readonly snapshot: SnapshotRecord;
   readonly adapter: PolicyAdapter;
   readonly policyVersionId: string;
-  readonly now: Date;
 }): Promise<boolean> {
   const domainSnapshot = snapshotFromPayload(input.snapshot);
   const decision = evaluatePolicy(input.adapter, {
     snapshot: domainSnapshot,
-    decidedAt: input.now.toISOString(),
+    decidedAt: domainSnapshot.capturedAt,
     snapshotHash: input.snapshot.snapshot_hash
   });
   const result = await input.pool.query<{ id: string }>(
@@ -394,7 +426,7 @@ async function insertDecision(input: {
       decision.action,
       JSON.stringify({ evidenceClass: "CAPTURED", executionEvidence: "NOT_EVALUATED" }),
       decision.reasonCodes,
-      input.now.toISOString(),
+      domainSnapshot.capturedAt,
       decision.policyHash,
       input.experiment.risk_hash
     ]
@@ -410,9 +442,25 @@ async function observeMarket(input: {
   readonly experiment: ExperimentRecord;
   readonly adapters: ReadonlyMap<string, PolicyAdapter>;
   readonly now: Date;
+  readonly clockNow?: () => Date;
   readonly depth: number;
 }): Promise<ObservedEpisodeResult> {
   const episode = await ensureEpisode(input.pool, input.experiment.id, input.market);
+  const decisionWindowOpensAt = forwardDecisionWindowOpensAt(
+    input.market,
+    input.experiment.decision_offset_sec
+  );
+  if (input.now < decisionWindowOpensAt) {
+    return {
+      marketId: input.market.stableMarketId,
+      episodeId: episode.id,
+      snapshotId: null,
+      insertedDecisionCount: 0,
+      reusedDecisionCount: 0,
+      skipped: true,
+      reasonCode: "DECISION_WINDOW_NOT_OPEN"
+    };
+  }
   if (input.now >= episode.expires_at) {
     await input.pool.query(
       "UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = 'MARKET_ALREADY_EXPIRED' WHERE id = $1 AND state <> 'DECISION_RECORDED'",
@@ -429,13 +477,19 @@ async function observeMarket(input: {
     };
   }
 
-  let snapshot = await loadSnapshot(input.pool, episode.id);
+  let snapshot = await loadSnapshot(
+    input.pool,
+    episode.id,
+    decisionWindowOpensAt,
+    episode.expires_at
+  );
   if (snapshot === null) {
     const captured = await captureMarketSnapshot(
       input.dreamDexClient,
       input.dreamDexConfig,
       input.market.stableMarketId,
-      input.depth
+      input.depth,
+      input.clockNow?.().toISOString()
     );
     if (!captured.ok) {
       return {
@@ -446,6 +500,33 @@ async function observeMarket(input: {
         reusedDecisionCount: 0,
         skipped: true,
         reasonCode: "SNAPSHOT_READ_FAILED"
+      };
+    }
+    const capturedAt = new Date(captured.value.market.source.retrievedAt);
+    if (capturedAt < decisionWindowOpensAt) {
+      return {
+        marketId: input.market.stableMarketId,
+        episodeId: episode.id,
+        snapshotId: null,
+        insertedDecisionCount: 0,
+        reusedDecisionCount: 0,
+        skipped: true,
+        reasonCode: "DECISION_WINDOW_NOT_OPEN"
+      };
+    }
+    if (capturedAt >= episode.expires_at) {
+      await input.pool.query(
+        "UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = 'DECISION_WINDOW_MISSED' WHERE id = $1 AND state <> 'DECISION_RECORDED'",
+        [episode.id]
+      );
+      return {
+        marketId: input.market.stableMarketId,
+        episodeId: episode.id,
+        snapshotId: null,
+        insertedDecisionCount: 0,
+        reusedDecisionCount: 0,
+        skipped: true,
+        reasonCode: "DECISION_WINDOW_MISSED"
       };
     }
     snapshot = await insertSnapshot(input.pool, episode.id, captured.value);
@@ -472,8 +553,7 @@ async function observeMarket(input: {
       episodeId: episode.id,
       snapshot,
       adapter,
-      policyVersionId: policy.id,
-      now: input.now
+      policyVersionId: policy.id
     });
     if (inserted) {
       insertedDecisionCount += 1;
@@ -533,13 +613,18 @@ export async function observeExperiment(input: ObserveExperimentInput): Promise<
       leaseAcquired: true,
       holderId: lease.holderId,
       discoveredMarketCount: 0,
-      observed: []
+      observed: [],
+      discoveryIssue: {
+        reasonCode: discovered.reasonCode,
+        message: discovered.message
+      }
     };
   }
 
   const experiment = await loadExperiment(input.pool, input.experimentId);
   const adapters = new Map(input.policyAdapters.map((adapter) => [adapterKey(adapter.policyId, adapter.version), adapter]));
-  const now = input.clock?.now() ?? new Date();
+  const clock = input.clock;
+  const now = clock?.now() ?? new Date();
   const observed: ObservedEpisodeResult[] = [];
   for (const market of discovered.value) {
     observed.push(
@@ -551,6 +636,7 @@ export async function observeExperiment(input: ObserveExperimentInput): Promise<
         experiment,
         adapters,
         now,
+        ...(clock === undefined ? {} : { clockNow: () => clock.now() }),
         depth: input.depth ?? 10
       })
     );

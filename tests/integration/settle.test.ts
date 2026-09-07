@@ -8,7 +8,7 @@ import type { DreamDexReadConfig, DreamDexSdkClient } from "@edgelab/dreamdex";
 import type { BinaryMarket } from "@somnia-chain/markets-sdk";
 
 const connectionString =
-  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab";
+  process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab_test";
 
 const pool = createPool({ connectionString, max: 4, statementTimeoutMs: 5000 });
 
@@ -102,8 +102,8 @@ async function resetPublicSchema(): Promise<void> {
   await pool.query("CREATE SCHEMA public");
 }
 
-async function seedObservedEpisode(row: BinaryMarket): Promise<void> {
-  await pool.query("INSERT INTO wallet_identities(address) VALUES ($1)", [owner]);
+async function seedObservedEpisode(row: BinaryMarket): Promise<string> {
+  await pool.query("INSERT INTO wallet_identities(address) VALUES ($1) ON CONFLICT (address) DO NOTHING", [owner]);
   const policyA = await registerPolicyVersion(pool, referencePolicies[0]);
   const policyB = await registerPolicyVersion(pool, referencePolicies[1]);
   const risk = await pool.query<{ id: string }>(
@@ -112,12 +112,12 @@ async function seedObservedEpisode(row: BinaryMarket): Promise<void> {
       VALUES ($1, 0, 0, ARRAY['WATCH_ONLY'], ARRAY[900], $2)
       RETURNING id
     `,
-    [randomUUID(), "6".repeat(64)]
+    [randomUUID(), randomUUID().replaceAll("-", "").repeat(2)]
   );
   const experiment = await pool.query<{ id: string }>(
     `
       INSERT INTO experiments(owner_address, policy_a_id, policy_b_id, risk_envelope_id, rule_version, decision_offset_sec)
-      VALUES ($1, $2, $3, $4, 'settle-rules-1', 0)
+      VALUES ($1, $2, $3, $4, 'settle-rules-1', 900)
       RETURNING id
     `,
     [owner, policyA, policyB, risk.rows[0]?.id]
@@ -133,6 +133,7 @@ async function seedObservedEpisode(row: BinaryMarket): Promise<void> {
     clock: { now: () => beforeExpiry },
     intervals: [900]
   });
+  return experiment.rows[0]?.id ?? "";
 }
 
 async function settlementCounts(): Promise<{ settlements: number; resolved: number; voided: number }> {
@@ -196,12 +197,7 @@ describe("SETTLE-001 settlement reconciliation", () => {
       insertedSettlement: true,
       reusedSettlement: false
     });
-    expect(second.reconciled[0]).toMatchObject({
-      outcome: "RESOLVED_YES",
-      terminal: true,
-      insertedSettlement: false,
-      reusedSettlement: true
-    });
+    expect(second).toMatchObject({ leaseAcquired: true, checkedCount: 0, reconciled: [] });
     await expect(settlementCounts()).resolves.toEqual({ settlements: 1, resolved: 1, voided: 0 });
   });
 
@@ -260,5 +256,45 @@ describe("SETTLE-001 settlement reconciliation", () => {
       insertedSettlement: false
     });
     await expect(settlementCounts()).resolves.toEqual({ settlements: 0, resolved: 0, voided: 0 });
+  });
+
+  it("does not let one experiment lease starve settlement reconciliation for another", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const firstMarket = binaryMarket({ marketId: `0x${"4".repeat(64)}` });
+    const secondMarket = binaryMarket({
+      marketId: `0x${"7".repeat(64)}`,
+      poolAddress: "0x0000000000000000000000000000000000000a12",
+      marketAddress: "0x0000000000000000000000000000000000000b12",
+      asset: "ETH",
+      question: "Will ETH close up?",
+      oracleQuestion: "ETH up?"
+    });
+    const firstExperimentId = await seedObservedEpisode(firstMarket);
+    const secondExperimentId = await seedObservedEpisode(secondMarket);
+    const resolvedFirst = { ...firstMarket, status: "Finalized" as const, finalized: true, winningOutcome: 0 };
+    const resolvedSecond = { ...secondMarket, status: "Finalized" as const, finalized: true, winningOutcome: 1 };
+
+    const first = await reconcileSettlements({
+      pool,
+      dreamDexClient: clientWith(resolvedFirst),
+      holderId: "settle-first-experiment",
+      leaseTtlMs: 30_000,
+      clock: { now: () => afterExpiry },
+      experimentId: firstExperimentId
+    });
+    const second = await reconcileSettlements({
+      pool,
+      dreamDexClient: clientWith(resolvedSecond),
+      holderId: "settle-second-experiment",
+      leaseTtlMs: 30_000,
+      clock: { now: () => afterExpiry },
+      experimentId: secondExperimentId
+    });
+
+    expect(first).toMatchObject({ leaseAcquired: true, checkedCount: 1 });
+    expect(second).toMatchObject({ leaseAcquired: true, checkedCount: 1 });
+    expect(second.reconciled[0]).toMatchObject({ outcome: "RESOLVED_NO", terminal: true });
+    await expect(settlementCounts()).resolves.toEqual({ settlements: 2, resolved: 2, voided: 0 });
   });
 });

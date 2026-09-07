@@ -182,7 +182,11 @@ export const migrations = [
   "0012_behavior_bound_policy_manifest",
   "0013_direct_fill_behavior_policy_manifest",
   "0014_latest_ordering_policy_manifest",
-  "0015_exact_runtime_policy_manifest"
+  "0015_exact_runtime_policy_manifest",
+  "0016_strategy_execution_lifecycle",
+  "0017_execution_reconciliation",
+  "0018_order_signing_freshness",
+  "0019_execution_terminal_index"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {

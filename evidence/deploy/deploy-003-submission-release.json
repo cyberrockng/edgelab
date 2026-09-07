@@ -1,0 +1,62 @@
+{
+  "evidenceId": "DEPLOY-003-SUBMISSION-RELEASE",
+  "capturedAt": "2026-09-07T22:00:00+01:00",
+  "provider": "Railway",
+  "service": "api",
+  "environment": "production",
+  "publicUrl": "https://api-production-bd986.up.railway.app/",
+  "deployment": {
+    "deploymentId": "445a9749-67da-4953-bb44-34dcfae5519b",
+    "status": "SUCCESS",
+    "sourceHead": "c1026e3fc109d3221eccfa2f52670261389e2503",
+    "sourceWorkingTreeDirty": true,
+    "publicGitTraceability": "This captured deployment originated from a dirty working tree. Git traceability can only be established by a later owner-authorized release commit and redeployment.",
+    "deployedJavascriptAsset": "assets/index-Dm_h_ahW.js",
+    "deployedStylesheetAsset": "assets/index-BMka4BY0.css"
+  },
+  "validation": {
+    "lint": "PASS",
+    "typecheck": "PASS",
+    "unitAndIntegration": "PASS: 137/137",
+    "productionBuild": "PASS",
+    "browserE2E": "PASS: 56/56 across desktop and Pixel 5",
+    "secretScan": "PASS",
+    "gitDiffCheck": "PASS",
+    "railwayBuild": "PASS",
+    "railwayRuntimeErrors": "NONE_OBSERVED",
+    "desktopFreshBrowser": "PASS",
+    "mobileFreshBrowser": "PASS"
+  },
+  "health": {
+    "endpoint": "/healthz",
+    "status": 200,
+    "ok": true,
+    "reportedBuildCommit": "c1026e3fc109d3221eccfa2f52670261389e2503",
+    "disclosure": "The reported commit is the last committed HEAD and does not identify the uncommitted deployment snapshot."
+  },
+  "readiness": {
+    "endpoint": "/readyz",
+    "status": 200,
+    "ok": true,
+    "database": "ok",
+    "workerEnabled": true,
+    "chainId": 50312,
+    "marketsSdkVersion": "0.28.1"
+  },
+  "routeSmoke": [
+    "/",
+    "/lab/proven-experiment",
+    "/evidence/proven-experiment",
+    "/proof",
+    "/compare",
+    "/observation",
+    "/execution"
+  ],
+  "claimBoundary": {
+    "strategyQualified": false,
+    "strategyLinkedExecutionDemonstrated": false,
+    "walletApprovalRequiredNow": false,
+    "allowedClaim": "Current lifecycle implementation is deployed and smoke-checked; execution remains closed until one exact forward track qualifies and a fresh candidate passes revalidation."
+  },
+  "redaction": "No environment values, session credentials, wallet secrets, private keys, or seed phrases are included."
+}

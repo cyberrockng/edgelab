@@ -295,8 +295,8 @@ async function insertOrderEvidence(
         evidence_source, observed_at, payload
       )
       VALUES ($1, $2, $3, $4, $5, 'CHAIN', $6, $7::jsonb)
-      ON CONFLICT (tx_hash, order_id, observed_at) DO UPDATE
-      SET state = EXCLUDED.state,
+      ON CONFLICT (tx_hash, order_id, state, remaining_quantity_raw) DO UPDATE
+      SET observed_at = EXCLUDED.observed_at,
           payload = EXCLUDED.payload
     `,
     [

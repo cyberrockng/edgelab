@@ -15,12 +15,16 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "dev": "pnpm --filter @edgelab/server dev",
     "lint": "eslint . --max-warnings=0",
+    "campaign:forward-observe": "pnpm --filter @edgelab/server exec tsx ../../scripts/forward-observation-campaign.ts",
+    "demo:open": "pnpm --filter @edgelab/server exec tsx ../../scripts/open-demo-browser.ts",
+    "execution:watch": "pnpm --filter @edgelab/server exec tsx ../../scripts/watch-execution-candidates.ts",
     "evidence:import-exg003": "node scripts/import-exg003-evidence.mjs",
     "evidence:manifest": "node scripts/evidence-manifest.mjs",
     "evidence:manifest:check": "EVIDENCE_SOURCE_COMMIT=$(node -e \"console.log(JSON.parse(require('fs').readFileSync('evidence/export/manifest.json','utf8')).sourceCommit)\") pnpm evidence:manifest && git diff --exit-code -- evidence/export/manifest.json",
     "secret:scan": "node scripts/secret-scan.mjs",
-    "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:db:ensure": "node scripts/ensure-test-database.mjs",
+    "test": "pnpm test:db:ensure && vitest run",
+    "test:e2e": "pnpm test:db:ensure && playwright test",
     "typecheck": "tsc -b tsconfig.build.json"
   },
   "dependencies": {

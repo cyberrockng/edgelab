@@ -21,7 +21,7 @@ export default defineConfig({
           env: {
             NODE_ENV: "test",
             PORT: "3011",
-            DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab",
+            DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgres://edgelab:edgelab@localhost:55432/edgelab_test",
             PUBLIC_APP_URL: "http://localhost:3011",
             SESSION_SECRET: "local-e2e-session-secret-at-least-32-bytes",
             SOMNIA_CHAIN_ID: "50312",

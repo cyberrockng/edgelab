@@ -69,6 +69,7 @@ export function assessEvidence(
     readonly exclusionCount?: number;
     readonly thresholds?: EvidenceThresholds;
     readonly executionMetrics?: Partial<MetricSummary["executionMetrics"]>;
+    readonly qualificationTarget?: "FORWARD_OBSERVATION" | "EXECUTION_EXPOSURE";
   } = {}
 ): EvidenceAssessment {
   const thresholds = options.thresholds ?? defaultEvidenceThresholds;
@@ -113,9 +114,14 @@ export function assessEvidence(
     brierScore <= thresholds.promoteMaxBrierScore &&
     Math.abs(calibrationBias) <= thresholds.promoteMaxAbsCalibrationBias
   ) {
+    const strategyQualified = options.qualificationTarget === "EXECUTION_EXPOSURE";
     return {
-      verdict: "PROMOTE_TO_FORWARD_OBSERVATION",
-      reasonCodes: ["FORECAST_THRESHOLD_MET", "PROMOTE_TO_FORWARD_OBSERVATION", "TRADEABILITY_STILL_SEPARATE"],
+      verdict: strategyQualified ? "STRATEGY_QUALIFIED" : "PROMOTE_TO_FORWARD_OBSERVATION",
+      reasonCodes: [
+        "FORECAST_THRESHOLD_MET",
+        strategyQualified ? "STRATEGY_QUALIFIED" : "PROMOTE_TO_FORWARD_OBSERVATION",
+        "ORDER_EXECUTABILITY_STILL_SEPARATE"
+      ],
       thresholds,
       metrics
     };

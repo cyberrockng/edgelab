@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildControlledLiquidityEvidence,
+  buildUnsignedBinaryOrderEvidence,
   captureMarketSnapshot,
   countHistoricalBinaryMarkets,
   discoverSuccessorMarkets,
@@ -10,6 +12,7 @@ import {
   HISTORICAL_CANDLE_INTERVAL_SECONDS,
   HISTORICAL_MARKET_FILLS_QUERY,
   HISTORICAL_MARKET_ORDERS_QUERY,
+  SHANNON_LIVE_OPEN_ORDERS_QUERY,
   historicalDreamDexSourceContract,
   listHistoricalBinaryMarkets,
   listHistoricalCandles,
@@ -17,6 +20,7 @@ import {
   listHistoricalOrdersByMarket,
   normalizeHistoricalPagination,
   normalizeBinaryMarket,
+  readBinaryBookParams,
   resolveHistoricalCutoffBlockAfter,
   resolveHistoricalCutoffBlock,
   validateMainnetHistoricalDreamDexConfig,
@@ -28,6 +32,7 @@ import {
   type DreamDexSdkClient
 } from "@edgelab/dreamdex";
 import type { BinaryMarket } from "@somnia-chain/markets-sdk";
+import { decodeFunctionData, encodeFunctionResult, parseAbi } from "viem";
 
 const config: DreamDexReadConfig = {
   rpcUrl: "https://api.infra.testnet.somnia.network/",
@@ -43,6 +48,13 @@ const mainnetHistoricalConfig: MainnetHistoricalDreamDexConfig = {
   chainId: 5031,
   sdkVersion: "0.28.1"
 };
+const binaryPoolSetupAbi = parseAbi([
+  "function getOrderBookParameters() view returns ((uint256 tickSize, uint256 minQuantity, uint256 lotSize))",
+  "function outcomeToken() view returns (address)",
+  "function collateralToken() view returns (address)",
+  "function marketNonce() view returns (uint64)"
+]);
+const erc20ApproveAbi = parseAbi(["function approve(address spender, uint256 amount) returns (bool)"]);
 
 const capturedMarketId = `0x${"0".repeat(61)}abc`;
 const historicalMarketId = `0x${"1".repeat(61)}bbb`;
@@ -231,6 +243,36 @@ describe("DEX-001 DreamDEX read adapter", () => {
     expect(result.value.stableMarketId).toBe(market.marketId.toLowerCase());
     expect(result.value.poolAddress).toBe(market.poolAddress.toLowerCase());
     expect(result.value.intervalSeconds).toBe(900);
+    expect(result.value.lastPriceRaw).toBeNull();
+    expect(result.value.lastTradeAtSeconds).toBeNull();
+  });
+
+  it("captures paired last-trade evidence without inventing an incomplete pair", () => {
+    const valid = normalizeBinaryMarket(
+      { ...market, lastPrice: "610000", lastTradeAt: "1787570300" },
+      config,
+      "2026-08-24T14:10:00.000Z",
+      "MOCK"
+    );
+    expect(valid.ok).toBe(true);
+    if (!valid.ok) {
+      throw new Error(valid.message);
+    }
+    expect(valid.value.lastPriceRaw).toBe("610000");
+    expect(valid.value.lastTradeAtSeconds).toBe(1787570300);
+
+    const incomplete = normalizeBinaryMarket(
+      { ...market, lastPrice: "610000", lastTradeAt: null },
+      config,
+      "2026-08-24T14:10:00.000Z",
+      "MOCK"
+    );
+    expect(incomplete.ok).toBe(true);
+    if (!incomplete.ok) {
+      throw new Error(incomplete.message);
+    }
+    expect(incomplete.value.lastPriceRaw).toBeNull();
+    expect(incomplete.value.lastTradeAtSeconds).toBeNull();
   });
 
   it("discovers preferred BTC/ETH successor markets without hardcoding pool availability", async () => {
@@ -243,13 +285,314 @@ describe("DEX-001 DreamDEX read adapter", () => {
   });
 
   it("captures empty sides explicitly instead of fabricating liquidity", async () => {
-    const result = await captureMarketSnapshot(clientWith([market]), config, market.marketId);
+    let parameterReadCount = 0;
+    const observationClient: DreamDexSdkClient = {
+      ...clientWith([market]),
+      getBinaryBookParams() {
+        parameterReadCount += 1;
+        return Promise.reject(new Error("Observation must not depend on execution pool parameters"));
+      }
+    };
+    const result = await captureMarketSnapshot(observationClient, config, market.marketId);
     expect(result.ok).toBe(true);
     if (!result.ok) {
       throw new Error(result.message);
     }
     expect(result.value.book.yesBids).toEqual([{ priceRaw: "1000", quantityRaw: "2000" }]);
     expect(result.value.book.yesAsks).toEqual([]);
+    expect(parameterReadCount).toBe(0);
+  });
+
+  it("retries transient Shannon book reads before failing the snapshot", async () => {
+    let bookAttempts = 0;
+    const flakyClient: DreamDexSdkClient = {
+      ...clientWith([market]),
+      getLiveBinaryOrderBookByMarket() {
+        bookAttempts += 1;
+        if (bookAttempts < 3) {
+          throw new Error("WebSocket request failed");
+        }
+        return {
+          yesBids: [{ price: 1000n, quantity: 2000n }],
+          yesAsks: [{ price: 2000n, quantity: 3000n }],
+          noBids: [],
+          noAsks: []
+        };
+      }
+    };
+
+    const result = await captureMarketSnapshot(flakyClient, config, market.marketId);
+
+    expect(result.ok).toBe(true);
+    expect(bookAttempts).toBe(3);
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+    expect(result.value.book.yesAsks).toEqual([{ priceRaw: "2000", quantityRaw: "3000" }]);
+  });
+
+  it("falls back to Shannon indexer open orders when the SDK book is empty", async () => {
+    const originalFetch = globalThis.fetch;
+    const emptyBookClient: DreamDexSdkClient = {
+      ...clientWith([market]),
+      getLiveBinaryOrderBookByMarket() {
+        return {
+          yesBids: [],
+          yesAsks: [],
+          noBids: [],
+          noAsks: []
+        };
+      }
+    };
+    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input).toBe(config.indexerUrl);
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        readonly query?: string;
+        readonly variables?: { readonly marketId?: string };
+      };
+      expect(body.query).toBe(SHANNON_LIVE_OPEN_ORDERS_QUERY);
+      expect(body.variables?.marketId).toBe(market.marketId.toLowerCase());
+      return Promise.resolve(new Response(
+        JSON.stringify({
+          data: {
+            Order: [
+              {
+                side: "SELL_YES",
+                isBid: false,
+                price: "600000",
+                quantityRemaining: "1000",
+                status: "Open",
+                rested: true
+              },
+              {
+                side: "SELL_YES",
+                isBid: false,
+                price: "600000",
+                quantityRemaining: "2000",
+                status: "Open",
+                rested: true
+              },
+              {
+                side: "SELL_NO",
+                isBid: false,
+                price: "420000",
+                quantityRemaining: "1000",
+                status: "Cancelled",
+                rested: true
+              }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      ));
+    };
+    try {
+      const result = await captureMarketSnapshot(emptyBookClient, config, market.marketId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      expect(result.value.book.yesAsks).toEqual([{ priceRaw: "600000", quantityRaw: "3000" }]);
+      expect(result.value.book.noAsks).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("retries transient Shannon book parameter reads", async () => {
+    let paramAttempts = 0;
+    const flakyClient: DreamDexSdkClient = {
+      ...clientWith([market]),
+      getBinaryBookParams() {
+        paramAttempts += 1;
+        if (paramAttempts < 2) {
+          return Promise.reject(new Error("WebSocket request failed"));
+        }
+        return Promise.resolve({
+          tickSize: 1000n,
+          lotSize: 1000n,
+          minQuantity: 1000n
+        });
+      }
+    };
+
+    const result = await readBinaryBookParams(flakyClient, config, market.poolAddress);
+
+    expect(result.ok).toBe(true);
+    expect(paramAttempts).toBe(2);
+  });
+
+  it("falls back to direct pool RPC when SDK book parameter reads time out", async () => {
+    const originalFetch = globalThis.fetch;
+    const timeoutClient: DreamDexSdkClient = {
+      ...clientWith([market]),
+      getBinaryBookParams() {
+        return Promise.reject(new Error("The request took too long to respond"));
+      }
+    };
+    globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const request = JSON.parse(rawBody) as { readonly id?: number };
+      return Promise.resolve(new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id ?? 1,
+          result: encodeFunctionResult({
+            abi: binaryPoolSetupAbi,
+            functionName: "getOrderBookParameters",
+            result: [1000n, 1000n, 1000n]
+          })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      ));
+    };
+    try {
+      const result = await readBinaryBookParams(timeoutClient, config, market.poolAddress);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      expect(result.value).toEqual({
+        tickSize: 1000n,
+        minQuantity: 1000n,
+        lotSize: 1000n
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }, 10_000);
+
+  it("builds controlled-liquidity setup calldata without signing", async () => {
+    const originalFetch = globalThis.fetch;
+    const outcomeToken = "0x0000000000000000000000000000000000000e11";
+    const collateral = "0x0000000000000000000000000000000000000f11";
+    let callIndex = 0;
+    globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+      callIndex += 1;
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const request = JSON.parse(rawBody) as { readonly id?: number };
+      const results = [
+        encodeFunctionResult({ abi: binaryPoolSetupAbi, functionName: "outcomeToken", result: outcomeToken }),
+        encodeFunctionResult({ abi: binaryPoolSetupAbi, functionName: "collateralToken", result: collateral }),
+        encodeFunctionResult({ abi: binaryPoolSetupAbi, functionName: "marketNonce", result: 58n })
+      ];
+      return Promise.resolve(new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id ?? callIndex,
+          result: results[callIndex - 1] ?? "0x"
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      ));
+    };
+    try {
+      const result = await buildControlledLiquidityEvidence(config, {
+        makerAddress: "0x0000000000000000000000000000000000000d11",
+        poolAddress: market.poolAddress,
+        side: "SELL_YES",
+        priceRaw: "600000",
+        quantityRaw: "1000",
+        expireTimestampNs: "1787570900000000000"
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      expect(result.value.calls.map((call) => call.description)).toEqual([
+        "Approve exact tUSDC amount for controlled liquidity mint",
+        "Mint equal YES and NO outcome tokens for controlled testnet liquidity",
+        "Allow the pool to escrow the selected outcome token for the maker sell order",
+        "Place controlled post-only SELL_YES liquidity"
+      ]);
+      expect(result.value.collateral).toBe(collateral);
+      expect(result.value.outcomeToken).toBe(outcomeToken);
+      expect(result.value.outcomeId).toMatch(/^[0-9]+$/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("uses complementary collateral pricing for deterministic BUY_NO approval calldata", async () => {
+    const originalFetch = globalThis.fetch;
+    const collateral = "0x0000000000000000000000000000000000000f11";
+    globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const request = JSON.parse(rawBody) as { readonly id?: number };
+      return Promise.resolve(new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id ?? 1,
+          result: encodeFunctionResult({ abi: binaryPoolSetupAbi, functionName: "collateralToken", result: collateral })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      ));
+    };
+    try {
+      const client = { ...clientWith([market]), createTrader: undefined };
+      const result = await buildUnsignedBinaryOrderEvidence(client, config, {
+        ownerAddress: "0x0000000000000000000000000000000000000d11",
+        poolAddress: market.poolAddress,
+        side: "BUY_NO",
+        priceRaw: "600000",
+        quantityRaw: "25000",
+        expireTimestampNs: "1787570900000000000",
+        orderType: 2,
+        quoteDecimals: 6
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok || result.value.approval === null) {
+        throw new Error("BUY_NO unsigned approval was unavailable");
+      }
+      const decoded = decodeFunctionData({ abi: erc20ApproveAbi, data: result.value.approval.data as `0x${string}` });
+      expect(decoded.args).toEqual([market.poolAddress, 10_000n]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("replaces the SDK max allowance with an exact bounded escrow approval", async () => {
+    const client: DreamDexSdkClient = {
+      ...clientWith([market]),
+      createTrader() {
+        return {
+          buildPlaceOrder() {
+            return Promise.resolve({
+              approval: {
+                to: market.collateral,
+                data: `0x${"ff".repeat(68)}`,
+                value: 0n,
+                description: "SDK max allowance"
+              },
+              order: {
+                to: market.poolAddress,
+                data: "0x1234",
+                value: 0n,
+                description: "SDK order"
+              }
+            });
+          }
+        } as unknown as ReturnType<NonNullable<DreamDexSdkClient["createTrader"]>>;
+      }
+    };
+    const result = await buildUnsignedBinaryOrderEvidence(client, config, {
+      ownerAddress: "0x0000000000000000000000000000000000000d11",
+      poolAddress: market.poolAddress,
+      side: "BUY_YES",
+      priceRaw: "600000",
+      quantityRaw: "16000",
+      expireTimestampNs: "1787570900000000000",
+      orderType: 2,
+      quoteDecimals: 6,
+      collateralAddress: market.collateral
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.approval === null) {
+      throw new Error("Exact approval was unavailable");
+    }
+    const decoded = decodeFunctionData({ abi: erc20ApproveAbi, data: result.value.approval.data as `0x${string}` });
+    expect(decoded.args).toEqual([market.poolAddress, 9_600n]);
+    expect(result.value.order.data).toBe("0x1234");
   });
 
   it("returns degraded state for malformed market rows", () => {

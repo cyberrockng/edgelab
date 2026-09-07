@@ -4,7 +4,7 @@
 - Snapshot date: 2026-08-24
 - Competition: Somnia x DreamDEX Event Contracts Hackathon
 - Internal cutoff: 2026-09-08 15:00 UTC
-- Official deadline basis: current DoraHacks event metadata and search-visible event listing indicate the deadline corresponds to 2026-09-08 18:00 UTC. Some UI/listing surfaces may render this as local time, for example 2026/09/08 11:00 in a UTC-7 context.
+- Deadline recheck (2026-09-07): current public Somnia messaging says submissions close 2026-09-08 23:59 UTC. Automated access could not verify the authenticated DoraHacks countdown, and this conflicts with the earlier 18:00 UTC interpretation. The internal 15:00 UTC cutoff remains controlling until the entrant verifies the authenticated form.
 
 ## Sources Checked
 

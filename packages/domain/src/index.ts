@@ -23,6 +23,7 @@ export type EvidencePlane = z.infer<typeof EvidencePlaneSchema>;
 
 export const VerdictSchema = z.enum([
   "PROMOTE_TO_FORWARD_OBSERVATION",
+  "STRATEGY_QUALIFIED",
   "HOLD",
   "REJECT",
   "INSUFFICIENT_EVIDENCE"
@@ -73,6 +74,7 @@ export const MarketSnapshotSchema = z.object({
   chainId: z.literal(SOMNIA_SHANNON_CHAIN_ID),
   asset: z.enum(["BTC", "ETH"]),
   intervalSeconds: z.number().int().positive(),
+  quoteDecimals: z.number().int().min(0).max(36).default(6),
   capturedAt: z.iso.datetime(),
   source: z.object({
     sdkVersion: z.literal(DREAMDEX_MARKETS_SDK_VERSION),
@@ -83,7 +85,22 @@ export const MarketSnapshotSchema = z.object({
   book: z.object({
     bids: z.array(z.object({ priceRaw: z.string(), quantityRaw: z.string() })),
     asks: z.array(z.object({ priceRaw: z.string(), quantityRaw: z.string() }))
-  })
+  }),
+  marketWindow: z
+    .object({
+      tradingStartSeconds: z.number().int().nonnegative(),
+      expirySeconds: z.number().int().positive()
+    })
+    .refine((window) => window.expirySeconds > window.tradingStartSeconds, {
+      message: "Market expiry must be after trading start"
+    })
+    .optional(),
+  lastTrade: z
+    .object({
+      priceRaw: z.string().regex(/^\d+$/),
+      timestampSeconds: z.number().int().nonnegative()
+    })
+    .optional()
 });
 export type MarketSnapshot = z.infer<typeof MarketSnapshotSchema>;
 

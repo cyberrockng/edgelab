@@ -14,9 +14,11 @@ It compares immutable reference policies using pre-outcome decisions, separated 
 - Networks: Somnia mainnet `5031` for read-only historical research; Somnia Shannon testnet `50312` for forward observation and execution proof.
 - DreamDEX SDK: `@somnia-chain/markets-sdk` `0.28.1`
 - EXG-002 wallet funding proof: passed with public chain evidence.
-- EXG-003 approval, order, and terminal lifecycle: passed with a real no-fill DreamDEX order lifecycle.
+- EXG-003 approval, order, and terminal lifecycle: captured for a real no-fill DreamDEX order, but not linked to a qualified strategy.
+- Strategy-linked qualification, fresh candidate revalidation, unsigned wallet handoff, receipt import, order/fill reconciliation, and read-only redemption discovery are implemented and locally tested; redemption is only linked when its indexed action and successful Shannon receipt match the exact wallet, outcome, and filled quantity. A fresh owner-approved order receipt is still required before calling that path demonstrated on-chain.
+- The durable Shannon forward campaign covers BTC and ETH at 15m and 1h and is building toward 30 eligible settled observations per track. The frozen `last-trade-forward-proxy@1.0.0` control remains untouched; the separately versioned `1.1.0` challenger adds only capture-time, current-generation price fallbacks. Until one exact policy/asset/interval track passes its own threshold and quality gates, execution exposure remains closed.
 - Local Docker deployment smoke: passed.
-- Public HTTPS audit deployment: https://api-production-bd986.up.railway.app
+- Public HTTPS deployment: https://api-production-bd986.up.railway.app. Treat the release as Git-traceable only when `/healthz` reports the same revision as public `main`; deployment smoke evidence does not substitute for that check.
 - Final submission video and form receipt: pending owner-controlled SHIP-001 actions.
 
 ## Product Boundaries
@@ -57,6 +59,9 @@ Important invariants:
 - shadow decisions are written before outcomes are known;
 - outcome-bearing or expired markets are rejected before observation writes;
 - order submitted, fill, terminal, and settlement states are not collapsed into a single PnL claim;
+- strategy qualification and current order executability are independent: an executable market cannot qualify a strategy;
+- a candidate becomes `READY` only from an exact `STRATEGY_QUALIFIED` forward assessment and is revalidated again immediately before wallet signing;
+- the server returns unsigned Shannon calls only, and the browser requests an exact capped tUSDC approval before one IOC order;
 - `INSUFFICIENT_EVIDENCE` is deterministic when sample thresholds or evidence requirements are not met.
 
 ## Setup
@@ -74,6 +79,10 @@ Default local Postgres URL:
 ```text
 postgres://edgelab:edgelab@localhost:55432/edgelab
 ```
+
+Tests default to the separately created `edgelab_test` database. `pnpm test` and
+`pnpm test:e2e` run the safety check that creates it when needed and refuses to use
+the application database as the destructive integration-test target.
 
 Runtime configuration is environment-variable based. Use `.env.example` style placeholders only; `.env` files are ignored.
 
@@ -111,11 +120,16 @@ The Somnia helper faucet observed during implementation supports:
 
 Observed faucet limits were `50 STT` and `500 tUSDC` per 24 hours, with separate cooldowns per token, Telegram account, and address. Treat these as operational faucet behavior to recheck before final demo, not as a permanent protocol guarantee.
 
-The Shannon tUSDC address observed from the DreamDEX/Event Contracts builder channel was:
+Do not hard-code collateral from a prior market generation. EdgeLab resolves the current token from
+the market contract and verifies that it matches the pool immediately before signing. A historical
+candidate previously resolved this address, but it is evidence for that generation only:
 
 ```text
-0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe
+0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E
 ```
+
+`0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe` is the controlled-liquidity maker
+wallet, not a collateral-token address.
 
 Before any human-authorized testnet transaction, verify the token, network, balance, allowance, and contract targets against the current DreamDEX docs and public chain state. Never share wallet recovery or signing material.
 
@@ -127,10 +141,15 @@ pnpm check
 pnpm test:e2e
 pnpm secret:scan
 pnpm evidence:manifest
+pnpm demo:open -- --smoke
+pnpm demo:open
+pnpm campaign:forward-observe -- --interval-ms=30000 --max-cycles=12000
+pnpm campaign:forward-observe -- --policy-version=1.1.0 --state-path=forward-observation-campaign-v1.1.local --interval-ms=30000 --max-cycles=12000
+pnpm execution:watch
 DATABASE_URL=postgres://... SOMNIA_RPC_URL=https://api.infra.testnet.somnia.network/ NODE_ENV=local pnpm evidence:import-exg003
 ```
 
-`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` starts the local app on `http://localhost:3011` unless `E2E_BASE_URL` points at an already running deployment.
+`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` starts the local app on `http://localhost:3011` unless `E2E_BASE_URL` points at an already running deployment. Each forward campaign stores an ignored, mode-`0600` local resume file, preserves abstentions, timing exclusions, and source errors, deduplicates market generations, reconciles matured outcomes, and resumes after an application restart. Campaign and execution-watcher defaults cover 12,000 30-second cycles (100 hours), leaving recovery margin beyond the theoretical 30-generation 1h minimum; explicit CLI values may extend that horizon. It polls every 30 seconds so a configured 60-second pre-expiry decision window can be reached. Use a distinct state path for each immutable policy version; never pool observations across policies, assets, intervals, or decision boundaries.
 
 ## Evidence
 
@@ -145,6 +164,7 @@ Key locations:
 - `evidence/deploy/`: deployment smoke, restore, and rollback evidence.
 - `docs/SDK_FEEDBACK.md`: DreamDEX/Somnia SDK implementation feedback.
 - `docs/DEMO_SCRIPT.md`: timed demo script for final capture.
+- `docs/SUBMISSION_RUNBOOK.md`: deadline control, paste-ready project copy, recording branches, and final owner checklist.
 
 Regenerate the evidence manifest:
 
@@ -197,6 +217,8 @@ Rollback for the local deployment is to stop the smoke container and return to t
 - Public Proven Experiment evidence remains truthful if it evaluates to `INSUFFICIENT_EVIDENCE`.
 - Historical reconstructed resting-book state remains `SOURCE_INCOMPLETE / FAIL-CLOSED`; no stored book snapshot is claimed.
 - The EXG-003 order lifecycle had no fill; this is valid tradeability evidence, not PnL evidence.
+- EXG-003 is a protocol-boundary artifact, not proof that a qualified EdgeLab strategy traded.
+- No fresh strategy-linked approval/order receipt, fill, settlement, redemption, or PnL has yet been demonstrated on-chain for the current lifecycle implementation.
 - The terminal event was `OrderExpired` after an owner-approved `cancelOrder` call landed post-expiry.
 - Final narrated video and submission-form receipt remain SHIP-001 owner-controlled steps after independent audit.
 - Licensed under MIT after repository dependency metadata showed no obvious GPL/AGPL/LGPL/proprietary/unknown license conflict.

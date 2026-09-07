@@ -94,6 +94,16 @@ function historicalPolicy(version: string) {
   return policy;
 }
 
+function forwardProxyPolicy(version: string) {
+  const policy = referencePolicies.find(
+    (adapter) => adapter.policyId === "last-trade-forward-proxy" && adapter.version === version
+  );
+  if (policy === undefined) {
+    throw new Error(`Missing forward proxy policy ${version}`);
+  }
+  return policy;
+}
+
 describe("POLICY-001 immutable policy runtime", () => {
   it("creates deterministic immutable manifests for compile-time policies", () => {
     const first = createPolicyManifest(referencePolicies[0]);
@@ -124,13 +134,147 @@ describe("POLICY-001 immutable policy runtime", () => {
   });
 
   it("evaluates without outcome, network, or clock access in input", () => {
-    const decision = evaluatePolicy(referencePolicies[1], {
+    const adapter = referencePolicies.find((policy) => policy.policyId === "reference-book-tilt");
+    if (adapter === undefined) {
+      throw new Error("Missing reference-book-tilt policy");
+    }
+    const decision = evaluatePolicy(adapter, {
       snapshot,
       decidedAt: "2026-08-24T14:00:10.000Z",
       snapshotHash: "1".repeat(64)
     });
     expect(decision.forecastPUp).toBe(0.54);
     expect(decision.reasonCodes).toContain("CAPTURED_BOOK_ONLY");
+  });
+
+  it("evaluates the Last-Trade Forward Proxy from bounded live book midpoint only", () => {
+    const adapter = referencePolicies.find((policy) => policy.policyId === "last-trade-forward-proxy");
+    if (adapter === undefined) {
+      throw new Error("Missing last-trade-forward-proxy policy");
+    }
+    const decision = evaluatePolicy(adapter, {
+      snapshot: MarketSnapshotSchema.parse({
+        ...snapshot,
+        quoteDecimals: 18,
+        book: {
+          bids: [{ priceRaw: "600000000000000000", quantityRaw: "1000000000000000000" }],
+          asks: [{ priceRaw: "700000000000000000", quantityRaw: "1000000000000000000" }]
+        }
+      }),
+      decidedAt: "2026-08-24T14:00:10.000Z",
+      snapshotHash: "4".repeat(64)
+    });
+
+    expect(decision.forecastPUp).toBeCloseTo(0.65, 10);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("LINKED_HISTORICAL_LAST_TRADE_V1_1");
+    expect(decision.reasonCodes).toContain("NO_EXECUTION_AUTHORITY");
+  });
+
+  it("abstains the Last-Trade Forward Proxy when the live book cannot form a midpoint", () => {
+    const adapter = referencePolicies.find((policy) => policy.policyId === "last-trade-forward-proxy");
+    if (adapter === undefined) {
+      throw new Error("Missing last-trade-forward-proxy policy");
+    }
+    const decision = evaluatePolicy(adapter, {
+      snapshot,
+      decidedAt: "2026-08-24T14:00:10.000Z",
+      snapshotHash: "5".repeat(64)
+    });
+
+    expect(decision.forecastPUp).toBe(0.5);
+    expect(decision.action).toBe("ABSTAIN");
+    expect(decision.reasonCodes).toContain("LIVE_BOOK_MIDPOINT_UNAVAILABLE");
+  });
+
+  it("uses only a fresh pre-outcome current-generation last trade in the v1.1 challenger", () => {
+    const capturedAt = "2026-08-24T14:00:00.000Z";
+    const capturedAtSeconds = Date.parse(capturedAt) / 1_000;
+    const decision = evaluatePolicy(forwardProxyPolicy("1.1.0"), {
+      snapshot: MarketSnapshotSchema.parse({
+        ...snapshot,
+        quoteDecimals: 6,
+        capturedAt,
+        book: { bids: [], asks: [] },
+        marketWindow: {
+          tradingStartSeconds: capturedAtSeconds - 840,
+          expirySeconds: capturedAtSeconds + 60
+        },
+        lastTrade: {
+          priceRaw: "610000",
+          timestampSeconds: capturedAtSeconds - 60
+        }
+      }),
+      decidedAt: capturedAt,
+      snapshotHash: "6".repeat(64)
+    });
+
+    expect(decision.forecastPUp).toBeCloseTo(0.61, 10);
+    expect(decision.action).toBe("WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("FRESH_PRE_OUTCOME_LAST_TRADE");
+    expect(decision.reasonCodes).toContain("NO_EXECUTION_AUTHORITY");
+  });
+
+  it.each([
+    ["stale", -901, -900],
+    ["future-dated", 1, -900],
+    ["previous-generation", -100, -90]
+  ] as const)("abstains the v1.1 challenger for a %s last trade", (_label, tradeOffsetSeconds, startOffsetSeconds) => {
+    const capturedAt = "2026-08-24T14:00:00.000Z";
+    const capturedAtSeconds = Date.parse(capturedAt) / 1_000;
+    const decision = evaluatePolicy(forwardProxyPolicy("1.1.0"), {
+      snapshot: MarketSnapshotSchema.parse({
+        ...snapshot,
+        quoteDecimals: 6,
+        capturedAt,
+        book: { bids: [], asks: [] },
+        marketWindow: {
+          tradingStartSeconds: capturedAtSeconds + startOffsetSeconds,
+          expirySeconds: capturedAtSeconds + 60
+        },
+        lastTrade: {
+          priceRaw: "610000",
+          timestampSeconds: capturedAtSeconds + tradeOffsetSeconds
+        }
+      }),
+      decidedAt: capturedAt,
+      snapshotHash: "7".repeat(64)
+    });
+
+    expect(decision.action).toBe("ABSTAIN");
+    expect(decision.reasonCodes).toContain("NO_FRESH_PRE_OUTCOME_PRICE");
+  });
+
+  it("uses a bounded bid-only fallback while rejecting a crossed book without a fresh trade", () => {
+    const bidOnly = evaluatePolicy(forwardProxyPolicy("1.1.0"), {
+      snapshot: MarketSnapshotSchema.parse({
+        ...snapshot,
+        quoteDecimals: 6,
+        book: {
+          bids: [{ priceRaw: "420000", quantityRaw: "1000000" }],
+          asks: []
+        }
+      }),
+      decidedAt: "2026-08-24T14:00:10.000Z",
+      snapshotHash: "8".repeat(64)
+    });
+    expect(bidOnly.forecastPUp).toBeCloseTo(0.42, 10);
+    expect(bidOnly.reasonCodes).toContain("LIVE_BOOK_BID_FALLBACK");
+
+    const crossed = evaluatePolicy(forwardProxyPolicy("1.1.0"), {
+      snapshot: MarketSnapshotSchema.parse({
+        ...snapshot,
+        quoteDecimals: 6,
+        book: {
+          bids: [{ priceRaw: "700000", quantityRaw: "1000000" }],
+          asks: [{ priceRaw: "600000", quantityRaw: "1000000" }]
+        }
+      }),
+      decidedAt: "2026-08-24T14:00:10.000Z",
+      snapshotHash: "9".repeat(64)
+    });
+    expect(crossed.action).toBe("ABSTAIN");
+    expect(crossed.reasonCodes).toContain("CROSSED_BOOK_WITHOUT_FRESH_TRADE");
   });
 
   it("rejects malformed policy outputs instead of recording partial success", () => {

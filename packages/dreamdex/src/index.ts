@@ -4,10 +4,15 @@ import {
   SomniaMarkets,
   type BinaryMarket,
   type BinaryOrderBook,
+  outcomeId,
+  type BinarySide,
   type Candle,
   type FillRow,
   type MarketStatusUpdate,
-  type PastBinaryMarketsOptions
+  type PastBinaryMarketsOptions,
+  type Trader,
+  type TraderConfig,
+  type UnsignedOrder
 } from "@somnia-chain/markets-sdk";
 import {
   DREAMDEX_MARKETS_SDK_VERSION,
@@ -16,7 +21,7 @@ import {
   SOMNIA_SHANNON_CHAIN_ID,
   type EvidenceClass
 } from "@edgelab/domain";
-import { defineChain } from "viem";
+import { createPublicClient, defineChain, encodeFunctionData, http, parseAbi, type Address } from "viem";
 import { z } from "zod";
 
 export interface DreamDexReadConfig {
@@ -267,6 +272,25 @@ export const HISTORICAL_MARKET_FILLS_QUERY = `query EdgeLabHistoricalFills($mark
   }
 }`;
 
+export const SHANNON_LIVE_OPEN_ORDERS_QUERY = `query EdgeLabShannonLiveOpenOrders($marketId: String!, $limit: Int!) {
+  Order(
+    where: {
+      market_id: { _eq: $marketId }
+      status: { _eq: "Open" }
+      rested: { _eq: true }
+    }
+    order_by: [{ price: asc }, { placedAtBlock: asc }, { id: asc }]
+    limit: $limit
+  ) {
+    side
+    isBid
+    price
+    quantityRemaining
+    status
+    rested
+  }
+}`;
+
 export const historicalDreamDexSourceContract = {
   version: HISTORICAL_GRAPHQL_QUERY_VERSION,
   network: {
@@ -340,6 +364,8 @@ export interface DreamDexMarketEvidence {
   readonly expirySeconds: number;
   readonly collateral: string;
   readonly quoteDecimals: number;
+  readonly lastPriceRaw: string | null;
+  readonly lastTradeAtSeconds: number | null;
   readonly source: {
     readonly sdkVersion: typeof DREAMDEX_MARKETS_SDK_VERSION;
     readonly chainId: typeof SOMNIA_SHANNON_CHAIN_ID;
@@ -358,6 +384,43 @@ export interface DreamDexSnapshotEvidence {
     readonly noBids: readonly DreamDexBookLevel[];
     readonly noAsks: readonly DreamDexBookLevel[];
   };
+}
+
+export interface DreamDexUnsignedCallEvidence {
+  readonly to: string;
+  readonly data: string;
+  readonly valueRaw: string;
+  readonly description: string;
+}
+
+export interface DreamDexUnsignedOrderEvidence {
+  readonly order: DreamDexUnsignedCallEvidence;
+  readonly approval: DreamDexUnsignedCallEvidence | null;
+}
+
+export interface DreamDexControlledLiquidityEvidence {
+  readonly setupKind: "CONTROLLED_TESTNET_LIQUIDITY";
+  readonly makerAddress: string;
+  readonly poolAddress: string;
+  readonly side: "SELL_YES" | "SELL_NO";
+  readonly priceRaw: string;
+  readonly quantityRaw: string;
+  readonly expireTimestampNs: string;
+  readonly outcomeToken: string;
+  readonly collateral: string;
+  readonly outcomeId: string;
+  readonly calls: readonly DreamDexUnsignedCallEvidence[];
+  readonly disclosures: readonly string[];
+}
+
+export interface DreamDexExecutionReadinessEvidence {
+  readonly observedBlockNumber: string;
+  readonly marketCollateral: string;
+  readonly poolCollateral: string;
+  readonly collateralBindingMatches: boolean;
+  readonly walletBalanceRaw: string;
+  readonly walletAllowanceRaw: string;
+  readonly walletNativeBalanceRaw: string;
 }
 
 export type DreamDexReadResult<T> =
@@ -398,6 +461,46 @@ export interface DreamDexSdkClient {
   }>;
   getLiveBinaryOrderBookByMarket(marketId: string, opts?: { readonly depth?: number }): BinaryOrderBook;
   getBinaryMarket(id: string): Promise<BinaryMarket | null>;
+  getOrders?(owner: string, opts?: { readonly pool?: string; readonly limit?: number }): Promise<readonly {
+    readonly orderId: string;
+    readonly market: string;
+    readonly pool: string;
+    readonly status: "Open" | "Closed" | "Filled" | "Cancelled" | "Expired";
+    readonly fullQuantity: string;
+    readonly filledQuantity: string;
+    readonly quantityRemaining: string;
+    readonly placedTxHash: string;
+  }[]>;
+  getOrderOnchain?(pool: string, orderId: bigint): Promise<{
+    readonly orderId: bigint;
+    readonly fullQuantity: bigint;
+    readonly quantityRemaining: bigint;
+  } | null>;
+  getClaimable?(account: string): Promise<readonly {
+    readonly marketId: string;
+    readonly pool: string;
+    readonly outcomeIdx: 0 | 1;
+    readonly amount: bigint;
+    readonly estPayout: bigint;
+    readonly status: string;
+  }[]>;
+  getRouterActions?(account: string, opts?: {
+    readonly market?: string;
+    readonly kind?: "Redeem" | "MintCompleteSet" | "MergeCompleteSet";
+    readonly limit?: number;
+    readonly offset?: number;
+  }): Promise<readonly {
+    readonly id: string;
+    readonly kind: "Redeem" | "MintCompleteSet" | "MergeCompleteSet";
+    readonly account: string;
+    readonly market: string | null;
+    readonly amount: string;
+    readonly payout: string | null;
+    readonly routedVia: string | null;
+    readonly timestamp: string;
+    readonly txHash: string;
+  }[]>;
+  createTrader?(config: TraderConfig): Trader;
 }
 
 export interface HistoricalDreamDexSdkClient {
@@ -451,12 +554,55 @@ export interface HistoricalCutoffBlock {
 
 export const HISTORICAL_READ_DEADLINE_MS = 10_000 as const;
 const HistoricalRetryDelaysMs = [500, 1_500] as const;
+const ShannonRetryDelaysMs = [250, 750, 1_500] as const;
+const erc20ApproveAbi = parseAbi(["function approve(address spender, uint256 amount) returns (bool)"]);
+const erc20ReadAbi = parseAbi([
+  "function balanceOf(address account) view returns (uint256)",
+  "function allowance(address owner, address spender) view returns (uint256)"
+]);
+const binaryMarketCollateralAbi = parseAbi(["function collateral() view returns (address)"]);
+const binaryPoolSetupAbi = parseAbi([
+  "function getOrderBookParameters() view returns ((uint256 tickSize, uint256 minQuantity, uint256 lotSize))",
+  "function outcomeToken() view returns (address)",
+  "function collateralToken() view returns (address)",
+  "function marketNonce() view returns (uint64)",
+  "function mintSet(address yesTo, address noTo, uint256 amount)",
+  "function placeBinaryOrder(uint8 kind, uint256 price, uint256 quantity, uint64 expireTimestampNs, uint8 orderType, uint8 selfMatchingOption, address builder, uint96 builderFeeBpsTimes1k, uint64 userData) payable returns (bool success, uint128 id)"
+]);
+const erc6909OperatorAbi = parseAbi(["function setOperator(address spender, bool approved) returns (bool)"]);
 
 class HistoricalReadFailure extends Error {
   constructor(message: string, readonly retryable: boolean) {
     super(message);
     this.name = "HistoricalReadFailure";
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function dreamDexErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "DreamDEX read failed";
+}
+
+async function withShannonReadRetries<T>(label: string, operation: () => T | Promise<T>): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= ShannonRetryDelaysMs.length; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const delay = ShannonRetryDelaysMs[attempt];
+      if (delay === undefined) {
+        break;
+      }
+      await sleep(delay);
+    }
+  }
+  throw new Error(`${label} failed after ${String(ShannonRetryDelaysMs.length + 1)} attempts: ${dreamDexErrorMessage(lastError)}`);
 }
 
 const GraphQlErrorSchema = z.object({
@@ -499,6 +645,21 @@ const HistoricalOrderRowSchema = z.object({
   lastUpdatedAtBlock: z.string().min(1),
   lastUpdatedAtTimestamp: z.string().min(1),
   placedTxHash: z.string().min(1)
+});
+
+const LiveOpenOrderRowSchema = z.object({
+  side: z.string().min(1),
+  isBid: z.boolean().nullable(),
+  price: z.string().min(1),
+  quantityRemaining: z.string().min(1),
+  status: z.string().min(1),
+  rested: z.boolean()
+});
+
+const LiveOpenOrdersPayloadSchema = z.object({
+  data: z.object({
+    Order: z.array(LiveOpenOrderRowSchema)
+  })
 });
 
 const HistoricalFillRowSchema = z.object({
@@ -1017,6 +1178,130 @@ function toBookLevels(levels: readonly { readonly price: bigint; readonly quanti
   }));
 }
 
+function bookHasAnyLevel(book: DreamDexSnapshotEvidence["book"]): boolean {
+  return book.yesBids.length + book.yesAsks.length + book.noBids.length + book.noAsks.length > 0;
+}
+
+function addAggregatedBookLevel(levels: Map<string, bigint>, priceRaw: string, quantityRaw: string): void {
+  if (!/^\d+$/.test(priceRaw) || !/^\d+$/.test(quantityRaw)) {
+    return;
+  }
+  const quantity = BigInt(quantityRaw);
+  if (quantity <= 0n) {
+    return;
+  }
+  levels.set(priceRaw, (levels.get(priceRaw) ?? 0n) + quantity);
+}
+
+function toAggregatedBookLevels(levels: Map<string, bigint>, sort: "bid" | "ask"): DreamDexBookLevel[] {
+  return [...levels.entries()]
+    .map(([priceRaw, quantity]) => ({ priceRaw, quantityRaw: quantity.toString() }))
+    .sort((left, right) => {
+      const leftPrice = BigInt(left.priceRaw);
+      const rightPrice = BigInt(right.priceRaw);
+      if (leftPrice === rightPrice) {
+        return 0;
+      }
+      if (sort === "bid") {
+        return leftPrice > rightPrice ? -1 : 1;
+      }
+      return leftPrice < rightPrice ? -1 : 1;
+    });
+}
+
+async function readLiveOpenBookFromIndexer(
+  config: DreamDexReadConfig,
+  marketId: string,
+  limit: number,
+  fetchImpl: HistoricalIndexerFetch = fetch
+): Promise<DreamDexSnapshotEvidence["book"] | null> {
+  const response = await executeBoundedHistoricalRead(async (signal) => {
+    const current = await fetchImpl(config.indexerUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        query: SHANNON_LIVE_OPEN_ORDERS_QUERY,
+        variables: {
+          marketId: marketId.toLowerCase(),
+          limit
+        }
+      }),
+      signal
+    });
+    if (!current.ok) {
+      throw new HistoricalReadFailure(
+        `DreamDEX Shannon indexer returned HTTP ${String(current.status)}`,
+        current.status === 429 || current.status >= 500
+      );
+    }
+    return current;
+  });
+  const payload = await response.json();
+  const errorPayload = z.object({ errors: z.array(GraphQlErrorSchema).optional() }).passthrough().safeParse(payload);
+  if (errorPayload.success && errorPayload.data.errors !== undefined && errorPayload.data.errors.length > 0) {
+    throw new HistoricalReadFailure(errorPayload.data.errors.map((error) => error.message).join("; "), false);
+  }
+  const parsed = LiveOpenOrdersPayloadSchema.parse(payload);
+  const yesBids = new Map<string, bigint>();
+  const yesAsks = new Map<string, bigint>();
+  const noBids = new Map<string, bigint>();
+  const noAsks = new Map<string, bigint>();
+  for (const row of parsed.data.Order) {
+    if (row.status !== "Open" || !row.rested) {
+      continue;
+    }
+    if (row.side === "BUY_YES" && row.isBid === true) {
+      addAggregatedBookLevel(yesBids, row.price, row.quantityRemaining);
+    } else if (row.side === "SELL_YES" && row.isBid === false) {
+      addAggregatedBookLevel(yesAsks, row.price, row.quantityRemaining);
+    } else if (row.side === "BUY_NO" && row.isBid === true) {
+      addAggregatedBookLevel(noBids, row.price, row.quantityRemaining);
+    } else if (row.side === "SELL_NO" && row.isBid === false) {
+      addAggregatedBookLevel(noAsks, row.price, row.quantityRemaining);
+    }
+  }
+  const book = {
+    yesBids: toAggregatedBookLevels(yesBids, "bid"),
+    yesAsks: toAggregatedBookLevels(yesAsks, "ask"),
+    noBids: toAggregatedBookLevels(noBids, "bid"),
+    noAsks: toAggregatedBookLevels(noAsks, "ask")
+  };
+  return bookHasAnyLevel(book) ? book : null;
+}
+
+async function readBinaryBookParamsFromRpc(config: DreamDexReadConfig, poolAddress: string): Promise<{
+  readonly tickSize: bigint;
+  readonly lotSize: bigint;
+  readonly minQuantity: bigint;
+}> {
+  const publicClient = createPublicClient({
+    chain: {
+      ...somniaShannonTestnet,
+      rpcUrls: {
+        default: {
+          http: [config.rpcUrl],
+          webSocket: [config.wsRpcUrl]
+        }
+      }
+    },
+    transport: http(config.rpcUrl)
+  });
+  const params = await withShannonReadRetries(
+    "getOrderBookParameters",
+    async () =>
+      await publicClient.readContract({
+        address: poolAddress as Address,
+        abi: binaryPoolSetupAbi,
+        functionName: "getOrderBookParameters"
+      })
+  );
+  return {
+    tickSize: params.tickSize,
+    minQuantity: params.minQuantity,
+    lotSize: params.lotSize
+  };
+}
+
 export function normalizeBinaryMarket(
   market: BinaryMarket,
   config: DreamDexReadConfig,
@@ -1043,6 +1328,11 @@ export function normalizeBinaryMarket(
     };
   }
   const asset = market.asset as "BTC" | "ETH";
+  const lastTradeAtSeconds = parsePositiveInteger(market.lastTradeAt);
+  const lastPriceRaw =
+    lastTradeAtSeconds !== null && market.lastPrice !== null && /^\d+$/.test(market.lastPrice)
+      ? market.lastPrice
+      : null;
 
   return {
     ok: true,
@@ -1059,6 +1349,8 @@ export function normalizeBinaryMarket(
       expirySeconds,
       collateral: market.collateral.toLowerCase(),
       quoteDecimals: market.quoteDecimals,
+      lastPriceRaw,
+      lastTradeAtSeconds: lastPriceRaw === null ? null : lastTradeAtSeconds,
       source: {
         sdkVersion: DREAMDEX_MARKETS_SDK_VERSION,
         chainId: SOMNIA_SHANNON_CHAIN_ID,
@@ -1592,7 +1884,7 @@ export async function discoverSuccessorMarkets(
 ): Promise<DreamDexReadResult<DreamDexMarketEvidence[]>> {
   try {
     validateDreamDexReadConfig(config);
-    const rows = await client.listLiveBinaryMarkets({ status: "Trading" });
+    const rows = await withShannonReadRetries("listLiveBinaryMarkets", async () => await client.listLiveBinaryMarkets({ status: "Trading" }));
     const assets = new Set(options.assets ?? ["BTC", "ETH"]);
     const intervals = new Set(options.intervals ?? [900, 3600]);
     const retrievedAt = new Date().toISOString();
@@ -1619,7 +1911,7 @@ export async function discoverSuccessorMarkets(
     return {
       ok: false,
       reasonCode: "DREAMDEX_READ_FAILED",
-      message: error instanceof Error ? error.message : "DreamDEX read failed"
+      message: dreamDexErrorMessage(error)
     };
   }
 }
@@ -1628,11 +1920,12 @@ export async function captureMarketSnapshot(
   client: DreamDexSdkClient,
   config: DreamDexReadConfig,
   marketId: string,
-  depth = 10
+  depth = 10,
+  capturedAt?: string
 ): Promise<DreamDexReadResult<DreamDexSnapshotEvidence>> {
   try {
     validateDreamDexReadConfig(config);
-    const market = await client.getBinaryMarket(marketId);
+    const market = await withShannonReadRetries("getBinaryMarket", async () => await client.getBinaryMarket(marketId));
     if (market === null) {
       return {
         ok: false,
@@ -1640,30 +1933,404 @@ export async function captureMarketSnapshot(
         message: `Market ${marketId} was not found`
       };
     }
-    const retrievedAt = new Date().toISOString();
+    const book = await withShannonReadRetries(
+      "getLiveBinaryOrderBookByMarket",
+      () => client.getLiveBinaryOrderBookByMarket(market.marketId, { depth })
+    );
+    const sdkBook = {
+      yesBids: toBookLevels(book.yesBids),
+      yesAsks: toBookLevels(book.yesAsks),
+      noBids: toBookLevels(book.noBids),
+      noAsks: toBookLevels(book.noAsks)
+    };
+    const fallbackBook = bookHasAnyLevel(sdkBook)
+      ? null
+      : await readLiveOpenBookFromIndexer(config, market.marketId, Math.max(depth * 20, 100)).catch(() => null);
+    const retrievedAt = capturedAt ?? new Date().toISOString();
     const normalized = normalizeBinaryMarket(market, config, retrievedAt, "LIVE");
     if (!normalized.ok) {
       return normalized;
     }
-    await client.getBinaryBookParams(market.poolAddress);
-    const book = client.getLiveBinaryOrderBookByMarket(market.marketId, { depth });
     return {
       ok: true,
       value: {
         market: normalized.value,
-        book: {
-          yesBids: toBookLevels(book.yesBids),
-          yesAsks: toBookLevels(book.yesAsks),
-          noBids: toBookLevels(book.noBids),
-          noAsks: toBookLevels(book.noAsks)
-        }
+        book: fallbackBook ?? sdkBook
       }
     };
   } catch (error) {
     return {
       ok: false,
       reasonCode: "DREAMDEX_READ_FAILED",
-      message: error instanceof Error ? error.message : "DreamDEX snapshot read failed"
+      message: dreamDexErrorMessage(error)
+    };
+  }
+}
+
+export async function readBinaryBookParams(
+  client: DreamDexSdkClient,
+  config: DreamDexReadConfig,
+  poolAddress: string
+): Promise<DreamDexReadResult<{
+  readonly tickSize: bigint;
+  readonly lotSize: bigint;
+  readonly minQuantity: bigint;
+}>> {
+  try {
+    validateDreamDexReadConfig(config);
+    let params: {
+      readonly tickSize: bigint;
+      readonly lotSize: bigint;
+      readonly minQuantity: bigint;
+    };
+    try {
+      params = await withShannonReadRetries(
+        "getBinaryBookParams",
+        async () => await client.getBinaryBookParams(poolAddress)
+      );
+    } catch {
+      params = await readBinaryBookParamsFromRpc(config, poolAddress);
+    }
+    return { ok: true, value: params };
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_READ_FAILED",
+      message: dreamDexErrorMessage(error)
+    };
+  }
+}
+
+export async function readExecutionReadiness(
+  config: DreamDexReadConfig,
+  input: {
+    readonly account: string;
+    readonly marketAddress: string;
+    readonly poolAddress: string;
+  }
+): Promise<DreamDexReadResult<DreamDexExecutionReadinessEvidence>> {
+  try {
+    validateDreamDexReadConfig(config);
+    const publicClient = createPublicClient({
+      chain: {
+        ...somniaShannonTestnet,
+        rpcUrls: {
+          default: {
+            http: [config.rpcUrl],
+            webSocket: [config.wsRpcUrl]
+          }
+        }
+      },
+      transport: http(config.rpcUrl)
+    });
+    const account = input.account as Address;
+    const marketAddress = input.marketAddress as Address;
+    const poolAddress = input.poolAddress as Address;
+    const [observedBlockNumber, marketCollateral, poolCollateral, walletNativeBalanceRaw] =
+      await withShannonReadRetries("executionReadinessBindings", async () =>
+        await Promise.all([
+          publicClient.getBlockNumber(),
+          publicClient.readContract({
+            address: marketAddress,
+            abi: binaryMarketCollateralAbi,
+            functionName: "collateral"
+          }),
+          publicClient.readContract({
+            address: poolAddress,
+            abi: binaryPoolSetupAbi,
+            functionName: "collateralToken"
+          }),
+          publicClient.getBalance({ address: account })
+        ])
+      );
+    const [walletBalanceRaw, walletAllowanceRaw] = await withShannonReadRetries(
+      "executionReadinessWallet",
+      async () =>
+        await Promise.all([
+          publicClient.readContract({
+            address: marketCollateral,
+            abi: erc20ReadAbi,
+            functionName: "balanceOf",
+            args: [account]
+          }),
+          publicClient.readContract({
+            address: marketCollateral,
+            abi: erc20ReadAbi,
+            functionName: "allowance",
+            args: [account, poolAddress]
+          })
+        ])
+    );
+    return {
+      ok: true,
+      value: {
+        observedBlockNumber: observedBlockNumber.toString(),
+        marketCollateral,
+        poolCollateral,
+        collateralBindingMatches: marketCollateral.toLowerCase() === poolCollateral.toLowerCase(),
+        walletBalanceRaw: walletBalanceRaw.toString(),
+        walletAllowanceRaw: walletAllowanceRaw.toString(),
+        walletNativeBalanceRaw: walletNativeBalanceRaw.toString()
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_READ_FAILED",
+      message: dreamDexErrorMessage(error)
+    };
+  }
+}
+
+export async function buildControlledLiquidityEvidence(
+  config: DreamDexReadConfig,
+  input: {
+    readonly makerAddress: string;
+    readonly poolAddress: string;
+    readonly side: "SELL_YES" | "SELL_NO";
+    readonly priceRaw: string;
+    readonly quantityRaw: string;
+    readonly expireTimestampNs: string;
+  }
+): Promise<DreamDexReadResult<DreamDexControlledLiquidityEvidence>> {
+  try {
+    validateDreamDexReadConfig(config);
+    const publicClient = createPublicClient({
+      chain: {
+        ...somniaShannonTestnet,
+        rpcUrls: {
+          default: {
+            http: [config.rpcUrl],
+            webSocket: [config.wsRpcUrl]
+          }
+        }
+      },
+      transport: http(config.rpcUrl)
+    });
+    const poolAddress = input.poolAddress as Address;
+    const [outcomeToken, collateral, marketNonce] = await withShannonReadRetries(
+      "controlledLiquidityPoolTokens",
+      async () =>
+        await Promise.all([
+          publicClient.readContract({ address: poolAddress, abi: binaryPoolSetupAbi, functionName: "outcomeToken" }),
+          publicClient.readContract({ address: poolAddress, abi: binaryPoolSetupAbi, functionName: "collateralToken" }),
+          publicClient.readContract({ address: poolAddress, abi: binaryPoolSetupAbi, functionName: "marketNonce" })
+        ])
+    );
+    const makerAddress = input.makerAddress as Address;
+    const quantity = BigInt(input.quantityRaw);
+    const selectedOutcomeId = outcomeId(input.poolAddress, marketNonce, input.side === "SELL_YES" ? 0 : 1);
+    const orderKind = input.side === "SELL_YES" ? 1 : 3;
+    const calls: DreamDexUnsignedCallEvidence[] = [
+      {
+        to: collateral,
+        data: encodeFunctionData({
+          abi: erc20ApproveAbi,
+          functionName: "approve",
+          args: [poolAddress, quantity]
+        }),
+        valueRaw: "0",
+        description: "Approve exact tUSDC amount for controlled liquidity mint"
+      },
+      {
+        to: poolAddress,
+        data: encodeFunctionData({
+          abi: binaryPoolSetupAbi,
+          functionName: "mintSet",
+          args: [makerAddress, makerAddress, quantity]
+        }),
+        valueRaw: "0",
+        description: "Mint equal YES and NO outcome tokens for controlled testnet liquidity"
+      },
+      {
+        to: outcomeToken,
+        data: encodeFunctionData({
+          abi: erc6909OperatorAbi,
+          functionName: "setOperator",
+          args: [poolAddress, true]
+        }),
+        valueRaw: "0",
+        description: "Allow the pool to escrow the selected outcome token for the maker sell order"
+      },
+      {
+        to: poolAddress,
+        data: encodeFunctionData({
+          abi: binaryPoolSetupAbi,
+          functionName: "placeBinaryOrder",
+          args: [orderKind, BigInt(input.priceRaw), quantity, BigInt(input.expireTimestampNs), 3, 0, "0x0000000000000000000000000000000000000000", 0n, 0n]
+        }),
+        valueRaw: "0",
+        description: `Place controlled post-only ${input.side} liquidity`
+      }
+    ];
+    return {
+      ok: true,
+      value: {
+        setupKind: "CONTROLLED_TESTNET_LIQUIDITY",
+        makerAddress: input.makerAddress,
+        poolAddress: input.poolAddress,
+        side: input.side,
+        priceRaw: input.priceRaw,
+        quantityRaw: input.quantityRaw,
+        expireTimestampNs: input.expireTimestampNs,
+        outcomeToken,
+        collateral,
+        outcomeId: selectedOutcomeId.toString(),
+        calls,
+        disclosures: [
+          "controlled testnet liquidity, not organic market demand",
+          "browser wallet must approve every setup transaction",
+          "server prepares unsigned calldata only and never signs",
+          "post-only sell order is intended to create a takable ask for a separate proof wallet"
+        ]
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_READ_FAILED",
+      message: dreamDexErrorMessage(error)
+    };
+  }
+}
+
+function serializeUnsignedCall(call: UnsignedOrder["order"]): DreamDexUnsignedCallEvidence {
+  return {
+    to: call.to,
+    data: call.data,
+    valueRaw: call.value.toString(),
+    description: call.description
+  };
+}
+
+async function buildUnsignedBinaryOrderEvidenceFromCalldata(
+  config: DreamDexReadConfig,
+  input: {
+    readonly poolAddress: string;
+    readonly side: BinarySide;
+    readonly priceRaw: string;
+    readonly quantityRaw: string;
+    readonly expireTimestampNs: string;
+    readonly orderType: 2;
+    readonly quoteDecimals: number;
+    readonly collateralAddress?: string;
+  }
+): Promise<DreamDexUnsignedOrderEvidence> {
+  const publicClient = createPublicClient({
+    chain: {
+      ...somniaShannonTestnet,
+      rpcUrls: {
+        default: {
+          http: [config.rpcUrl],
+          webSocket: [config.wsRpcUrl]
+        }
+      }
+    },
+    transport: http(config.rpcUrl)
+  });
+  const poolAddress = input.poolAddress as Address;
+  const collateral = input.collateralAddress === undefined
+    ? await withShannonReadRetries(
+        "executionCandidateCollateralToken",
+        async () => await publicClient.readContract({ address: poolAddress, abi: binaryPoolSetupAbi, functionName: "collateralToken" })
+      )
+    : input.collateralAddress as Address;
+  const priceRaw = BigInt(input.priceRaw);
+  const quantityRaw = BigInt(input.quantityRaw);
+  const quoteUnit = 10n ** BigInt(input.quoteDecimals);
+  const escrowPriceRaw = input.side === "BUY_YES" ? priceRaw : quoteUnit - priceRaw;
+  const escrowRaw = (escrowPriceRaw * quantityRaw + quoteUnit - 1n) / quoteUnit;
+  const orderKind = input.side === "BUY_YES" ? 0 : 2;
+  return {
+    approval: {
+      to: collateral,
+      data: encodeFunctionData({
+        abi: erc20ApproveAbi,
+        functionName: "approve",
+        args: [poolAddress, escrowRaw]
+      }),
+      valueRaw: "0",
+      description: "Approve exact tUSDC escrow for strategy-linked IOC order"
+    },
+    order: {
+      to: poolAddress,
+      data: encodeFunctionData({
+        abi: binaryPoolSetupAbi,
+        functionName: "placeBinaryOrder",
+        args: [
+          orderKind,
+          priceRaw,
+          quantityRaw,
+          BigInt(input.expireTimestampNs),
+          input.orderType,
+          0,
+          "0x0000000000000000000000000000000000000000",
+          0n,
+          0n
+        ]
+      }),
+      valueRaw: "0",
+      description: `Place bounded strategy-linked ${input.side} IOC order`
+    }
+  };
+}
+
+export async function buildUnsignedBinaryOrderEvidence(
+  client: DreamDexSdkClient,
+  config: DreamDexReadConfig,
+  input: {
+    readonly ownerAddress: string;
+    readonly poolAddress: string;
+    readonly side: BinarySide;
+    readonly priceRaw: string;
+    readonly quantityRaw: string;
+    readonly expireTimestampNs: string;
+    readonly orderType: 2;
+    readonly quoteDecimals: number;
+    readonly collateralAddress?: string;
+  }
+): Promise<DreamDexReadResult<DreamDexUnsignedOrderEvidence>> {
+  try {
+    validateDreamDexReadConfig(config);
+    const deterministic = await buildUnsignedBinaryOrderEvidenceFromCalldata(config, input);
+    if (client.createTrader === undefined) {
+      return {
+        ok: true,
+        value: deterministic
+      };
+    }
+    let unsigned: UnsignedOrder;
+    try {
+      const trader = client.createTrader({
+        account: input.ownerAddress as Address,
+        decimals: input.quoteDecimals
+      });
+      unsigned = await trader.buildPlaceOrder({
+        pool: input.poolAddress as Address,
+        side: input.side,
+        price: BigInt(input.priceRaw),
+        quantity: BigInt(input.quantityRaw),
+        expireTimestampNs: BigInt(input.expireTimestampNs),
+        orderType: input.orderType
+      });
+    } catch {
+      return {
+        ok: true,
+        value: deterministic
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        order: serializeUnsignedCall(unsigned.order),
+        approval: deterministic.approval
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reasonCode: "DREAMDEX_READ_FAILED",
+      message: error instanceof Error ? error.message : "DreamDEX unsigned order build failed"
     };
   }
 }

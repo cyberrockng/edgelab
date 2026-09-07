@@ -12,6 +12,7 @@ test-results/
 *.local
 *.log
 *.tsbuildinfo
+evidence/execution-watch/
 .DS_Store
 Thumbs.db
 evidence/feasibility/blk-002-wallet.json

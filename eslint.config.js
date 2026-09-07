@@ -22,11 +22,12 @@ export default tseslint.config(
             "*.config.ts",
             "eslint.config.js",
             "scripts/*.mjs",
+            "scripts/*.ts",
             "tests/unit/*.ts",
             "tests/integration/*.ts",
             "tests/e2e/*.ts"
           ],
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 25
         },
         tsconfigRootDir: import.meta.dirname
       },

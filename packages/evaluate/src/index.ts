@@ -15,7 +15,8 @@ export interface MetricAssessmentInput {
   readonly ruleVersion: string;
   readonly replayRunId?: string;
   readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
-  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW";
+  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW" | "EXECUTION_EXPOSURE";
+  readonly qualificationTarget?: "FORWARD_OBSERVATION" | "EXECUTION_EXPOSURE";
   readonly provenance?: Record<string, unknown>;
   readonly thresholds?: EvidenceThresholds;
 }
@@ -32,7 +33,7 @@ export interface PersistedMetricAssessment {
   readonly assessmentHash: string;
 }
 
-export const EVALUATION_VERSION = "edgelab-evaluation-v2" as const;
+export const EVALUATION_VERSION = "edgelab-evaluation-v3" as const;
 
 interface DecisionOutcomeRow {
   readonly decision_id: string;
@@ -47,6 +48,7 @@ interface DecisionOutcomeRow {
   readonly policy_version_source_hash: string;
   readonly configuration_hash: string | null;
   readonly market_id: string;
+  readonly decision_window_valid: boolean;
   readonly resolved: boolean | null;
   readonly voided: boolean | null;
   readonly winner: string | null;
@@ -109,6 +111,13 @@ async function loadDecisionOutcomes(input: MetricAssessmentInput): Promise<Decis
         pv.source_hash AS policy_version_source_hash,
         ecv.config_hash AS configuration_hash,
         me.market_id,
+        (
+          ms.captured_at >= GREATEST(
+            COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
+            me.expires_at - make_interval(secs => sd.decision_offset_sec)
+          )
+          AND ms.captured_at < me.expires_at
+        ) AS decision_window_valid,
         s.resolved,
         s.voided,
         s.winner,
@@ -154,6 +163,7 @@ async function loadReplayDecisionOutcomes(input: MetricAssessmentInput): Promise
         pv.source_hash AS policy_version_source_hash,
         ecv.config_hash AS configuration_hash,
         rd.market_id,
+        true AS decision_window_valid,
         (ro.outcome_result IN ('YES', 'NO')) AS resolved,
         false AS voided,
         ro.outcome_result AS winner,
@@ -190,6 +200,10 @@ function scoreRows(rows: readonly DecisionOutcomeRow[]): {
   const scored: ScoredDecision[] = [];
   let exclusionCount = 0;
   for (const row of rows) {
+    if (!row.decision_window_valid) {
+      exclusionCount += 1;
+      continue;
+    }
     if (row.action === "ABSTAIN" || row.forecast_p_up === null) {
       exclusionCount += 1;
       continue;
@@ -218,7 +232,7 @@ async function insertMetricRun(input: {
   readonly ruleVersion: string;
   readonly replayRunId?: string;
   readonly evidencePlane?: "MAINNET_HISTORICAL" | "SHANNON_FORWARD";
-  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW";
+  readonly promotionScope?: "PROMOTE_TO_FORWARD_OBSERVATION" | "FORWARD_WINDOW" | "EXECUTION_EXPOSURE";
   readonly provenance?: Record<string, unknown>;
   readonly inputHash: string;
   readonly canonicalInput: Record<string, unknown>;
@@ -357,8 +371,13 @@ export async function runMetricAssessment(input: MetricAssessmentInput): Promise
       throw new Error("EVALUATION_PROVENANCE_INCOMPLETE");
     }
     const scored = scoreRows(rows);
-    const assessmentOptions: { exclusionCount: number; thresholds?: EvidenceThresholds } = {
-      exclusionCount: scored.exclusionCount
+    const assessmentOptions: {
+      exclusionCount: number;
+      thresholds?: EvidenceThresholds;
+      qualificationTarget?: "FORWARD_OBSERVATION" | "EXECUTION_EXPOSURE";
+    } = {
+      exclusionCount: scored.exclusionCount,
+      ...(input.qualificationTarget === undefined ? {} : { qualificationTarget: input.qualificationTarget })
     };
     if (input.thresholds !== undefined) {
       assessmentOptions.thresholds = input.thresholds;
@@ -391,6 +410,7 @@ export async function runMetricAssessment(input: MetricAssessmentInput): Promise
         frameOrSnapshotHash: row.snapshot_hash,
         decisionPolicyHash: row.policy_hash,
         configurationHash: row.configuration_hash,
+        decisionWindowValid: row.decision_window_valid,
         resolved: row.resolved,
         voided: row.voided,
         winner: row.winner,

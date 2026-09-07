@@ -8,6 +8,7 @@ const evidenceRoot = "evidence";
 const outputPath = "evidence/export/manifest.json";
 const tmpPath = `${outputPath}.tmp`;
 const generated = new Set([outputPath, tmpPath]);
+const runtimeOnlyDirectories = new Set(["evidence/execution-watch"]);
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -18,6 +19,9 @@ async function walk(dir) {
       continue;
     }
     if (entry.isDirectory()) {
+      if (runtimeOnlyDirectories.has(path)) {
+        continue;
+      }
       paths.push(...(await walk(path)));
     } else if (entry.isFile()) {
       paths.push(path);

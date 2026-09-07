@@ -68,6 +68,308 @@ export interface ExecutionProofResponse {
   };
 }
 
+export interface ObservationProofResponse {
+  readonly observationProof: {
+    readonly proofId: "OBSERVE-001";
+    readonly status: string;
+    readonly capturedAt: string;
+    readonly evidenceClass: string;
+    readonly scope: string;
+    readonly sourcePlane: "SHANNON_FORWARD";
+    readonly chainId: 50312;
+    readonly sdkVersion: string;
+    readonly transactionSubmitted: false;
+    readonly walletRequired: false;
+    readonly experimentId: string;
+    readonly captureMethod: string;
+    readonly observedMarketCount: number;
+    readonly totalShadowDecisions: number;
+    readonly implementedControls: readonly string[];
+    readonly observedMarkets: readonly {
+      readonly stableMarketId: string;
+      readonly asset: string;
+      readonly intervalSeconds: number;
+      readonly poolAddress: string;
+      readonly marketNonce: string;
+      readonly expiresAt: string;
+      readonly snapshotId: string;
+      readonly snapshotHash: string;
+      readonly decisionCount: number;
+    }[];
+    readonly validation: {
+      readonly integrationTest: string;
+      readonly lint: string;
+      readonly typecheck: string;
+      readonly test: string;
+      readonly build: string;
+      readonly fullVerification: string;
+    };
+    readonly judgeSummary: {
+      readonly oneLine: string;
+      readonly strongestEvidence: readonly string[];
+      readonly nextMilestone: string;
+      readonly blockedClaims: readonly string[];
+    };
+  };
+}
+
+export interface ExecutionCandidateResponse {
+  readonly executionCandidate: {
+    readonly status: "READY" | "BLOCKED";
+    readonly intentHash: string;
+    readonly account: string;
+    readonly validatedAt: string;
+    readonly sourcePlane: "SHANNON_EXECUTION";
+    readonly network: {
+      readonly name: string;
+      readonly chainId: 50312;
+    };
+    readonly market: {
+      readonly stableMarketId: string;
+      readonly marketAddress: string;
+      readonly poolAddress: string;
+      readonly asset: string;
+      readonly intervalSeconds: number | null;
+      readonly expirySeconds: number;
+      readonly quoteDecimals: number;
+      readonly collateral: string;
+    };
+    readonly strategyLink: {
+      readonly experimentId: string;
+      readonly configurationId: string;
+      readonly assessmentId: string;
+      readonly assessmentHash: string;
+      readonly qualificationVerdict: "STRATEGY_QUALIFIED";
+      readonly qualificationRuleVersion: string;
+      readonly eligibleForwardObservationCount: number;
+      readonly qualifiedAt: string;
+      readonly sourceObservationPolicy: string;
+      readonly linkedHistoricalPolicy: string;
+      readonly snapshotHash: string;
+      readonly decision: {
+        readonly policyId: string;
+        readonly policyVersion: string;
+        readonly forecastPUp: number;
+        readonly action: string;
+        readonly reasonCodes: readonly string[];
+        readonly decidedAt: string;
+        readonly snapshotHash: string;
+        readonly policyHash: string;
+      };
+    };
+    readonly risk: {
+      readonly maxEscrowRaw: string;
+      readonly maxEscrowDisplay: string;
+      readonly orderCount: 1;
+      readonly orderType: "ImmediateOrCancel";
+      readonly serverSigner: false;
+      readonly mainnetWrite: false;
+      readonly expiryHeadroomSeconds: number;
+      readonly minExpiryHeadroomSec: number;
+      readonly minimumPoolEscrowRaw: string | null;
+      readonly minimumPoolEscrowDisplay: string | null;
+      readonly capAdequateForPoolMinimum: boolean;
+      readonly priceAcceptable: boolean;
+      readonly requiredEscrowRaw: string;
+      readonly observedBlockNumber: string;
+      readonly collateralResolvedFromMarket: string;
+      readonly poolCollateral: string;
+      readonly collateralBindingMatches: boolean;
+      readonly walletBalanceRaw: string;
+      readonly walletAllowanceRaw: string;
+      readonly walletNativeBalanceRaw: string;
+      readonly walletHasRequiredCollateral: boolean;
+      readonly walletHasGas: boolean;
+    };
+    readonly sizing: {
+      readonly side: string;
+      readonly priceRaw: string | null;
+      readonly availableQuantityRaw: string | null;
+      readonly quantityRaw: string;
+      readonly minQuantityRaw: string;
+      readonly lotSizeRaw: string;
+      readonly tickSizeRaw: string;
+      readonly expireTimestampNs: string;
+    };
+    readonly unsignedTransactions: {
+      readonly order: {
+        readonly to: string;
+        readonly data: string;
+        readonly valueRaw: string;
+        readonly description: string;
+      };
+      readonly approval: {
+        readonly to: string;
+        readonly data: string;
+        readonly valueRaw: string;
+        readonly description: string;
+      } | null;
+    } | null;
+    readonly blockedReasons: readonly string[];
+    readonly controls: readonly string[];
+    readonly blockedClaims: readonly string[];
+  };
+}
+
+export interface ControlledLiquidityCandidateResponse {
+  readonly controlledLiquidityCandidate: {
+    readonly status: "READY" | "BLOCKED";
+    readonly maker: string;
+    readonly sourcePlane: "SHANNON_EXECUTION";
+    readonly network: {
+      readonly name: string;
+      readonly chainId: 50312;
+    };
+    readonly market: {
+      readonly stableMarketId: string;
+      readonly marketAddress: string;
+      readonly poolAddress: string;
+      readonly asset: string;
+      readonly intervalSeconds: number | null;
+      readonly expirySeconds: number;
+      readonly quoteDecimals: number;
+      readonly collateral: string;
+    };
+    readonly setup: {
+      readonly setupKind: "CONTROLLED_TESTNET_LIQUIDITY";
+      readonly makerAddress: string;
+      readonly poolAddress: string;
+      readonly side: "SELL_YES" | "SELL_NO";
+      readonly priceRaw: string;
+      readonly quantityRaw: string;
+      readonly expireTimestampNs: string;
+      readonly outcomeToken: string;
+      readonly collateral: string;
+      readonly outcomeId: string;
+      readonly calls: readonly {
+        readonly to: string;
+        readonly data: string;
+        readonly valueRaw: string;
+        readonly description: string;
+      }[];
+      readonly disclosures: readonly string[];
+    } | null;
+    readonly sizing: {
+      readonly side: "SELL_YES" | "SELL_NO";
+      readonly priceRaw: string;
+      readonly quantityRaw: string;
+      readonly minQuantityRaw: string;
+      readonly lotSizeRaw: string;
+      readonly expireTimestampNs: string;
+    };
+    readonly risk: {
+      readonly controlledLiquidity: true;
+      readonly organicLiquidityClaim: false;
+      readonly serverSigner: false;
+      readonly mainnetWrite: false;
+      readonly approvalScope: string;
+      readonly maxSetupCollateralRaw: string;
+      readonly maxSetupCollateralDisplay: string;
+      readonly expiryHeadroomSeconds: number;
+      readonly minExpiryHeadroomSec: number;
+    };
+    readonly blockedReasons: readonly string[];
+    readonly nextStep: string;
+  };
+}
+
+export interface ExecutionReceiptImportResponse {
+  readonly executionReceipt: {
+    readonly status: "TX_PENDING" | "TX_REVERTED" | "APPROVED" | "UNFILLED" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED" | "EXPIRED" | "UNVERIFIED" | "FAILED";
+    readonly intentId: string;
+    readonly intentHash: string;
+    readonly txHash: string;
+    readonly txRole: "approval" | "order";
+    readonly account: string;
+    readonly receiptStatus: boolean | null;
+    readonly blockNumber: string | null;
+    readonly logHash: string | null;
+    readonly lifecycleDecoded: boolean;
+    readonly order: {
+      readonly orderId: string;
+      readonly state: string;
+      readonly requestedQuantityRaw: string;
+      readonly filledQuantityRaw: string;
+      readonly remainingQuantityRaw: string;
+      readonly fillState: "NO_FILL" | "PARTIAL_FILL" | "FULL_FILL";
+      readonly terminal: boolean;
+      readonly fillCount: number;
+    } | null;
+    readonly nextMissingProof: string;
+  };
+}
+
+export interface ExecutionLifecycleResponse {
+  readonly executionLifecycle: {
+    readonly intentId: string;
+    readonly intentHash: string;
+    readonly experimentId: string;
+    readonly state: string;
+    readonly qualification: {
+      readonly verdict: string;
+      readonly assessmentId: string;
+      readonly assessmentHash: string;
+      readonly policyVersionId: string;
+      readonly policyId: string;
+      readonly policyVersion: string;
+      readonly policyHash: string;
+    };
+    readonly candidate: {
+      readonly marketId: string;
+      readonly poolAddress: string;
+      readonly side: string;
+      readonly priceRaw: string;
+      readonly requestedQuantityRaw: string;
+      readonly escrowRaw: string;
+      readonly validatedAt: string;
+    };
+    readonly transactions: Record<"approval" | "order" | "redeem", {
+      readonly txHash: string;
+      readonly state: "NOT_SUBMITTED" | "PENDING" | "CONFIRMED" | "REVERTED";
+      readonly blockNumber: string | null;
+      readonly verifiedAt: string | null;
+    } | null>;
+    readonly order: {
+      readonly orderId: string;
+      readonly state: string;
+      readonly requestedQuantityRaw: string;
+      readonly filledQuantityRaw: string;
+      readonly remainingQuantityRaw: string;
+      readonly fillState: "UNKNOWN" | "NO_FILL" | "PARTIAL_FILL" | "FULL_FILL";
+      readonly fillCount: number;
+      readonly evidenceSource: string;
+      readonly observedAt: string;
+    } | null;
+    readonly settlement: {
+      readonly state: "NOT_APPLICABLE" | "SETTLED" | "PENDING_OR_UNKNOWN";
+      readonly marketStatus: string | null;
+      readonly resolved: boolean | null;
+      readonly voided: boolean | null;
+      readonly winner: string | null;
+      readonly observedAt: string | null;
+    };
+    readonly redemption: {
+      readonly state:
+        | "NOT_APPLICABLE"
+        | "NOT_APPLICABLE_LOSS"
+        | "REDEEMED"
+        | "REDEEMABLE"
+        | "REDEMPTION_PENDING"
+        | "REDEMPTION_REVERTED"
+        | "UNKNOWN"
+        | "NOT_YET_REDEEMABLE";
+      readonly claimableAmountRaw: string;
+      readonly estimatedPayoutRaw: string;
+      readonly redeemedQuantityRaw: string | null;
+      readonly actualPayoutRaw: string | null;
+      readonly evidenceSource: string | null;
+    };
+    readonly lastReconciledAt: string | null;
+    readonly createdAt: string;
+    readonly publicClaim: string;
+  } | null;
+}
+
 export interface V2Envelope<TData, TMeta = Record<string, unknown>> {
   readonly data: TData;
   readonly meta: TMeta & { readonly apiVersion: "v2" };
@@ -322,7 +624,7 @@ export interface ReplayResponse {
 export interface EvaluationAssessmentRecord {
   readonly assessmentId: string;
   readonly metricRunId: string;
-  readonly verdict: "PROMOTE_TO_FORWARD_OBSERVATION" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
+  readonly verdict: "PROMOTE_TO_FORWARD_OBSERVATION" | "STRATEGY_QUALIFIED" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
   readonly reasonCodes: readonly string[];
   readonly sampleSize: number;
   readonly exclusionCount: number;
@@ -469,6 +771,11 @@ export interface LiveShadowState {
   readonly episodeCount: number;
   readonly snapshotCount: number;
   readonly decisionCount: number;
+  readonly eligibleDecisionCount: number;
+  readonly abstentionCount: number;
+  readonly pendingOutcomeCount: number;
+  readonly timingExcludedDecisionCount: number;
+  readonly excludedEpisodeCount: number;
   readonly latestDecidedAt: string | null;
   readonly latestMarketId: string | null;
   readonly sourcePlane: "SHANNON_FORWARD";
@@ -485,6 +792,10 @@ export interface LiveShadowObserveResponse {
     readonly leaseAcquired: boolean;
     readonly holderId: string;
     readonly discoveredMarketCount: number;
+    readonly discoveryIssue?: {
+      readonly reasonCode: string;
+      readonly message: string;
+    };
     readonly observed: readonly {
       readonly marketId: string;
       readonly snapshotId: string | null;
@@ -731,6 +1042,130 @@ export async function fetchAssessments(): Promise<V2Envelope<AssessmentListRespo
 
 export async function fetchExecutionProof(): Promise<V2Envelope<ExecutionProofResponse>> {
   return await fetchV2Request<ExecutionProofResponse>("/api/v2/proof/exg-003");
+}
+
+export async function fetchObservationProof(): Promise<V2Envelope<ObservationProofResponse>> {
+  return await fetchV2Request<ObservationProofResponse>("/api/v2/observation-proof");
+}
+
+export async function fetchExecutionCandidate(input: {
+  readonly experimentId: string;
+  readonly account: string;
+  readonly asset: "BTC" | "ETH";
+  readonly intervalSec: 900 | 3600;
+}): Promise<V2Envelope<ExecutionCandidateResponse>> {
+  const params = new URLSearchParams({
+    experimentId: input.experimentId,
+    account: input.account,
+    asset: input.asset,
+    intervalSec: String(input.intervalSec)
+  });
+  return await fetchV2Request<ExecutionCandidateResponse>(`/api/v2/shannon/execution-candidate?${params.toString()}`);
+}
+
+export async function revalidateExecutionCandidate(input: {
+  readonly experimentId: string;
+  readonly account: string;
+  readonly asset: "BTC" | "ETH";
+  readonly intervalSec: 900 | 3600;
+}): Promise<V2Envelope<ExecutionCandidateResponse & { readonly intentId: string }>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request<ExecutionCandidateResponse & { readonly intentId: string }>(
+    "/api/v2/shannon/execution-candidates/revalidate",
+    {
+      method: "POST",
+      headers: {
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `execution-revalidate-${globalThis.crypto.randomUUID()}`
+      },
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export async function revalidateExecutionOrder(
+  intentId: string
+): Promise<V2Envelope<ExecutionCandidateResponse & {
+  readonly intentId: string;
+  readonly signingValidation: {
+    readonly status: "READY";
+    readonly validatedAt: string;
+    readonly observedBlockNumber: string;
+    readonly exactOrderCallUnchanged: true;
+  };
+}>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request(`/api/v2/execution-intents/${encodeURIComponent(intentId)}/revalidate-order`, {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `execution-order-revalidate-${globalThis.crypto.randomUUID()}`
+    },
+    body: "{}"
+  });
+}
+
+export async function fetchControlledLiquidityCandidate(input: {
+  readonly maker: string;
+  readonly asset: "BTC" | "ETH";
+  readonly intervalSec: 900 | 3600;
+  readonly side: "SELL_YES" | "SELL_NO";
+  readonly priceRaw: string;
+  readonly quantityRaw: string;
+}): Promise<V2Envelope<ControlledLiquidityCandidateResponse>> {
+  const params = new URLSearchParams({
+    maker: input.maker,
+    asset: input.asset,
+    intervalSec: String(input.intervalSec),
+    side: input.side,
+    priceRaw: input.priceRaw,
+    quantityRaw: input.quantityRaw
+  });
+  return await fetchV2Request<ControlledLiquidityCandidateResponse>(`/api/v2/shannon/controlled-liquidity-candidate?${params.toString()}`);
+}
+
+export async function importExecutionReceipt(input: {
+  readonly intentHash: string;
+  readonly txHash: string;
+  readonly txRole: "approval" | "order";
+}): Promise<V2Envelope<ExecutionReceiptImportResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request<ExecutionReceiptImportResponse>("/api/v2/shannon/execution-receipts", {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `execution-${input.txRole}-${input.intentHash}-${input.txHash.slice(2, 18)}`
+    },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchExperimentExecution(experimentId: string): Promise<V2Envelope<ExecutionLifecycleResponse>> {
+  return await fetchV2Request<ExecutionLifecycleResponse>(`/api/v2/experiments/${encodeURIComponent(experimentId)}/execution`);
+}
+
+export async function reconcileExecutionIntent(intentId: string): Promise<V2Envelope<ExecutionLifecycleResponse>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) {
+    csrfToken = (await ensureResearchSession()).data.csrfToken;
+  }
+  return await fetchV2Request<ExecutionLifecycleResponse>(`/api/v2/execution-intents/${encodeURIComponent(intentId)}/reconcile`, {
+    method: "POST",
+    headers: {
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `execution-reconcile-${intentId}-${String(Date.now())}`
+    },
+    body: "{}"
+  });
 }
 
 export async function createComparison(input: {

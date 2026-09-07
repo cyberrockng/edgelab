@@ -29,7 +29,11 @@ Captured during EdgeLab implementation against `@somnia-chain/markets-sdk` `0.28
 - The Somnia helper faucet sends `STT` for gas and `tUSDC` for Event Contract collateral on Shannon testnet chain `50312`.
 - Observed commands were `/faucet 0xYourAddress`, `/faucet tusdc 0xYourAddress`, `/register 0xYourAddress`, and `/faucet` after registration.
 - Observed limits were `50 STT` and `500 tUSDC` every 24 hours, with token-specific cooldowns.
-- The Shannon tUSDC address observed from the builder channel was `0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe`; final demo setup should re-verify this against DreamDEX docs and public chain metadata.
+- Collateral is market-generation-specific and must be resolved from the current market contract,
+  then checked against the pool. A historical candidate resolved
+  `0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E`; this is not a permanent token
+  identity. `0xc917D83E43C1BfCf693107AAb7Ec9719293b8cfe` is the controlled-liquidity maker
+  wallet, not tUSDC.
 
 ## EdgeLab Handling
 

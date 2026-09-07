@@ -26,6 +26,7 @@ export interface ReconcileSettlementsInput {
   readonly leaseTtlMs?: number;
   readonly clock?: SettlementClock;
   readonly limit?: number;
+  readonly experimentId?: string;
 }
 
 export interface ReconciledEpisode {
@@ -154,17 +155,18 @@ export function classifySettlement(market: BinaryMarket | null, observedAt: stri
   };
 }
 
-async function dueEpisodes(pool: pg.Pool, now: Date, limit: number): Promise<EpisodeDueRow[]> {
+async function dueEpisodes(pool: pg.Pool, now: Date, limit: number, experimentId?: string): Promise<EpisodeDueRow[]> {
   const result = await pool.query<EpisodeDueRow>(
     `
       SELECT id, market_id
       FROM market_episodes
-      WHERE state IN ('DECISION_RECORDED', 'AWAITING_SETTLEMENT', 'RESOLVED', 'VOIDED')
+      WHERE state IN ('DECISION_RECORDED', 'AWAITING_SETTLEMENT')
         AND expires_at <= $1
+        AND ($3::uuid IS NULL OR experiment_id = $3)
       ORDER BY expires_at ASC, created_at ASC
       LIMIT $2
     `,
-    [now.toISOString(), limit]
+    [now.toISOString(), limit, experimentId ?? null]
   );
   return result.rows;
 }
@@ -240,9 +242,10 @@ async function reconcileEpisode(input: {
 }
 
 export async function reconcileSettlements(input: ReconcileSettlementsInput): Promise<ReconcileSettlementsResult> {
+  const leaseKey = input.experimentId === undefined ? "settle:all" : `settle:experiment:${input.experimentId}`;
   const lease = await acquireLease(
     input.pool,
-    "settle",
+    leaseKey,
     input.holderId,
     input.leaseTtlMs ?? 30_000
   );
@@ -256,7 +259,7 @@ export async function reconcileSettlements(input: ReconcileSettlementsInput): Pr
   }
 
   const now = input.clock?.now() ?? new Date();
-  const episodes = await dueEpisodes(input.pool, now, input.limit ?? 50);
+  const episodes = await dueEpisodes(input.pool, now, input.limit ?? 50, input.experimentId);
   const observedAt = now.toISOString();
   const reconciled: ReconciledEpisode[] = [];
   for (const episode of episodes) {
@@ -267,7 +270,7 @@ export async function reconcileSettlements(input: ReconcileSettlementsInput): Pr
     actor: "worker",
     action: "RECONCILE_SETTLEMENTS",
     targetType: "market_episodes",
-    targetId: "due",
+    targetId: input.experimentId ?? "due",
     outcome: "PASS",
     correlationId: input.holderId,
     safeMetadata: {

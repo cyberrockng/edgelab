@@ -3,13 +3,15 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 const sampleHistoricalMarketId = ["0x", "0".repeat(60), "1bb7"].join("");
 
 const productRoutes = [
-  { path: "/", heading: "Test a DreamDEX strategy before putting capital behind it." },
+  { path: "/", heading: "EdgeLab decides whether a DreamDEX strategy has earned progression." },
   { path: "/markets", heading: "Browse historical and live Event Contract markets without mixing networks." },
   { path: `/markets/${sampleHistoricalMarketId}?plane=mainnet-history`, heading: "Inspect one DreamDEX market with source provenance." },
   { path: "/lab", heading: "Create an evidence-backed strategy experiment." },
   { path: "/lab/demo-experiment", heading: "Run replay, observe forward decisions, and evaluate evidence." },
+  { path: "/observation", heading: "EdgeLab already proves the next phase can run before outcomes exist." },
+  { path: "/execution-candidate", heading: "Strategy-linked order bytes, without server custody." },
   { path: "/compare", heading: "Compare evidence dimensions, not vanity scores." },
-  { path: "/evidence/proven-experiment", heading: "What evidence caused the strategy decision?" },
+  { path: "/evidence/proven-experiment", heading: "The gate shows what the strategy earned, and what it has not earned." },
   { path: "/proof", heading: "EXPIRED" },
   { path: "/how-it-works", heading: "Evidence-gated promotion keeps the product honest." }
 ] as const;
@@ -45,18 +47,23 @@ test("homepage explains the interactive product and links to real routes", async
   expect(response?.ok()).toBe(true);
 
   await expect(page.getByRole("heading", { name: productRoutes[0].heading })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open Strategy Lab" })).toHaveAttribute("href", "/lab");
+  await expect(page.getByRole("link", { name: "Open Judge Verdict" })).toHaveAttribute(
+    "href",
+    "/lab/proven-experiment"
+  );
   await expect(page.getByRole("link", { name: "Explore DreamDEX history" })).toHaveAttribute(
     "href",
     "/markets?plane=mainnet-history"
   );
-  await expect(page.getByRole("link", { name: "See Proven Experiment" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "Inspect Evidence Gate" })).toHaveAttribute(
     "href",
-    "/lab/proven-experiment"
+    "/evidence/proven-experiment"
   );
-  await expect(page.getByRole("link", { name: "View verified execution" })).toHaveAttribute("href", "/proof");
-  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical Reality");
-  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Evidence Gate");
+  await expect(page.getByRole("link", { name: "View captured no-fill lifecycle" })).toHaveAttribute("href", "/proof");
+  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical reality");
+  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Gate rule");
+  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("Forward OOS evidence");
+  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("GATED");
   await expect(page.getByLabel("Product boundary")).toContainText("Promotion means forward observation");
 
   expect(consoleErrors).toEqual([]);
@@ -150,7 +157,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
 test("proven experiment path exposes captured replay without favorable-data claims", async ({ page }) => {
   await gotoRoute(page, "/lab/proven-experiment");
   const workspace = page.getByRole("region", { name: "Proven experiment workspace" });
-  await expect(page.getByRole("heading", { name: "Inspect a captured DreamDEX evidence run." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This strategy earned observation, not execution." })).toBeVisible();
   await expect(workspace).toContainText("PUBLIC PROVEN");
   await expect(workspace).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(workspace).toContainText("NOT_AVAILABLE");
@@ -193,7 +200,7 @@ test("strategy lab exposes captured experiments and live-shadow starter state", 
     timeout: process.env.E2E_BASE_URL === undefined ? 5_000 : 15_000
   });
   await expect(page.getByLabel("Mode")).toHaveValue("LIVE_SHADOW");
-  await expect(page.getByLabel("Strategy")).toHaveValue("reference-neutral@1.0.0");
+  await expect(page.getByLabel("Strategy")).toHaveValue("last-trade-forward-proxy@1.1.0");
   await expect(page.getByLabel("Interval")).toHaveValue("900");
 });
 
@@ -212,6 +219,26 @@ test("evidence route does not manufacture a final verdict in the browser", async
   await expect(page.getByLabel("Evidence gate dimensions")).toContainText("Tradeability / execution quality");
 });
 
+test("execution route keeps wallet transaction authority closed before READY", async ({ page }) => {
+  await gotoRoute(page, "/execution-candidate");
+  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("Forward qualification");
+  await expect(page.getByText("Your OKX transaction approval is not needed yet.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Submit Bounded Shannon Order" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Connect OKX Account (No Signing)" })).toBeEnabled();
+});
+
+test("execution deep link preserves the exact strategy track for a demo handoff", async ({ page }) => {
+  const experimentId = "8f78008c-fd22-413f-b41d-4919d3a49f14";
+  await gotoRoute(
+    page,
+    `/execution-candidate?experimentId=${experimentId}&asset=ETH&intervalSec=3600`
+  );
+
+  await expect(page.getByLabel("Qualified forward experiment ID")).toHaveValue(experimentId);
+  await expect(page.getByLabel("Asset")).toHaveValue("ETH");
+  await expect(page.getByLabel("Interval")).toHaveValue("3600");
+});
+
 test("truthful DreamDEX proof remains reachable", async ({ page }) => {
   await gotoRoute(page, "/proof");
 
@@ -221,8 +248,12 @@ test("truthful DreamDEX proof remains reachable", async ({ page }) => {
   await expect(chain).toContainText("DreamDEX emitted OrderExpired, not OrderCancelled");
   await expect(chain).toContainText("No fill was observed");
   await expect(chain).toContainText("escrow returned");
-  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText("not automatic promotion evidence");
-  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText("Human authorization required");
+  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText(
+    "qualification artifact, not a live trade result"
+  );
+  await expect(page.getByRole("region", { name: "Experiment proof relationship" })).toContainText(
+    "owner-approved authority"
+  );
 
   const proof = page.getByLabel("Technical proof details");
   await expect(proof.getByRole("link", { name: /Approval/ })).toHaveAttribute("href", /shannon-explorer/);

@@ -100,6 +100,7 @@ function canonicalMarketSnapshot(book: MarketSnapshot["book"]): MarketSnapshot {
     chainId: 50312,
     asset: "BTC",
     intervalSeconds: 900,
+    quoteDecimals: 18,
     capturedAt: "2026-08-27T00:00:00.000Z",
     source: {
       sdkVersion: "0.28.1",
@@ -108,6 +109,20 @@ function canonicalMarketSnapshot(book: MarketSnapshot["book"]): MarketSnapshot {
       evidenceClass: "CAPTURED"
     },
     book
+  };
+}
+
+function canonicalMarketSnapshotWithFreshLastTrade(): MarketSnapshot {
+  return {
+    ...canonicalMarketSnapshot({ bids: [], asks: [] }),
+    marketWindow: {
+      tradingStartSeconds: 1_787_787_900,
+      expirySeconds: 1_787_788_800
+    },
+    lastTrade: {
+      priceRaw: "610000000000000000",
+      timestampSeconds: 1_787_788_740
+    }
   };
 }
 
@@ -266,7 +281,7 @@ function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
     }));
   }
   const evaluate = adapter.evaluate as PolicyAdapter["evaluate"];
-  return [
+  const cases = [
     {
       name: "empty-book",
       output: evaluate({
@@ -287,6 +302,17 @@ function behaviorFingerprint(adapter: PolicyIdentityInput): unknown {
       })
     }
   ];
+  if (adapter.policyId === "last-trade-forward-proxy" && adapter.version === "1.1.0") {
+    cases.push({
+      name: "fresh-last-trade-empty-book",
+      output: evaluate({
+        snapshot: canonicalMarketSnapshotWithFreshLastTrade(),
+        decidedAt: "2026-09-05T00:00:00.000Z",
+        snapshotHash: "behavior-fresh-last-trade"
+      })
+    });
+  }
+  return cases;
 }
 
 function implementationHash(adapter: PolicyIdentityInput): string {
@@ -547,6 +573,100 @@ const historicalLastTradeV11IdentitySource = canonicalJson({
   }
 });
 
+function rawProbability(value: string, quoteDecimals: number): number | null {
+  if (!/^[0-9]+$/.test(value)) {
+    return null;
+  }
+  if (!Number.isInteger(quoteDecimals) || quoteDecimals < 0 || quoteDecimals > 36) {
+    return null;
+  }
+  const parsed = Number(value) / Number(10n ** BigInt(quoteDecimals));
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.min(0.95, Math.max(0.05, parsed));
+}
+
+function topLevelProbability(levels: MarketSnapshot["book"]["bids" | "asks"], quoteDecimals: number): number | null {
+  const price = levels[0]?.priceRaw;
+  return price === undefined ? null : rawProbability(price, quoteDecimals);
+}
+
+function boundedRawProbability(value: string, quoteDecimals: number): number | null {
+  if (!/^\d+$/.test(value) || !Number.isInteger(quoteDecimals) || quoteDecimals < 0 || quoteDecimals > 36) {
+    return null;
+  }
+  const scale = 10n ** BigInt(quoteDecimals);
+  if (BigInt(value) > scale) {
+    return null;
+  }
+  return rawProbability(value, quoteDecimals);
+}
+
+function boundedTopLevelProbability(
+  levels: MarketSnapshot["book"]["bids" | "asks"],
+  quoteDecimals: number
+): number | null {
+  const price = levels[0]?.priceRaw;
+  return price === undefined ? null : boundedRawProbability(price, quoteDecimals);
+}
+
+const MAX_FORWARD_LAST_TRADE_AGE_SECONDS = 900;
+
+function freshLastTradeProbability(snapshot: MarketSnapshot): number | null {
+  if (snapshot.lastTrade === undefined || snapshot.marketWindow === undefined) {
+    return null;
+  }
+  const capturedAtSeconds = Math.floor(Date.parse(snapshot.capturedAt) / 1_000);
+  if (!Number.isSafeInteger(capturedAtSeconds)) {
+    return null;
+  }
+  const { timestampSeconds, priceRaw } = snapshot.lastTrade;
+  if (
+    timestampSeconds < snapshot.marketWindow.tradingStartSeconds ||
+    timestampSeconds >= snapshot.marketWindow.expirySeconds ||
+    timestampSeconds > capturedAtSeconds ||
+    capturedAtSeconds - timestampSeconds > MAX_FORWARD_LAST_TRADE_AGE_SECONDS
+  ) {
+    return null;
+  }
+  return boundedRawProbability(priceRaw, snapshot.quoteDecimals);
+}
+
+const lastTradeForwardProxyIdentitySource = canonicalJson({
+  policyId: "last-trade-forward-proxy",
+  version: "1.0.0",
+  linkedHistoricalPolicy: "historical-last-trade@1.1.0",
+  dataSemantics: {
+    purpose: "forward-observation companion, not historical replay replacement",
+    liveSignal: "YES-term midpoint from best bid and best ask when both are present; conservative best ask fallback when midpoint is unavailable",
+    missingSideHandling: "abstain only when the observed live book has neither a midpoint nor an executable ask-side probability",
+    probabilityClamp: [0.05, 0.95]
+  }
+});
+
+const lastTradeForwardProxyV11IdentitySource = canonicalJson({
+  policyId: "last-trade-forward-proxy",
+  version: "1.1.0",
+  linkedHistoricalPolicy: "historical-last-trade@1.1.0",
+  dataSemantics: {
+    purpose: "forward-observation challenger; no execution authority",
+    primarySignal: "YES-term midpoint from a non-crossed best bid and best ask",
+    fallbackOrder: [
+      "fresh pre-outcome current-generation YES-term last trade",
+      "best YES ask when the bid is absent",
+      "best YES bid when the ask is absent"
+    ],
+    lastTradeFreshness: {
+      maxAgeSeconds: MAX_FORWARD_LAST_TRADE_AGE_SECONDS,
+      notAfterCapture: true,
+      withinCurrentMarketWindow: true
+    },
+    crossedBookHandling: "use only a fresh qualifying last trade; otherwise abstain",
+    probabilityClamp: [0.05, 0.95]
+  }
+});
+
 export const referencePolicies: readonly PolicyAdapter[] = [
   {
     policyId: "reference-neutral",
@@ -560,6 +680,141 @@ export const referencePolicies: readonly PolicyAdapter[] = [
         forecastPUp: 0.5,
         action: "WATCH_ONLY",
         reasonCodes: ["REFERENCE_POLICY", "NEUTRAL_BASELINE"]
+      };
+    }
+  },
+  {
+    policyId: "last-trade-forward-proxy",
+    version: "1.0.0",
+    label: "Last-Trade Forward Proxy",
+    adapterName: "lastTradeForwardProxyPolicy",
+    identitySource: lastTradeForwardProxyIdentitySource,
+    parameters: {
+      linkedHistoricalPolicy: "historical-last-trade@1.1.0",
+      liveSignal: "YES-term top-of-book midpoint",
+      probabilityClamp: [0.05, 0.95],
+      executionAuthority: "none"
+    },
+    supportedPlanes: ["SHANNON_FORWARD"],
+    evaluate(input) {
+      const bestBid = topLevelProbability(input.snapshot.book.bids, input.snapshot.quoteDecimals);
+      const bestAsk = topLevelProbability(input.snapshot.book.asks, input.snapshot.quoteDecimals);
+      if (bestAsk !== null && bestBid === null) {
+        return {
+          forecastPUp: bestAsk,
+          action: "WATCH_ONLY",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY",
+            "LIVE_BOOK_ASK_FALLBACK",
+            "MIDPOINT_BID_UNAVAILABLE",
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+            "NO_EXECUTION_AUTHORITY"
+          ]
+        };
+      }
+      if (bestBid === null || bestAsk === null) {
+        return {
+          forecastPUp: 0.5,
+          action: "ABSTAIN",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY",
+            "LIVE_BOOK_MIDPOINT_UNAVAILABLE",
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1"
+          ]
+        };
+      }
+      const midpoint = Math.min(0.95, Math.max(0.05, (bestBid + bestAsk) / 2));
+      return {
+        forecastPUp: midpoint,
+        action: "WATCH_ONLY",
+        reasonCodes: [
+          "LAST_TRADE_FORWARD_PROXY",
+          "LIVE_BOOK_MIDPOINT",
+          "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+          "NO_EXECUTION_AUTHORITY"
+        ]
+      };
+    }
+  },
+  {
+    policyId: "last-trade-forward-proxy",
+    version: "1.1.0",
+    label: "Last-Trade Forward Proxy Challenger",
+    adapterName: "lastTradeForwardProxyV11Policy",
+    identitySource: lastTradeForwardProxyV11IdentitySource,
+    parameters: {
+      linkedHistoricalPolicy: "historical-last-trade@1.1.0",
+      primaryLiveSignal: "YES-term non-crossed top-of-book midpoint",
+      fallbackSignals: ["fresh current-generation last trade", "ask-only", "bid-only"],
+      maxLastTradeAgeSeconds: MAX_FORWARD_LAST_TRADE_AGE_SECONDS,
+      probabilityClamp: [0.05, 0.95],
+      executionAuthority: "none"
+    },
+    supportedPlanes: ["SHANNON_FORWARD"],
+    evaluate(input) {
+      const bestBid = boundedTopLevelProbability(input.snapshot.book.bids, input.snapshot.quoteDecimals);
+      const bestAsk = boundedTopLevelProbability(input.snapshot.book.asks, input.snapshot.quoteDecimals);
+      const crossedBook = bestBid !== null && bestAsk !== null && bestBid > bestAsk;
+      if (bestBid !== null && bestAsk !== null && !crossedBook) {
+        return {
+          forecastPUp: Math.min(0.95, Math.max(0.05, (bestBid + bestAsk) / 2)),
+          action: "WATCH_ONLY",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY_V1_1",
+            "LIVE_BOOK_MIDPOINT",
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+            "NO_EXECUTION_AUTHORITY"
+          ]
+        };
+      }
+      const lastTradeProbability = freshLastTradeProbability(input.snapshot);
+      if (lastTradeProbability !== null) {
+        return {
+          forecastPUp: lastTradeProbability,
+          action: "WATCH_ONLY",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY_V1_1",
+            "FRESH_PRE_OUTCOME_LAST_TRADE",
+            ...(crossedBook ? ["CROSSED_BOOK_IGNORED"] : []),
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+            "NO_EXECUTION_AUTHORITY"
+          ]
+        };
+      }
+      if (!crossedBook && bestAsk !== null && bestBid === null) {
+        return {
+          forecastPUp: bestAsk,
+          action: "WATCH_ONLY",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY_V1_1",
+            "LIVE_BOOK_ASK_FALLBACK",
+            "MIDPOINT_BID_UNAVAILABLE",
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+            "NO_EXECUTION_AUTHORITY"
+          ]
+        };
+      }
+      if (!crossedBook && bestBid !== null && bestAsk === null) {
+        return {
+          forecastPUp: bestBid,
+          action: "WATCH_ONLY",
+          reasonCodes: [
+            "LAST_TRADE_FORWARD_PROXY_V1_1",
+            "LIVE_BOOK_BID_FALLBACK",
+            "MIDPOINT_ASK_UNAVAILABLE",
+            "LINKED_HISTORICAL_LAST_TRADE_V1_1",
+            "NO_EXECUTION_AUTHORITY"
+          ]
+        };
+      }
+      return {
+        forecastPUp: 0.5,
+        action: "ABSTAIN",
+        reasonCodes: [
+          "LAST_TRADE_FORWARD_PROXY_V1_1",
+          crossedBook ? "CROSSED_BOOK_WITHOUT_FRESH_TRADE" : "NO_FRESH_PRE_OUTCOME_PRICE",
+          "LINKED_HISTORICAL_LAST_TRADE_V1_1"
+        ]
       };
     }
   },

@@ -12,8 +12,16 @@
   --surface-strong: #ffffff;
   --rail: #111816;
   --verified: #2d7a4b;
+  --current: #a56d25;
   --blocked: #b54839;
   --focus: #0b6bcb;
+  --verified-soft: #edf8f0;
+  --current-soft: #fff8e6;
+  --blocked-soft: #fff4f1;
+  --neutral-soft: #f1f3f1;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --shadow-panel: 0 14px 36px rgb(17 24 22 / 7%);
 }
 
 * {
@@ -92,6 +100,14 @@ select {
   backdrop-filter: blur(14px);
 }
 
+.brandLockup {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--ink);
+  text-decoration: none;
+}
+
 .brandMark {
   display: grid;
   place-items: center;
@@ -103,6 +119,35 @@ select {
   font-weight: 900;
   text-decoration: none;
   box-shadow: 0 12px 30px rgb(17 24 22 / 16%);
+}
+
+.brandCopy {
+  display: grid;
+  line-height: 1.05;
+}
+
+.brandCopy strong {
+  font-size: 0.95rem;
+}
+
+.brandCopy small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.headerAction {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.environmentBadge {
+  color: #43504a;
+  font-size: 0.7rem;
+  font-weight: 850;
+  white-space: nowrap;
 }
 
 .topNav {
@@ -130,6 +175,7 @@ button {
   text-decoration: none;
   font-weight: 900;
   white-space: nowrap;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
 .topNav a {
@@ -186,6 +232,7 @@ button {
 
 .primaryAction,
 button {
+  min-height: 42px;
   padding: 10px 13px;
   background: var(--rail);
   color: #f8faf7;
@@ -197,6 +244,7 @@ button {
 }
 
 .secondaryAction {
+  min-height: 42px;
   padding: 10px 13px;
   border-color: #bcc8c0;
   background: #fff;
@@ -216,15 +264,14 @@ button:disabled {
 }
 
 .systemStatus {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  padding-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding-top: 14px;
   border-top: 1px solid rgb(207 215 209 / 70%);
 }
 
-.systemStatus span,
 .systemStatus a,
 .statusPill {
   border: 1px solid var(--line);
@@ -238,8 +285,39 @@ button:disabled {
   white-space: nowrap;
 }
 
+.systemStatus nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.statusAssurance {
+  display: grid;
+  gap: 3px;
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.statusAssurance span,
+.systemMeta {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.systemMeta {
+  justify-self: end;
+  text-align: right;
+}
+
 .systemStatus a {
   color: #1f5b3c;
+}
+
+.statusPill.pass {
+  border-color: #79b88d;
+  background: #edf8f0;
+  color: #18562d;
 }
 
 .textLink {
@@ -401,6 +479,144 @@ p {
   align-items: center;
 }
 
+.judgeActions {
+  margin-top: 16px;
+}
+
+.judgeActions .textLink {
+  margin-top: 0;
+}
+
+.qualificationJourney {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding: clamp(18px, 2.4vw, 30px);
+  border: 1px solid rgb(207 215 209 / 78%);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.journeyHeader {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 24px;
+  align-items: end;
+}
+
+.journeyHeader h2 {
+  margin-top: 6px;
+}
+
+.journeyTrack {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.journeyStep {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  min-width: 0;
+  padding-right: 14px;
+}
+
+.journeyStep::before {
+  content: "";
+  position: absolute;
+  top: 15px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--line);
+}
+
+.journeyStep:first-child::before {
+  left: 15px;
+}
+
+.journeyStep:last-child::before {
+  right: calc(100% - 30px);
+}
+
+.journeyMarker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 900;
+}
+
+.journey-complete .journeyMarker {
+  border-color: var(--verified);
+  background: var(--verified);
+  color: #fff;
+}
+
+.journey-current .journeyMarker {
+  border-color: var(--current);
+  color: #6e4e00;
+  box-shadow: 0 0 0 5px var(--current-soft);
+}
+
+.journey-locked .journeyMarker,
+.journey-unproven .journeyMarker {
+  border-style: dashed;
+}
+
+.journeyStatus,
+.authorizationNotice span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.journeyStep strong,
+.journeyStep p {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.journeyStep strong {
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.journeyStep p {
+  margin-top: 5px;
+  font-size: 0.82rem;
+}
+
+.journey-complete .journeyStatus {
+  color: var(--verified);
+}
+
+.journey-current .journeyStatus {
+  color: #7c5519;
+}
+
+.journey-locked,
+.journey-unproven {
+  opacity: 0.76;
+}
+
 .workspaceFlow {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -484,6 +700,20 @@ p {
   border-top: 1px solid var(--line);
 }
 
+.evidenceGate > .resultPanel,
+.evidenceGate > .fullWidthGateOutput,
+.evidenceGate > .stateBox {
+  grid-column: 1 / -1;
+}
+
+.evidenceGate > .fullWidthGateOutput {
+  align-content: start;
+}
+
+.evidenceGate > .fullWidthGateOutput::before {
+  display: none;
+}
+
 .decisionList,
 .reasonList {
   display: grid;
@@ -553,6 +783,64 @@ p {
   background: #f9fbf8;
 }
 
+.verdictCard {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #20322c;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgb(31 91 60 / 22%), transparent 70%),
+    #111816;
+  color: #f7faf6;
+}
+
+.verdictCard span,
+.scoreStrip span {
+  color: #9fc7b0;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.verdictCard strong {
+  overflow-wrap: anywhere;
+  color: #f7faf6;
+  font-size: clamp(1.35rem, 2vw, 2.2rem);
+  line-height: 1.05;
+}
+
+.verdictCard p {
+  color: #dce6df;
+}
+
+.standaloneVerdict {
+  margin: 18px 0;
+}
+
+.scoreStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scoreStrip div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7dfd9;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.scoreStrip strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 1.25rem;
+}
+
 .modelInput,
 .modelGate {
   display: grid;
@@ -588,6 +876,61 @@ p {
   color: #f4f8f4;
 }
 
+.verdictLadder {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.compactLadder {
+  margin-bottom: 16px;
+}
+
+.ladderStep {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #d8dfda;
+  border-left-width: 5px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ladderStep span {
+  color: #52615b;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ladderStep strong {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 1.08rem;
+}
+
+.ladderStep p {
+  margin-top: 7px;
+  font-size: 0.93rem;
+}
+
+.ladderStep.complete {
+  border-left-color: var(--verified);
+}
+
+.ladderStep.current {
+  border-left-color: #b9852a;
+  background: #fffaf0;
+}
+
+.ladderStep.blocked {
+  border-left-color: var(--blocked);
+  background: #fff7f5;
+}
+
 .threeColumn,
 .methodGrid {
   display: grid;
@@ -612,6 +955,35 @@ p {
 .controlPanel {
   display: grid;
   gap: 14px;
+}
+
+.formNote {
+  margin-top: -5px;
+  font-size: 0.78rem;
+}
+
+.authorizationNotice {
+  display: grid;
+  gap: 7px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: var(--radius-sm);
+}
+
+.authorizationNotice strong {
+  color: var(--ink);
+}
+
+.authorizationLocked {
+  border-left-color: var(--blocked);
+  background: var(--blocked-soft);
+}
+
+.authorizationReady {
+  border-left-color: var(--current);
+  background: var(--current-soft);
 }
 
 label {
@@ -690,9 +1062,90 @@ dd {
   font-size: 0.95rem;
 }
 
+.checkList {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--ink);
+}
+
+.checkList li + li {
+  margin-top: 0.45rem;
+}
+
+.blockedList {
+  color: var(--blocked);
+}
+
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.panelHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.panelHeader div {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 360px);
+}
+
+.calloutBox {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #79b88d;
+  border-radius: 6px;
+  background: #edf8f0;
+  color: #18562d;
+}
+
+.calloutBox span {
+  color: #315d3d;
+}
+
+.watchTable {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.watchRow {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) minmax(82px, 0.52fr) minmax(92px, 0.52fr) minmax(220px, 1.7fr) minmax(84px, 0.48fr);
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #d8dfda;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.watchHead {
+  background: #f4f6f2;
+  color: #52615b;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watchRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .evidenceGate {
   display: grid;
-  grid-template-columns: minmax(220px, 0.62fr) minmax(280px, 1fr) minmax(240px, 0.68fr);
+  grid-template-columns: minmax(260px, 0.64fr) minmax(420px, 1.36fr);
   gap: 14px;
   align-items: stretch;
 }
@@ -872,9 +1325,22 @@ dd {
   border-left-color: var(--blocked);
 }
 
+.status-pass,
 .status-verified,
 .status-ready-for-evaluation {
   border-left-color: var(--verified);
+}
+
+.status-blocked {
+  border-left-color: var(--blocked);
+}
+
+.status-allowed-next {
+  border-left-color: #b9852a;
+}
+
+.status-unlinked-global-proof-available {
+  border-left-color: #7b9188;
 }
 
 .status-not-available,
@@ -882,7 +1348,8 @@ dd {
   border-left-color: var(--muted);
 }
 
-.status-insufficient .statusPill {
+.status-insufficient .statusPill,
+.status-blocked .statusPill {
   border-color: #e7b3aa;
   color: #8c2e22;
   background: #fff4f1;
@@ -908,11 +1375,18 @@ dd {
     #fbfbf6;
 }
 
+.status-pass .statusPill,
 .status-verified .statusPill,
 .status-ready-for-evaluation .statusPill {
   border-color: #aad3ba;
   color: #1f643c;
   background: #eff9f2;
+}
+
+.status-allowed-next .statusPill {
+  border-color: #e2c16a;
+  color: #6e4e00;
+  background: #fff8df;
 }
 
 .status-not-available .statusPill,
@@ -936,6 +1410,10 @@ dd {
 
 .policyMatrix.publicMatrix [role="row"] {
   grid-template-columns: 1.05fr 0.95fr 0.92fr 1fr 1.08fr 1.08fr;
+}
+
+.policyMatrix.observationMatrix [role="row"] {
+  grid-template-columns: 1.35fr 0.45fr 0.62fr 1fr 1.05fr 0.58fr;
 }
 
 .policyMatrix [role="row"] + [role="row"] {
@@ -1004,6 +1482,11 @@ dd {
 .errorState,
 .errorText {
   color: #8c2e22;
+}
+
+.successText {
+  color: #18562d;
+  font-weight: 850;
 }
 
 .errorState {
@@ -1233,6 +1716,21 @@ dd {
   .proofGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .environmentBadge,
+  .brandCopy small {
+    display: none;
+  }
+
+  .systemStatus {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .systemMeta {
+    justify-self: center;
+    text-align: center;
+  }
 }
 
 @media (max-width: 860px) {
@@ -1243,6 +1741,10 @@ dd {
   .appHeader {
     position: static;
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .headerAction {
+    display: none;
   }
 
   .topNav {
@@ -1279,8 +1781,37 @@ dd {
   .methodGrid,
   .workspaceFlow,
   .progressionHub,
+  .verdictLadder,
   .factGrid {
     grid-template-columns: 1fr;
+  }
+
+  .journeyHeader,
+  .journeyTrack {
+    grid-template-columns: 1fr;
+  }
+
+  .journeyTrack {
+    gap: 12px;
+  }
+
+  .journeyStep {
+    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-rows: auto;
+    padding: 0;
+  }
+
+  .journeyStep::before {
+    top: 0;
+    bottom: -12px;
+    left: 14px !important;
+    right: auto !important;
+    width: 2px;
+    height: auto;
+  }
+
+  .journeyStep:last-child::before {
+    display: none;
   }
 
   .decisionRow {
@@ -1297,6 +1828,14 @@ dd {
 
   .policyMatrix [role="row"] + [role="row"] {
     border-top: 0;
+  }
+
+  .watchRow {
+    grid-template-columns: 1fr;
+  }
+
+  .watchHead {
+    display: none;
   }
 
   .policyMatrix [role="row"] {
@@ -1394,5 +1933,757 @@ dd {
 
   .proofGrid {
     grid-template-columns: 1fr;
+  }
+
+  .scoreStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Hybrid dark minimal-fintech design system */
+:root {
+  color-scheme: dark;
+  color: #f2f5f2;
+  background: #0e1110;
+  --canvas: #0e1110;
+  --shell: #101614;
+  --surface: #171d1b;
+  --surface-strong: #1d2522;
+  --surface-elevated: #222b27;
+  --ink: #f2f5f2;
+  --muted: #a5b0aa;
+  --line: #303936;
+  --line-strong: #46514d;
+  --rail: #0c1210;
+  --paper: #f3f1e9;
+  --paper-strong: #fffef8;
+  --paper-ink: #171b19;
+  --paper-muted: #5d6863;
+  --verified: #48b979;
+  --current: #d3a044;
+  --blocked: #dc6254;
+  --focus: #65a9ff;
+  --verified-soft: #132b20;
+  --current-soft: #302718;
+  --blocked-soft: #321b19;
+  --neutral-soft: #202724;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-panel: 0 12px 28px rgb(0 0 0 / 18%);
+}
+
+body {
+  background: var(--canvas);
+}
+
+.appShell {
+  display: grid;
+  grid-template-columns: 238px minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+  gap: 0;
+  min-height: 100vh;
+  padding: 0;
+  background: var(--canvas);
+}
+
+.appHeader {
+  position: sticky;
+  top: 0;
+  grid-column: 1;
+  grid-row: 1 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  align-self: start;
+  height: 100vh;
+  padding: 26px 18px 20px;
+  border-right: 1px solid var(--line);
+  background: var(--shell);
+  backdrop-filter: none;
+}
+
+.brandLockup {
+  width: 100%;
+  gap: 12px;
+  color: var(--ink);
+}
+
+.brandMark {
+  width: 44px;
+  border: 1px solid #d9ddd9;
+  border-radius: 8px;
+  background: #eef1ed;
+  color: #111613;
+  box-shadow: none;
+}
+
+.brandCopy strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.brandCopy small {
+  color: var(--muted);
+}
+
+.topNav {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  overflow: visible;
+}
+
+.topNav a {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.topNav a:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.topNav a.active {
+  border-color: var(--line-strong);
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.headerAction {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  margin-top: auto;
+}
+
+.environmentBadge {
+  color: var(--muted);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.headerAction .primaryAction {
+  width: 100%;
+  justify-content: center;
+}
+
+.routeMain {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 30px clamp(22px, 3vw, 46px);
+}
+
+.systemStatus {
+  grid-column: 2;
+  grid-row: 3;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  margin: 0 clamp(22px, 3vw, 46px);
+  padding: 18px 0 24px;
+  border-color: var(--line);
+}
+
+.statusAssurance {
+  color: var(--ink);
+}
+
+.statusAssurance span,
+.systemMeta {
+  color: var(--muted);
+}
+
+.systemStatus a,
+.statusPill {
+  border-color: var(--line-strong);
+  background: var(--surface-strong);
+  color: #d9e0dc;
+}
+
+.systemStatus a {
+  color: #a7d7b9;
+}
+
+.heroCopy,
+.routeHero,
+.routePanel,
+.modelPanel,
+.threeColumn > article,
+.methodGrid > article,
+.controlPanel,
+.qualificationJourney {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.heroCopy {
+  background: var(--surface-elevated);
+  color: var(--ink);
+}
+
+.routeHero {
+  max-width: none;
+  box-shadow: var(--shadow-panel);
+}
+
+.routeHero h1 {
+  max-width: 1050px;
+  font-size: clamp(2.3rem, 3.8vw, 4rem);
+  line-height: 1.02;
+}
+
+.routeHero h1,
+.routePanel h2,
+.modelPanel h2,
+.threeColumn h2,
+.methodGrid h2,
+.qualificationJourney h2,
+.heroCopy h1,
+h1,
+h2,
+dd {
+  color: var(--ink);
+}
+
+p,
+.heroCopy p:last-of-type {
+  color: var(--muted);
+}
+
+.eyebrow,
+.label,
+.gateLabel,
+dt,
+.modelInput span,
+.modelGate span,
+.ladderStep span {
+  color: #8fa099;
+}
+
+.heroCopy .eyebrow,
+.verdictCard span,
+.scoreStrip span {
+  color: #75c493;
+}
+
+.primaryAction,
+button {
+  border-color: #4e9c6a;
+  background: #173b27;
+  color: #f1f8f3;
+}
+
+.primaryAction:hover,
+button:hover {
+  border-color: #65be84;
+  background: #1d4930;
+}
+
+.secondaryAction {
+  border-color: var(--line-strong);
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.secondaryAction:hover {
+  border-color: #66736e;
+  background: var(--surface-elevated);
+}
+
+.textLink {
+  color: #72ca92;
+}
+
+.verdictCard,
+.modelGate,
+.gateCandidate,
+.gateDecision,
+.gateOutput {
+  border-color: var(--line-strong);
+  background: var(--rail);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.verdictCard {
+  border-left: 3px solid var(--current);
+}
+
+.verdictCard strong,
+.verdictCard p,
+.modelGate span,
+.modelGate strong,
+.gateCandidate strong,
+.gateDecision strong,
+.gateOutput strong {
+  color: var(--ink);
+}
+
+.modelPanel,
+.scoreStrip div,
+.modelInput,
+.modelGate,
+.ladderStep,
+.flowStep,
+.factGrid div,
+.watchRow,
+.stateBox {
+  border-color: var(--line);
+  background: var(--surface-strong);
+}
+
+.modelPanel {
+  border-color: #d8d6cc;
+  background: var(--paper);
+  box-shadow: var(--shadow-panel);
+}
+
+.modelPanel .scoreStrip div,
+.modelPanel .modelInput {
+  border-color: #d8d6cc;
+  background: var(--paper-strong);
+}
+
+.modelPanel .scoreStrip strong,
+.modelPanel .modelInput strong {
+  color: var(--paper-ink);
+}
+
+.modelPanel .modelInput span {
+  color: var(--paper-muted);
+}
+
+.scoreStrip strong,
+.factGrid,
+.dataTable,
+.policyMatrix,
+.watchTable {
+  font-variant-numeric: tabular-nums;
+}
+
+.modelInput strong,
+.modelGate strong,
+.scoreStrip strong,
+.ladderStep strong,
+.flowStep h3,
+.factGrid dd,
+.watchRow,
+.stateBox {
+  color: var(--ink);
+}
+
+.progressionHub {
+  border-color: var(--line);
+  background: var(--rail);
+}
+
+.progressionHub div {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.progressionHub strong,
+.progressionHub p {
+  color: var(--ink);
+}
+
+.journeyStep::before,
+.lifecycleRail li::before {
+  background: var(--line-strong);
+}
+
+.journeyMarker {
+  border-color: var(--line-strong);
+  background: var(--surface-elevated);
+  color: var(--muted);
+}
+
+.journeyStep strong,
+.lifecycleRail strong {
+  color: var(--ink);
+}
+
+.journeyStep p,
+.lifecycleRail p {
+  color: var(--muted);
+}
+
+.journey-current .journeyMarker {
+  color: #ffd88f;
+  box-shadow: 0 0 0 4px var(--current-soft);
+}
+
+.journey-current .journeyStatus,
+.status-allowed-next .journeyStatus {
+  color: #edbc5d;
+}
+
+.verdictLadder .complete {
+  background: var(--verified-soft);
+}
+
+.verdictLadder .current {
+  border-left-color: var(--current);
+  background: var(--current-soft);
+}
+
+.verdictLadder .blocked {
+  background: var(--blocked-soft);
+}
+
+.thesisPanel,
+.status-insufficient-evidence,
+.gateDecision {
+  background: var(--surface);
+}
+
+.thesisPanel {
+  border-color: #594a2b;
+}
+
+label {
+  color: #d8dfdb;
+}
+
+select,
+input {
+  border-color: var(--line-strong);
+  background: #111714;
+  color: var(--ink);
+}
+
+select:hover,
+input:hover {
+  border-color: #66736e;
+}
+
+select:focus,
+input:focus {
+  border-color: var(--focus);
+}
+
+.formNote,
+.experimentRow small,
+.paginationRow {
+  color: var(--muted);
+}
+
+.watchHead {
+  background: #202824;
+  color: #aeb9b3;
+}
+
+.calloutBox {
+  border-color: #356c49;
+  background: var(--verified-soft);
+  color: #a9e0bc;
+}
+
+.calloutBox span {
+  color: #a9bfb2;
+}
+
+.authorizationLocked,
+.errorState {
+  border-color: #783b35;
+  background: var(--blocked-soft);
+}
+
+.authorizationReady,
+.statusWarning {
+  border-color: #6f5729;
+  background: var(--current-soft);
+}
+
+.errorText,
+.errorState {
+  color: #ffaaa0;
+}
+
+.successText {
+  color: #82d69f;
+}
+
+.statusPill.pass,
+.status-pass .statusPill,
+.status-verified .statusPill,
+.status-ready-for-evaluation .statusPill {
+  border-color: #356c49;
+  background: var(--verified-soft);
+  color: #8bddaa;
+}
+
+.status-insufficient .statusPill,
+.status-blocked .statusPill {
+  border-color: #783b35;
+  background: var(--blocked-soft);
+  color: #ffaaa0;
+}
+
+.status-allowed-next .statusPill,
+.emphasisPill {
+  border-color: #6f5729;
+  background: var(--current-soft);
+  color: #efc36c;
+}
+
+.status-not-available .statusPill,
+.status-not-evaluated .statusPill {
+  border-color: var(--line-strong);
+  background: var(--neutral-soft);
+  color: #b6c0bb;
+}
+
+/* Printed-evidence surfaces deliberately contrast with the operational shell. */
+.dataTable,
+.policyMatrix,
+.chainProof,
+.proofSection,
+.evidenceGate > .resultPanel,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] {
+  border: 1px solid #d8d6cc;
+  background: var(--paper);
+  color: var(--paper-ink);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 16%);
+}
+
+.chainProof,
+.proofSection,
+.evidenceGate > .resultPanel,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] {
+  padding: clamp(18px, 2.4vw, 30px);
+  border-radius: var(--radius-md);
+}
+
+.chainProof h2,
+.proofSection h2,
+.evidenceGate > .resultPanel h2,
+.evidenceGate > .resultPanel strong,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] h2,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] strong,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] dd {
+  color: var(--paper-ink);
+}
+
+.chainProof p,
+.proofSection p,
+.proofSection .sectionIntro p,
+.evidenceGate > .resultPanel p,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] p {
+  color: var(--paper-muted);
+}
+
+.chainProof .label,
+.proofSection .label,
+.proofSection .eyebrow,
+.evidenceGate > .resultPanel .eyebrow,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] .eyebrow,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] dt {
+  color: #557060;
+}
+
+.dataTable span,
+.dataTable strong,
+.policyMatrix span,
+.policyMatrix strong {
+  color: var(--paper-ink);
+}
+
+.dataTable small {
+  color: var(--paper-muted);
+}
+
+.dataTable .tableHeader span,
+.policyMatrix [role="columnheader"] {
+  background: #e4e4dc;
+  color: #46514c;
+}
+
+.dataTable [role="row"],
+.policyMatrix [role="row"] {
+  border-color: #deddd5;
+}
+
+.evidenceGate .gateRow,
+.evidenceGate .stageNode,
+.evidenceGate > .resultPanel .ladderStep,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] .factGrid div {
+  border-color: #d7d8d1;
+  background: var(--paper-strong);
+}
+
+.evidenceGate .gateRow strong,
+.evidenceGate .stageNode strong,
+.evidenceGate .stageNode p,
+.evidenceGate .stageNode small,
+.evidenceGate .gateRow p,
+.evidenceGate .gateRow .gateLabel {
+  color: var(--paper-ink);
+}
+
+.proofGrid a,
+.proofGrid div {
+  border-color: #d8d6cc;
+  background: var(--paper-strong);
+  color: var(--paper-ink);
+}
+
+.proofGrid a:hover,
+.proofGrid a:focus-visible {
+  border-color: #6a9f7d;
+  background: #e9f3eb;
+}
+
+.proofGrid span,
+.proofGrid strong {
+  color: var(--paper-ink);
+}
+
+.proofSection .resultPanel,
+.proofSection .stateBox,
+.chainProof .stateBox {
+  border-color: #d8d6cc;
+  background: var(--paper-strong);
+  color: var(--paper-ink);
+}
+
+.proofSection .ladderStep.complete,
+.evidenceGate > .resultPanel .ladderStep.complete {
+  background: #edf7ef;
+}
+
+.proofSection .ladderStep.current,
+.evidenceGate > .resultPanel .ladderStep.current {
+  background: #fff7e6;
+}
+
+.proofSection .ladderStep.blocked,
+.evidenceGate > .resultPanel .ladderStep.blocked {
+  background: #fff0ed;
+}
+
+.evidenceGate > .resultPanel .progressionHub strong,
+.evidenceGate > .resultPanel .progressionHub p {
+  color: var(--ink);
+}
+
+.evidenceGate > .resultPanel .progressionHub .label {
+  color: #75c493;
+}
+
+.proofSection .secondaryAction,
+.chainProof .secondaryAction,
+.evidenceGate > .resultPanel .secondaryAction,
+.resultPanel[aria-label="Canonical strategy execution lifecycle"] .secondaryAction {
+  border-color: #b8bcb7;
+  background: var(--paper-strong);
+  color: var(--paper-ink);
+}
+
+@media (max-width: 960px) {
+  .appShell {
+    display: block;
+  }
+
+  .appHeader {
+    position: sticky;
+    z-index: 20;
+    top: 0;
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    height: auto;
+    padding: 10px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brandLockup {
+    width: auto;
+  }
+
+  .brandMark {
+    width: 40px;
+  }
+
+  .brandCopy {
+    display: grid;
+  }
+
+  .brandCopy small,
+  .topNav,
+  .headerAction {
+    display: none;
+  }
+
+  .mobileNav {
+    display: block;
+    margin-left: auto;
+  }
+
+  .mobileNav summary {
+    border-color: var(--line-strong);
+    background: var(--surface-strong);
+    color: var(--ink);
+  }
+
+  .mobileNav nav {
+    right: 14px;
+    border-color: var(--line);
+    background: var(--surface-strong);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .mobileNav a {
+    color: var(--muted);
+  }
+
+  .mobileNav a.active,
+  .mobileNav a:hover {
+    background: var(--surface-elevated);
+    color: var(--ink);
+  }
+
+  .routeMain {
+    padding: 18px 14px 28px;
+  }
+
+  .systemStatus {
+    margin: 0 14px;
+    padding-bottom: 22px;
+  }
+}
+
+@media (max-width: 520px) {
+  .brandCopy strong {
+    font-size: 0.9rem;
+  }
+
+  .routeMain {
+    padding: 12px 8px 22px;
+  }
+
+  .systemStatus {
+    margin: 0 8px;
+  }
+
+  .heroCopy,
+  .routeHero,
+  .routePanel,
+  .modelPanel,
+  .threeColumn > article,
+  .methodGrid > article,
+  .controlPanel,
+  .chainProof,
+  .proofSection,
+  .qualificationJourney {
+    padding: 16px;
   }
 }

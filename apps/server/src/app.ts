@@ -8,6 +8,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
+import { decodeEventLog, parseAbi } from "viem";
+import { orderBookEventsAbi } from "@somnia-chain/markets-sdk";
 import {
   createApprovalChallenge,
   createLoginChallenge,
@@ -17,7 +19,12 @@ import {
 } from "@edgelab/auth";
 import { summarizeChainEvidence } from "@edgelab/chain";
 import type { RuntimeConfig } from "@edgelab/config";
-import { DREAMDEX_MARKETS_SDK_VERSION, SOMNIA_MAINNET_CHAIN_ID, SOMNIA_SHANNON_CHAIN_ID } from "@edgelab/domain";
+import {
+  DREAMDEX_MARKETS_SDK_VERSION,
+  MarketSnapshotSchema,
+  SOMNIA_MAINNET_CHAIN_ID,
+  SOMNIA_SHANNON_CHAIN_ID
+} from "@edgelab/domain";
 import {
   appendAuditEvent,
   blockReplayRun,
@@ -51,6 +58,9 @@ import {
 } from "@edgelab/db";
 import {
   countHistoricalBinaryMarkets,
+  buildControlledLiquidityEvidence,
+  buildUnsignedBinaryOrderEvidence,
+  captureMarketSnapshot,
   createMainnetHistoricalDreamDexSdkClient,
   discoverSuccessorMarkets,
   getHistoricalBinaryMarket,
@@ -63,9 +73,12 @@ import {
   listHistoricalCandles,
   listHistoricalFillsByMarket,
   listHistoricalOrdersByMarket,
+  readExecutionReadiness,
+  readBinaryBookParams,
   resolveHistoricalCutoffBlock,
   resolveHistoricalCutoffBlockAfter,
   type DreamDexReadConfig,
+  type DreamDexExecutionReadinessEvidence,
   type DreamDexSdkClient,
   type HistoricalDreamDexReadResult,
   type HistoricalDreamDexSdkClient,
@@ -79,11 +92,12 @@ import {
   type HistoricalCutoffBlock,
   type MainnetHistoricalDreamDexConfig
 } from "@edgelab/dreamdex";
-import { runMetricAssessment } from "@edgelab/evaluate";
+import { EVALUATION_VERSION, runMetricAssessment } from "@edgelab/evaluate";
 import { observeExperiment } from "@edgelab/observe";
 import {
   createHistoricalPolicyManifest,
   createPolicyManifest,
+  evaluatePolicy,
   evaluateHistoricalPolicy,
   historicalPolicies,
   referencePolicies,
@@ -91,6 +105,7 @@ import {
   type PolicyAdapter
 } from "@edgelab/policy-runtime";
 import { buildHistoricalDecisionFrame } from "@edgelab/replay";
+import { reconcileSettlements } from "@edgelab/settle";
 import { z } from "zod";
 
 export interface AppDependencies {
@@ -104,10 +119,16 @@ export interface AppDependencies {
   readonly policyAdapters?: readonly PolicyAdapter[];
   readonly consumedNonces?: Set<string>;
   readonly signatureVerifier?: SignatureVerifier;
+  readonly executionReadinessReader?: (input: {
+    readonly account: string;
+    readonly marketAddress: string;
+    readonly poolAddress: string;
+  }) => Promise<DreamDexExecutionReadinessEvidence>;
 }
 
 const AddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const MarketIdSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
+const TxHashSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
 const IntentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const IdempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const ResearchSessionCookie = "edgelab_research_session";
@@ -156,6 +177,102 @@ const HistoricalCandleQuerySchema = z.object({
   fromSec: z.coerce.number().int().optional(),
   toSec: z.coerce.number().int().optional()
 });
+const ExecutionCandidateQuerySchema = z.object({
+  experimentId: z.string().uuid(),
+  account: AddressSchema,
+  asset: z.enum(["BTC", "ETH"]).default("BTC"),
+  intervalSec: z.coerce
+    .number()
+    .int()
+    .refine((value) => value === 900 || value === 3600, "intervalSec must be 900 or 3600")
+    .default(900),
+  maxEscrowRaw: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .default("10000")
+    .refine((value) => BigInt(value) > 0n && BigInt(value) <= 10_000n, "maxEscrowRaw must be 1..10000"),
+  minExpiryHeadroomSec: z.coerce.number().int().min(60).max(600).default(120)
+});
+const ControlledLiquidityQuerySchema = z.object({
+  maker: AddressSchema,
+  asset: z.enum(["BTC", "ETH"]).default("BTC"),
+  intervalSec: z.coerce
+    .number()
+    .int()
+    .refine((value) => value === 900 || value === 3600, "intervalSec must be 900 or 3600")
+    .default(900),
+  side: z.enum(["SELL_YES", "SELL_NO"]).default("SELL_YES"),
+  priceRaw: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .default("600000")
+    .refine((value) => BigInt(value) > 0n && BigInt(value) < 1_000_000n, "priceRaw must be 1..999999"),
+  quantityRaw: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .default("1000")
+    .refine((value) => BigInt(value) > 0n && BigInt(value) <= 1_000_000n, "quantityRaw must be 1..1000000"),
+  minExpiryHeadroomSec: z.coerce.number().int().min(120).max(1800).default(300)
+});
+const ExecutionReceiptImportSchema = z.object({
+  intentHash: IntentHashSchema,
+  txHash: TxHashSchema,
+  txRole: z.enum(["approval", "order"])
+});
+const PersistableExecutionCandidateSchema = z.object({
+  status: z.literal("READY"),
+  intentHash: IntentHashSchema,
+  account: AddressSchema,
+  validatedAt: z.iso.datetime(),
+  market: z.object({
+    stableMarketId: MarketIdSchema,
+    marketAddress: AddressSchema,
+    poolAddress: AddressSchema,
+    asset: z.enum(["BTC", "ETH"]),
+    intervalSeconds: ExperimentIntervalSecSchema,
+    expirySeconds: z.number().int().positive(),
+    quoteDecimals: z.number().int().nonnegative(),
+    collateral: AddressSchema
+  }).passthrough(),
+  strategyLink: z.object({
+    experimentId: z.string().uuid(),
+    assessmentId: z.string().uuid(),
+    assessmentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    qualificationVerdict: z.literal("STRATEGY_QUALIFIED"),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    decision: z.object({
+      policyId: z.string().min(1),
+      policyVersion: z.string().min(1),
+      policyHash: z.string().regex(/^[a-f0-9]{64}$/)
+    }).passthrough()
+  }).passthrough(),
+  risk: z.object({
+    maxEscrowRaw: z.string().regex(/^[0-9]+$/),
+    requiredEscrowRaw: z.string().regex(/^[0-9]+$/),
+    minExpiryHeadroomSec: z.number().int().positive(),
+    observedBlockNumber: z.string().regex(/^[0-9]+$/)
+  }).passthrough(),
+  sizing: z.object({
+    side: z.enum(["BUY_YES", "BUY_NO"]),
+    priceRaw: z.string().regex(/^[0-9]+$/),
+    quantityRaw: z.string().regex(/^[0-9]+$/)
+  }).passthrough(),
+  unsignedTransactions: z.object({
+    approval: z.object({
+      to: AddressSchema,
+      data: z.string().regex(/^0x[0-9a-fA-F]+$/),
+      valueRaw: z.string(),
+      description: z.string()
+    }).nullable(),
+    order: z.object({
+      to: AddressSchema,
+      data: z.string().regex(/^0x[0-9a-fA-F]+$/),
+      valueRaw: z.string(),
+      description: z.string()
+    })
+  }).passthrough()
+}).passthrough();
+const ShannonProofWalletAddress = "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971";
 const ChallengeRequestSchema = z.discriminatedUnion("purpose", [
   z.object({ purpose: z.literal("login"), account: AddressSchema }),
   z.object({ purpose: z.literal("approval"), account: AddressSchema, intentHash: IntentHashSchema })
@@ -217,6 +334,1397 @@ function stableJson(input: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(input);
+}
+
+interface QualifiedStrategyRecord {
+  readonly experimentId: string;
+  readonly configurationId: string;
+  readonly policyVersionId: string;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  readonly policyHash: string;
+  readonly assessmentId: string;
+  readonly assessmentHash: string;
+  readonly ruleVersion: string;
+  readonly sampleSize: number;
+  readonly qualifiedAt: Date;
+}
+
+async function loadQualifiedStrategy(
+  pool: pg.Pool,
+  input: { readonly sessionId: string; readonly experimentId: string }
+): Promise<QualifiedStrategyRecord | null> {
+  const result = await pool.query<{
+    experiment_id: string;
+    configuration_id: string;
+    policy_version_id: string;
+    policy_id: string;
+    policy_version: string;
+    policy_hash: string;
+    assessment_id: string;
+    assessment_hash: string;
+    rule_version: string;
+    sample_size: number;
+    qualified_at: Date;
+  }>(
+    `
+      SELECT
+        e.id AS experiment_id,
+        ecv.id AS configuration_id,
+        pv.id AS policy_version_id,
+        pv.policy_id,
+        pv.version AS policy_version,
+        pv.source_hash AS policy_hash,
+        latest_assessment.assessment_id,
+        latest_assessment.assessment_hash,
+        latest_assessment.rule_version,
+        latest_assessment.sample_size,
+        latest_assessment.qualified_at
+      FROM experiments e
+      JOIN experiment_configuration_versions ecv ON ecv.id = e.active_configuration_id
+      JOIN experiment_policy_versions epv
+        ON epv.configuration_id = ecv.id AND epv.role = 'CANDIDATE'
+      JOIN policy_versions pv ON pv.id = epv.policy_version_id
+      JOIN LATERAL (
+        SELECT
+          ea.id AS assessment_id,
+          ea.assessment_hash,
+          ea.rule_version,
+          mr.sample_size,
+          mr.evaluation_version,
+          ea.created_at AS qualified_at,
+          ea.verdict
+        FROM metric_runs mr
+        JOIN evidence_assessments ea ON ea.metric_run_id = mr.id
+        WHERE mr.experiment_id = e.id
+          AND mr.policy_version_id = pv.id
+          AND mr.evidence_plane = 'SHANNON_FORWARD'
+          AND mr.promotion_scope = 'EXECUTION_EXPOSURE'
+        ORDER BY ea.created_at DESC, ea.id DESC
+        LIMIT 1
+      ) latest_assessment
+        ON latest_assessment.verdict = 'STRATEGY_QUALIFIED'
+        AND latest_assessment.evaluation_version = $3
+      WHERE e.id = $1
+        AND e.created_by_session_id = $2
+        AND ecv.mode = 'LIVE_SHADOW'
+      LIMIT 1
+    `,
+    [input.experimentId, input.sessionId, EVALUATION_VERSION]
+  );
+  const row = result.rows[0];
+  return row === undefined
+    ? null
+    : {
+        experimentId: row.experiment_id,
+        configurationId: row.configuration_id,
+        policyVersionId: row.policy_version_id,
+        policyId: row.policy_id,
+        policyVersion: row.policy_version,
+        policyHash: row.policy_hash,
+        assessmentId: row.assessment_id,
+        assessmentHash: row.assessment_hash,
+        ruleVersion: row.rule_version,
+        sampleSize: row.sample_size,
+        qualifiedAt: row.qualified_at
+      };
+}
+
+function hexToDecimalString(value: string | null | undefined): string {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
+    return "0";
+  }
+  return BigInt(value).toString();
+}
+
+async function shannonRpc<T>(config: RuntimeConfig, method: string, params: readonly unknown[]): Promise<T> {
+  const response = await fetch(config.SOMNIA_RPC_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+  });
+  if (!response.ok) {
+    throw new Error(`Shannon RPC ${method} failed with HTTP ${String(response.status)}`);
+  }
+  const payload = (await response.json()) as { readonly result?: T; readonly error?: { readonly message?: string } };
+  if (payload.error !== undefined) {
+    throw new Error(payload.error.message ?? `Shannon RPC ${method} returned an error`);
+  }
+  if (!("result" in payload)) {
+    throw new Error(`Shannon RPC ${method} returned no result`);
+  }
+  return payload.result;
+}
+
+interface RpcTransaction {
+  readonly from?: string;
+  readonly to?: string | null;
+  readonly nonce?: string;
+  readonly input?: string;
+  readonly value?: string;
+}
+
+interface RpcReceipt {
+  readonly status?: string;
+  readonly blockNumber?: string;
+  readonly logs?: readonly RpcLog[];
+}
+
+interface RpcLog {
+  readonly address?: string;
+  readonly data?: string;
+  readonly topics?: readonly string[];
+  readonly logIndex?: string;
+}
+
+const binarySettlementRedeemedEventAbi = parseAbi([
+  "event Redeemed(uint256 indexed marketKey, address indexed holder, address indexed to, uint8 outcomeIdx, uint256 amountBurned, uint256 collateralOut)"
+]);
+
+function exactStrategyRedemption(input: {
+  readonly receipt: RpcReceipt;
+  readonly account: string;
+  readonly side: string;
+  readonly amountRaw: string;
+  readonly payoutRaw: string | null;
+}): { readonly amountBurned: string; readonly collateralOut: string } | null {
+  const decoded = (input.receipt.logs ?? []).flatMap((log) => {
+    if (log.data === undefined || log.topics === undefined || log.topics.length === 0) return [];
+    try {
+      const event = decodeEventLog({
+        abi: binarySettlementRedeemedEventAbi,
+        data: log.data as `0x${string}`,
+        topics: [...log.topics] as [`0x${string}`, ...`0x${string}`[]]
+      });
+      const args = event.args as {
+        readonly holder: string;
+        readonly outcomeIdx: number;
+        readonly amountBurned: bigint;
+        readonly collateralOut: bigint;
+      };
+      return [{
+        holder: args.holder.toLowerCase(),
+        outcomeIdx: args.outcomeIdx,
+        amountBurned: args.amountBurned.toString(),
+        collateralOut: args.collateralOut.toString()
+      }];
+    } catch {
+      return [];
+    }
+  });
+  const expectedOutcomeIdx = input.side === "BUY_YES" ? 0 : input.side === "BUY_NO" ? 1 : -1;
+  const redemption = decoded.length === 1 ? decoded[0] : undefined;
+  return redemption !== undefined && redemption.holder === input.account.toLowerCase() &&
+    redemption.outcomeIdx === expectedOutcomeIdx && redemption.amountBurned === input.amountRaw &&
+    (input.payoutRaw === null || redemption.collateralOut === input.payoutRaw)
+    ? { amountBurned: redemption.amountBurned, collateralOut: redemption.collateralOut }
+    : null;
+}
+
+interface DecodedOrderLifecycle {
+  readonly orderId: string | null;
+  readonly state: "ORDER_VERIFIED" | "UNFILLED" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED" | "EXPIRED" | "FAILED" | "UNVERIFIED";
+  readonly quantityRaw: string;
+  readonly remainingQuantityRaw: string;
+  readonly filledQuantityRaw: string;
+  readonly fills: readonly {
+    readonly fillIndex: number;
+    readonly quantityRaw: string;
+    readonly priceRaw: string;
+    readonly observedAt: string;
+    readonly payload: Record<string, unknown>;
+  }[];
+  readonly events: readonly Record<string, unknown>[];
+}
+
+const OrderPlacedArgsSchema = z.object({
+  orderId: z.bigint(),
+  placedOrder: z.object({
+    orderId: z.bigint(),
+    isBid: z.boolean(),
+    owner: AddressSchema,
+    userData: z.bigint(),
+    price: z.bigint(),
+    fullQuantity: z.bigint(),
+    quantityRemaining: z.bigint(),
+    expireTimestampNs: z.bigint()
+  })
+});
+const OrderFilledArgsSchema = z.object({
+  takerOrderId: z.bigint(),
+  makerOrderId: z.bigint(),
+  quantityFilled: z.bigint(),
+  takerRemainingQuantity: z.bigint(),
+  makerRemainingQuantity: z.bigint(),
+  fillPrice: z.bigint()
+});
+const OrderIdArgsSchema = z.object({
+  orderId: z.bigint()
+});
+
+function serializableDecodedArgs(input: unknown): unknown {
+  if (typeof input === "bigint") {
+    return input.toString();
+  }
+  if (Array.isArray(input)) {
+    return input.map(serializableDecodedArgs);
+  }
+  if (input !== null && typeof input === "object") {
+    return Object.fromEntries(
+      Object.entries(input as Record<string, unknown>).map(([key, value]) => [key, serializableDecodedArgs(value)])
+    );
+  }
+  return input;
+}
+
+export function decodeOrderLifecycleFromReceipt(input: {
+  readonly poolAddress: string;
+  readonly receiptStatus: boolean;
+  readonly receipt: RpcReceipt;
+  readonly fallbackQuantityRaw: string;
+  readonly observedAt: string;
+}): DecodedOrderLifecycle {
+  if (!input.receiptStatus) {
+    return {
+      orderId: null,
+      state: "FAILED",
+      quantityRaw: input.fallbackQuantityRaw,
+      remainingQuantityRaw: input.fallbackQuantityRaw,
+      filledQuantityRaw: "0",
+      fills: [],
+      events: []
+    };
+  }
+  let placed:
+    | {
+        readonly orderId: bigint;
+        readonly fullQuantity: bigint;
+        readonly quantityRemaining: bigint;
+      }
+    | null = null;
+  const terminalEvents: { readonly orderId: bigint; readonly state: "CANCELLED" | "EXPIRED" }[] = [];
+  let takerOrderId: bigint | null = null;
+  let takerRemainingQuantity: bigint | null = null;
+  const fills: {
+    fillIndex: number;
+    quantityRaw: string;
+    priceRaw: string;
+    observedAt: string;
+    payload: Record<string, unknown>;
+  }[] = [];
+  const events: Record<string, unknown>[] = [];
+  for (const log of input.receipt.logs ?? []) {
+    if (log.address?.toLowerCase() !== input.poolAddress.toLowerCase()) {
+      continue;
+    }
+    if (typeof log.data !== "string" || log.topics === undefined) {
+      continue;
+    }
+    try {
+      const decoded = decodeEventLog({
+        abi: orderBookEventsAbi,
+        data: log.data as `0x${string}`,
+        topics: log.topics as [`0x${string}`, ...`0x${string}`[]]
+      });
+      events.push({
+        eventName: decoded.eventName,
+        args: serializableDecodedArgs(decoded.args),
+        logIndex: log.logIndex ?? null
+      });
+      if (decoded.eventName === "OrderPlaced") {
+        const args = OrderPlacedArgsSchema.parse(decoded.args);
+        placed = {
+          orderId: args.placedOrder.orderId,
+          fullQuantity: args.placedOrder.fullQuantity,
+          quantityRemaining: args.placedOrder.quantityRemaining
+        };
+      } else if (decoded.eventName === "OrderFilled") {
+        const args = OrderFilledArgsSchema.parse(decoded.args);
+        if (takerOrderId === null) {
+          takerOrderId = args.takerOrderId;
+        } else if (args.takerOrderId !== takerOrderId) {
+          continue;
+        }
+        takerRemainingQuantity = args.takerRemainingQuantity;
+        fills.push({
+          fillIndex: fills.length,
+          quantityRaw: args.quantityFilled.toString(),
+          priceRaw: args.fillPrice.toString(),
+          observedAt: input.observedAt,
+          payload: {
+            takerOrderId: args.takerOrderId.toString(),
+            makerOrderId: args.makerOrderId.toString(),
+            takerRemainingQuantity: args.takerRemainingQuantity.toString(),
+            makerRemainingQuantity: args.makerRemainingQuantity.toString()
+          }
+        });
+      } else if (decoded.eventName === "OrderCancelled") {
+        const args = OrderIdArgsSchema.parse(decoded.args);
+        terminalEvents.push({ orderId: args.orderId, state: "CANCELLED" });
+      } else if (decoded.eventName === "OrderExpired") {
+        const args = OrderIdArgsSchema.parse(decoded.args);
+        terminalEvents.push({ orderId: args.orderId, state: "EXPIRED" });
+      }
+    } catch {
+      continue;
+    }
+  }
+  const orderId = placed?.orderId ?? takerOrderId;
+  if (orderId === null) {
+    return {
+      orderId: null,
+      state: "UNVERIFIED",
+      quantityRaw: input.fallbackQuantityRaw,
+      remainingQuantityRaw: input.fallbackQuantityRaw,
+      filledQuantityRaw: fills.reduce((sum, fill) => sum + BigInt(fill.quantityRaw), 0n).toString(),
+      fills,
+      events
+    };
+  }
+  const terminalState = terminalEvents.find((event) => event.orderId === orderId)?.state ?? null;
+  const quantityRaw = placed?.fullQuantity.toString() ?? input.fallbackQuantityRaw;
+  const remainingQuantityRaw = (takerRemainingQuantity ?? placed?.quantityRemaining ?? 0n).toString();
+  const state =
+    terminalState ??
+    (fills.length === 0
+      ? "UNFILLED"
+      : BigInt(remainingQuantityRaw) === 0n
+        ? "FILLED"
+        : "PARTIALLY_FILLED");
+  return {
+    orderId: orderId.toString(),
+    state,
+    quantityRaw,
+    remainingQuantityRaw,
+    filledQuantityRaw: fills.reduce((sum, fill) => sum + BigInt(fill.quantityRaw), 0n).toString(),
+    fills,
+    events
+  };
+}
+
+async function persistReadyExecutionCandidate(
+  pool: pg.Pool,
+  input: {
+    readonly candidate: z.infer<typeof PersistableExecutionCandidateSchema>;
+    readonly idempotencyKey: string;
+  }
+): Promise<string> {
+  const candidate = input.candidate;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO wallet_identities(address, chain_id) VALUES ($1, $2) ON CONFLICT (address) DO NOTHING",
+      [candidate.account.toLowerCase(), SOMNIA_SHANNON_CHAIN_ID]
+    );
+    const existing = await client.query<{ id: string; candidate_payload: unknown }>(
+      "SELECT id, candidate_payload FROM execution_intents WHERE intent_hash = $1 FOR UPDATE",
+      [candidate.intentHash]
+    );
+    if (existing.rows[0] !== undefined) {
+      if (stableJson(existing.rows[0].candidate_payload) !== stableJson(candidate)) {
+        throw new Error("EXECUTION_INTENT_IMMUTABLE_CONFLICT");
+      }
+      await client.query("COMMIT");
+      return existing.rows[0].id;
+    }
+    await client.query(
+      `
+        UPDATE execution_intents
+        SET state = 'EXPIRED'
+        WHERE owner_address = $1
+          AND experiment_id = $2
+          AND state IN ('INTENT_DRAFT', 'AWAITING_APPROVAL', 'APPROVED')
+      `,
+      [candidate.account.toLowerCase(), candidate.strategyLink.experimentId]
+    );
+    const policy = await client.query<{ id: string }>(
+      `
+        SELECT pv.id
+        FROM policy_versions pv
+        JOIN metric_runs mr ON mr.policy_version_id = pv.id
+        JOIN evidence_assessments ea ON ea.metric_run_id = mr.id
+        WHERE ea.id = $1
+          AND ea.assessment_hash = $2
+          AND ea.verdict = 'STRATEGY_QUALIFIED'
+          AND mr.experiment_id = $3
+          AND pv.policy_id = $4
+          AND pv.version = $5
+          AND pv.source_hash = $6
+        LIMIT 1
+      `,
+      [
+        candidate.strategyLink.assessmentId,
+        candidate.strategyLink.assessmentHash,
+        candidate.strategyLink.experimentId,
+        candidate.strategyLink.decision.policyId,
+        candidate.strategyLink.decision.policyVersion,
+        candidate.strategyLink.decision.policyHash
+      ]
+    );
+    const policyVersionId = policy.rows[0]?.id;
+    if (policyVersionId === undefined) {
+      throw new Error("STRATEGY_QUALIFICATION_LINK_INVALID");
+    }
+    const inserted = await client.query<{ id: string }>(
+      `
+        INSERT INTO execution_intents(
+          owner_address, experiment_id, assessment_id, policy_version_id,
+          market_id, chain_id, intent_type, state, pool_address, side,
+          price_raw, quantity_raw, escrow_raw, expires_at, caps,
+          idempotency_key, intent_hash, candidate_snapshot_hash,
+          candidate_payload, last_validated_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, 'TRIAL', 'AWAITING_APPROVAL', $7, $8,
+          $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17::jsonb, $18
+        )
+        RETURNING id
+      `,
+      [
+        candidate.account.toLowerCase(),
+        candidate.strategyLink.experimentId,
+        candidate.strategyLink.assessmentId,
+        policyVersionId,
+        candidate.market.stableMarketId,
+        SOMNIA_SHANNON_CHAIN_ID,
+        candidate.market.poolAddress.toLowerCase(),
+        candidate.sizing.side,
+        candidate.sizing.priceRaw,
+        candidate.sizing.quantityRaw,
+        candidate.risk.requiredEscrowRaw,
+        new Date(candidate.market.expirySeconds * 1000).toISOString(),
+        JSON.stringify({
+          maxEscrowRaw: candidate.risk.maxEscrowRaw,
+          requiredEscrowRaw: candidate.risk.requiredEscrowRaw,
+          orderCount: 1,
+          orderType: "ImmediateOrCancel",
+          serverSigner: false,
+          chainId: SOMNIA_SHANNON_CHAIN_ID
+        }),
+        input.idempotencyKey,
+        candidate.intentHash,
+        candidate.strategyLink.snapshotHash,
+        JSON.stringify(candidate),
+        candidate.validatedAt
+      ]
+    );
+    const intentId = inserted.rows[0]?.id;
+    if (intentId === undefined) {
+      throw new Error("EXECUTION_INTENT_INSERT_FAILED");
+    }
+    await client.query("COMMIT");
+    return intentId;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function persistStrategyExecutionTransaction(
+  pool: pg.Pool,
+  input: {
+    readonly intentId: string;
+    readonly candidate: z.infer<typeof PersistableExecutionCandidateSchema>;
+    readonly txHash: string;
+    readonly txRole: "approval" | "order";
+    readonly transaction: RpcTransaction;
+    readonly receipt: RpcReceipt | null;
+    readonly lifecycle: DecodedOrderLifecycle | null;
+  }
+): Promise<{
+  readonly intentId: string;
+  readonly state: string;
+  readonly logHash: string | null;
+  readonly orderId: string | null;
+  readonly orderState: DecodedOrderLifecycle["state"] | null;
+  readonly fillCount: number;
+}> {
+  const ownerAddress = input.candidate.account.toLowerCase();
+  const state =
+    input.receipt === null
+      ? "TX_PENDING"
+      : input.receipt.status !== "0x1"
+        ? "TX_REVERTED"
+      : input.txRole === "approval"
+        ? "APPROVED"
+        : input.lifecycle?.state ?? "UNVERIFIED";
+  const logHash = input.receipt === null ? null : sha256(stableJson(input.receipt.logs ?? []));
+  const transactionInputHash = sha256((input.transaction.input ?? "0x").toLowerCase());
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM execution_intents WHERE id = $1 FOR UPDATE", [input.intentId]);
+    await client.query(
+      `
+        INSERT INTO chain_transactions(
+          tx_hash, intent_id, chain_id, from_address, nonce, receipt_status,
+          block_number, log_hash, verified_at, payload, tx_role, transaction_input_hash
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+        ON CONFLICT (tx_hash) DO UPDATE
+        SET receipt_status = EXCLUDED.receipt_status,
+            block_number = EXCLUDED.block_number,
+            log_hash = EXCLUDED.log_hash,
+            verified_at = EXCLUDED.verified_at,
+            payload = EXCLUDED.payload
+        WHERE chain_transactions.intent_id = EXCLUDED.intent_id
+          AND chain_transactions.tx_role = EXCLUDED.tx_role
+          AND chain_transactions.transaction_input_hash = EXCLUDED.transaction_input_hash
+      `,
+      [
+        input.txHash,
+        input.intentId,
+        SOMNIA_SHANNON_CHAIN_ID,
+        ownerAddress,
+        hexToDecimalString(input.transaction.nonce),
+        input.receipt === null ? null : input.receipt.status === "0x1",
+        input.receipt === null ? null : hexToDecimalString(input.receipt.blockNumber),
+        logHash,
+        input.receipt === null ? null : new Date().toISOString(),
+        JSON.stringify({
+          txRole: input.txRole,
+          account: ownerAddress,
+          to: input.transaction.to?.toLowerCase() ?? null,
+          strategyLinked: true,
+          lifecycleDecoded: input.lifecycle?.orderId !== null,
+          receipt: input.receipt
+        }),
+        input.txRole,
+        transactionInputHash
+      ]
+    );
+    const persistedTransaction = await client.query<{
+      intent_id: string;
+      tx_role: string;
+      transaction_input_hash: string | null;
+    }>(
+      "SELECT intent_id, tx_role, transaction_input_hash FROM chain_transactions WHERE tx_hash = $1",
+      [input.txHash]
+    );
+    const persistedRow = persistedTransaction.rows[0];
+    if (
+      persistedRow === undefined ||
+      persistedRow.intent_id !== input.intentId ||
+      persistedRow.tx_role !== input.txRole ||
+      persistedRow.transaction_input_hash !== transactionInputHash
+    ) {
+      throw new Error("CHAIN_TRANSACTION_IMMUTABLE_CONFLICT");
+    }
+    if (input.lifecycle !== null && input.lifecycle.orderId !== null) {
+      await client.query(
+        `
+          INSERT INTO order_evidence(
+            tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
+            evidence_source, observed_at, payload
+          )
+          VALUES ($1, $2, $3, $4, $5, 'CHAIN', now(), $6::jsonb)
+          ON CONFLICT (tx_hash, order_id, state, remaining_quantity_raw) DO UPDATE
+          SET payload = EXCLUDED.payload
+        `,
+        [
+          input.txHash,
+          input.lifecycle.orderId,
+          input.lifecycle.state,
+          input.lifecycle.quantityRaw,
+          input.lifecycle.remainingQuantityRaw,
+          JSON.stringify({
+            strategyLinked: true,
+            decodedFromReceipt: true,
+            events: input.lifecycle.events
+          })
+        ]
+      );
+      for (const fill of input.lifecycle.fills) {
+        await client.query(
+          `
+            INSERT INTO fill_evidence(tx_hash, fill_index, quantity_raw, price_raw, observed_at, payload)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+            ON CONFLICT (tx_hash, fill_index) DO UPDATE
+            SET payload = EXCLUDED.payload
+          `,
+          [
+            input.txHash,
+            fill.fillIndex,
+            fill.quantityRaw,
+            fill.priceRaw,
+            fill.observedAt,
+            JSON.stringify({ ...fill.payload, strategyLinked: true, decodedFromReceipt: true })
+          ]
+        );
+      }
+    }
+    await client.query("UPDATE execution_intents SET state = $1 WHERE id = $2", [state, input.intentId]);
+    await client.query("COMMIT");
+    return {
+      intentId: input.intentId,
+      state,
+      logHash,
+      orderId: input.lifecycle?.orderId ?? null,
+      orderState: input.lifecycle?.state ?? null,
+      fillCount: input.lifecycle?.fills.length ?? 0
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function persistReconciledRedemption(
+  pool: pg.Pool,
+  input: {
+    readonly intentId: string;
+    readonly ownerAddress: string;
+    readonly txHash: string;
+    readonly transaction: RpcTransaction;
+    readonly receipt: RpcReceipt;
+    readonly actionId: string;
+    readonly amountRaw: string;
+    readonly payoutRaw: string | null;
+    readonly routedVia: string | null;
+  }
+): Promise<void> {
+  const transactionInputHash = sha256((input.transaction.input ?? "0x").toLowerCase());
+  const logHash = sha256(stableJson(input.receipt.logs ?? []));
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM execution_intents WHERE id = $1 FOR UPDATE", [input.intentId]);
+    const existing = await client.query<{ tx_hash: string }>(
+      "SELECT tx_hash FROM chain_transactions WHERE intent_id = $1 AND tx_role = 'redeem' LIMIT 1",
+      [input.intentId]
+    );
+    if (existing.rows[0] !== undefined && existing.rows[0].tx_hash !== input.txHash) {
+      await client.query("COMMIT");
+      return;
+    }
+    await client.query(
+      `
+        INSERT INTO chain_transactions(
+          tx_hash, intent_id, chain_id, from_address, nonce, receipt_status,
+          block_number, log_hash, verified_at, payload, tx_role, transaction_input_hash
+        )
+        VALUES ($1, $2, $3, $4, $5, true, $6, $7, now(), $8::jsonb, 'redeem', $9)
+        ON CONFLICT (tx_hash) DO UPDATE
+        SET receipt_status = EXCLUDED.receipt_status,
+            block_number = EXCLUDED.block_number,
+            log_hash = EXCLUDED.log_hash,
+            verified_at = EXCLUDED.verified_at,
+            payload = EXCLUDED.payload
+        WHERE chain_transactions.intent_id = EXCLUDED.intent_id
+          AND chain_transactions.tx_role = EXCLUDED.tx_role
+          AND chain_transactions.transaction_input_hash = EXCLUDED.transaction_input_hash
+      `,
+      [
+        input.txHash,
+        input.intentId,
+        SOMNIA_SHANNON_CHAIN_ID,
+        input.ownerAddress.toLowerCase(),
+        hexToDecimalString(input.transaction.nonce),
+        hexToDecimalString(input.receipt.blockNumber),
+        logHash,
+        JSON.stringify({
+          txRole: "redeem",
+          account: input.ownerAddress.toLowerCase(),
+          to: input.transaction.to?.toLowerCase() ?? null,
+          strategyLinked: true,
+          reconciliationSource: "DREAMDEX_INDEXER_AND_SHANNON_RPC",
+          routerActionId: input.actionId,
+          amountRaw: input.amountRaw,
+          payoutRaw: input.payoutRaw,
+          routedVia: input.routedVia,
+          receipt: input.receipt
+        }),
+        transactionInputHash
+      ]
+    );
+    const persisted = await client.query<{
+      intent_id: string;
+      tx_role: string;
+      transaction_input_hash: string | null;
+      receipt_status: boolean | null;
+    }>(
+      `
+        SELECT intent_id, tx_role, transaction_input_hash, receipt_status
+        FROM chain_transactions
+        WHERE tx_hash = $1
+      `,
+      [input.txHash]
+    );
+    const row = persisted.rows[0];
+    if (
+      row === undefined || row.intent_id !== input.intentId || row.tx_role !== "redeem" ||
+      row.transaction_input_hash !== transactionInputHash || row.receipt_status !== true
+    ) {
+      throw new Error("CHAIN_TRANSACTION_IMMUTABLE_CONFLICT");
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+type CanonicalTransactionState = "NOT_SUBMITTED" | "PENDING" | "CONFIRMED" | "REVERTED";
+type CanonicalFillState = "UNKNOWN" | "NO_FILL" | "PARTIAL_FILL" | "FULL_FILL";
+
+export function classifyExecutionFillState(input: {
+  readonly orderState: string | null;
+  readonly filledQuantityRaw: string;
+  readonly remainingQuantityRaw: string;
+  readonly hasOrderEvidence: boolean;
+}): CanonicalFillState {
+  if (!input.hasOrderEvidence || input.orderState === "UNVERIFIED") {
+    return "UNKNOWN";
+  }
+  const filledQuantity = BigInt(input.filledQuantityRaw);
+  if (filledQuantity > 0n) {
+    return BigInt(input.remainingQuantityRaw) === 0n || input.orderState === "FILLED"
+      ? "FULL_FILL"
+      : "PARTIAL_FILL";
+  }
+  return ["UNFILLED", "CANCELLED", "EXPIRED"].includes(input.orderState ?? "")
+    ? "NO_FILL"
+    : "UNKNOWN";
+}
+
+function canonicalTransactionState(receiptStatus: boolean | null | undefined): CanonicalTransactionState {
+  if (receiptStatus === undefined) {
+    return "NOT_SUBMITTED";
+  }
+  if (receiptStatus === null) {
+    return "PENDING";
+  }
+  return receiptStatus ? "CONFIRMED" : "REVERTED";
+}
+
+async function loadCanonicalExecutionLifecycle(
+  pool: pg.Pool,
+  input: {
+    readonly sessionId: string;
+    readonly intentId?: string;
+    readonly experimentId?: string;
+  }
+) {
+  const intentResult = await pool.query<{
+    id: string;
+    intent_hash: string;
+    experiment_id: string;
+    assessment_id: string;
+    policy_version_id: string;
+    state: string;
+    market_id: string;
+    pool_address: string;
+    side: string;
+    price_raw: string;
+    quantity_raw: string;
+    escrow_raw: string;
+    candidate_payload: unknown;
+    reconciliation_payload: unknown;
+    last_validated_at: Date;
+    last_reconciled_at: Date | null;
+    created_at: Date;
+    assessment_hash: string;
+    verdict: string;
+    policy_id: string;
+    policy_version: string;
+    policy_source_hash: string;
+  }>(
+    `
+      SELECT
+        ei.id, ei.intent_hash, ei.experiment_id, ei.assessment_id, ei.policy_version_id,
+        ei.state, ei.market_id, ei.pool_address, ei.side, ei.price_raw::text,
+        ei.quantity_raw::text, ei.escrow_raw::text, ei.candidate_payload,
+        ei.reconciliation_payload, ei.last_validated_at, ei.last_reconciled_at, ei.created_at,
+        ea.assessment_hash, ea.verdict::text, pv.policy_id, pv.version AS policy_version,
+        pv.source_hash AS policy_source_hash
+      FROM execution_intents ei
+      JOIN experiments e ON e.id = ei.experiment_id
+      JOIN evidence_assessments ea ON ea.id = ei.assessment_id
+      JOIN policy_versions pv ON pv.id = ei.policy_version_id
+      WHERE e.created_by_session_id = $1
+        AND ($2::uuid IS NULL OR ei.id = $2::uuid)
+        AND ($3::uuid IS NULL OR ei.experiment_id = $3::uuid)
+      ORDER BY ei.created_at DESC
+      LIMIT 1
+    `,
+    [input.sessionId, input.intentId ?? null, input.experimentId ?? null]
+  );
+  const intent = intentResult.rows[0];
+  if (intent === undefined) {
+    return null;
+  }
+  const [transactionsResult, orderResult, fillResult, settlementResult] = await Promise.all([
+    pool.query<{
+      tx_hash: string;
+      tx_role: string;
+      receipt_status: boolean | null;
+      block_number: string | null;
+      verified_at: Date | null;
+    }>(
+      `
+        SELECT tx_hash, tx_role, receipt_status, block_number::text, verified_at
+        FROM chain_transactions
+        WHERE intent_id = $1
+        ORDER BY created_at ASC
+      `,
+      [intent.id]
+    ),
+    pool.query<{
+      tx_hash: string;
+      order_id: string;
+      state: string;
+      quantity_raw: string;
+      remaining_quantity_raw: string;
+      evidence_source: string;
+      observed_at: Date;
+      payload: unknown;
+    }>(
+      `
+        SELECT oe.tx_hash, oe.order_id, oe.state::text, oe.quantity_raw::text,
+               oe.remaining_quantity_raw::text, oe.evidence_source, oe.observed_at, oe.payload
+        FROM order_evidence oe
+        JOIN chain_transactions ct ON ct.tx_hash = oe.tx_hash
+        WHERE ct.intent_id = $1
+        ORDER BY
+          CASE oe.state
+            WHEN 'REDEEMED' THEN 100
+            WHEN 'REDEEMABLE' THEN 90
+            WHEN 'SETTLED' THEN 80
+            WHEN 'FILLED' THEN 70
+            WHEN 'CANCELLED' THEN 60
+            WHEN 'EXPIRED' THEN 60
+            WHEN 'PARTIALLY_FILLED' THEN 50
+            WHEN 'UNFILLED' THEN 40
+            WHEN 'ORDER_VERIFIED' THEN 20
+            ELSE 10
+          END DESC,
+          oe.observed_at DESC,
+          oe.id DESC
+        LIMIT 1
+      `,
+      [intent.id]
+    ),
+    pool.query<{ quantity_raw: string; fill_count: string }>(
+      `
+        SELECT COALESCE(sum(fe.quantity_raw), 0)::text AS quantity_raw,
+               count(*)::text AS fill_count
+        FROM fill_evidence fe
+        JOIN chain_transactions ct ON ct.tx_hash = fe.tx_hash
+        WHERE ct.intent_id = $1
+      `,
+      [intent.id]
+    ),
+    pool.query<{ resolved: boolean; voided: boolean; winner: string | null; source_observed_at: Date }>(
+      `
+        SELECT resolved, voided, winner, source_observed_at
+        FROM settlements
+        WHERE market_id = $1
+        ORDER BY source_observed_at DESC
+        LIMIT 1
+      `,
+      [intent.market_id]
+    )
+  ]);
+  const byRole = new Map(transactionsResult.rows.map((row) => [row.tx_role, row]));
+  const approval = byRole.get("approval");
+  const orderTransaction = byRole.get("order");
+  const redeem = byRole.get("redeem");
+  const order = orderResult.rows[0];
+  const receiptFilledRaw = fillResult.rows[0]?.quantity_raw ?? "0";
+  const requestedRaw = order?.quantity_raw ?? intent.quantity_raw;
+  const remainingRaw = order?.remaining_quantity_raw ?? requestedRaw;
+  const derivedFilled = BigInt(requestedRaw) >= BigInt(remainingRaw)
+    ? (BigInt(requestedRaw) - BigInt(remainingRaw)).toString()
+    : receiptFilledRaw;
+  const filledRaw = BigInt(receiptFilledRaw) > BigInt(derivedFilled) ? receiptFilledRaw : derivedFilled;
+  const orderState = order?.state ?? null;
+  const fillState = classifyExecutionFillState({
+    orderState,
+    filledQuantityRaw: filledRaw,
+    remainingQuantityRaw: remainingRaw,
+    hasOrderEvidence: order !== undefined
+  });
+  const reconciliationPayload =
+    intent.reconciliation_payload !== null && typeof intent.reconciliation_payload === "object"
+      ? intent.reconciliation_payload as Record<string, unknown>
+      : {};
+  const claimableAmountRaw =
+    typeof reconciliationPayload.claimableAmountRaw === "string" ? reconciliationPayload.claimableAmountRaw : "0";
+  const marketStatus = typeof reconciliationPayload.marketStatus === "string" ? reconciliationPayload.marketStatus : null;
+  const settlement = settlementResult.rows[0];
+  const settlementState =
+    fillState === "NO_FILL"
+      ? "NOT_APPLICABLE"
+      : settlement !== undefined || ["Resolved", "Voided", "Finalized"].includes(marketStatus ?? "")
+        ? "SETTLED"
+        : "PENDING_OR_UNKNOWN";
+  const heldOutcome = intent.side === "BUY_YES" ? "YES" : intent.side === "BUY_NO" ? "NO" : null;
+  const positionLost = settlement?.resolved && !settlement.voided &&
+    settlement.winner !== null && heldOutcome !== null && settlement.winner !== heldOutcome;
+  const redeemTransactionState = canonicalTransactionState(redeem?.receipt_status);
+  const redeemedQuantityRaw =
+    redeemTransactionState === "CONFIRMED" && typeof reconciliationPayload.redemptionAmountRaw === "string"
+      ? reconciliationPayload.redemptionAmountRaw
+      : null;
+  const actualPayoutRaw =
+    redeemTransactionState === "CONFIRMED" && typeof reconciliationPayload.redemptionPayoutRaw === "string"
+      ? reconciliationPayload.redemptionPayoutRaw
+      : null;
+  const redemptionState =
+    fillState === "NO_FILL"
+      ? "NOT_APPLICABLE"
+      : positionLost
+        ? "NOT_APPLICABLE_LOSS"
+        : BigInt(claimableAmountRaw) > 0n
+          ? "REDEEMABLE"
+          : redeemTransactionState === "CONFIRMED"
+            ? "REDEEMED"
+            : redeemTransactionState === "PENDING"
+              ? "REDEMPTION_PENDING"
+              : redeemTransactionState === "REVERTED"
+                ? "REDEMPTION_REVERTED"
+                : settlementState === "SETTLED"
+                  ? "UNKNOWN"
+                  : "NOT_YET_REDEEMABLE";
+  return {
+    intentId: intent.id,
+    intentHash: intent.intent_hash,
+    experimentId: intent.experiment_id,
+    state: intent.state,
+    qualification: {
+      verdict: intent.verdict,
+      assessmentId: intent.assessment_id,
+      assessmentHash: intent.assessment_hash,
+      policyVersionId: intent.policy_version_id,
+      policyId: intent.policy_id,
+      policyVersion: intent.policy_version,
+      policyHash: intent.policy_source_hash
+    },
+    candidate: {
+      marketId: intent.market_id,
+      poolAddress: intent.pool_address,
+      side: intent.side,
+      priceRaw: intent.price_raw,
+      requestedQuantityRaw: intent.quantity_raw,
+      escrowRaw: intent.escrow_raw,
+      validatedAt: intent.last_validated_at.toISOString()
+    },
+    transactions: {
+      approval: approval === undefined ? null : {
+        txHash: approval.tx_hash,
+        state: canonicalTransactionState(approval.receipt_status),
+        blockNumber: approval.block_number,
+        verifiedAt: approval.verified_at?.toISOString() ?? null
+      },
+      order: orderTransaction === undefined ? null : {
+        txHash: orderTransaction.tx_hash,
+        state: canonicalTransactionState(orderTransaction.receipt_status),
+        blockNumber: orderTransaction.block_number,
+        verifiedAt: orderTransaction.verified_at?.toISOString() ?? null
+      },
+      redeem: redeem === undefined ? null : {
+        txHash: redeem.tx_hash,
+        state: canonicalTransactionState(redeem.receipt_status),
+        blockNumber: redeem.block_number,
+        verifiedAt: redeem.verified_at?.toISOString() ?? null
+      }
+    },
+    order: order === undefined ? null : {
+      orderId: order.order_id,
+      state: order.state,
+      requestedQuantityRaw: requestedRaw,
+      filledQuantityRaw: filledRaw,
+      remainingQuantityRaw: remainingRaw,
+      fillState,
+      fillCount: Number(fillResult.rows[0]?.fill_count ?? "0"),
+      evidenceSource: order.evidence_source,
+      observedAt: order.observed_at.toISOString()
+    },
+    settlement: {
+      state: settlementState,
+      marketStatus,
+      resolved: settlement?.resolved ?? null,
+      voided: settlement?.voided ?? null,
+      winner: settlement?.winner ?? null,
+      observedAt: settlement?.source_observed_at.toISOString() ?? null
+    },
+    redemption: {
+      state: redemptionState,
+      claimableAmountRaw,
+      estimatedPayoutRaw:
+        typeof reconciliationPayload.estimatedPayoutRaw === "string"
+          ? reconciliationPayload.estimatedPayoutRaw
+          : "0",
+      redeemedQuantityRaw,
+      actualPayoutRaw,
+      evidenceSource: actualPayoutRaw === null ? null : "DREAMDEX_REDEEMED_EVENT_AND_SHANNON_RPC"
+    },
+    lastReconciledAt: intent.last_reconciled_at?.toISOString() ?? null,
+    createdAt: intent.created_at.toISOString(),
+    publicClaim:
+      fillState === "FULL_FILL"
+        ? "CONFIRMED_FULL_FILL"
+        : fillState === "PARTIAL_FILL"
+          ? "CONFIRMED_PARTIAL_FILL"
+          : fillState === "NO_FILL"
+            ? "CONFIRMED_NO_FILL"
+            : orderTransaction?.receipt_status === false
+              ? "REVERTED_ORDER_TRANSACTION"
+              : "EXECUTION_NOT_YET_PROVEN"
+  } as const;
+}
+
+function executionCallMatches(
+  candidate: z.infer<typeof PersistableExecutionCandidateSchema>,
+  txRole: "approval" | "order",
+  transaction: RpcTransaction
+): boolean {
+  const expectedCall = txRole === "order" ? candidate.unsignedTransactions.order : candidate.unsignedTransactions.approval;
+  return expectedCall !== null &&
+    transaction.from?.toLowerCase() === candidate.account.toLowerCase() &&
+    transaction.to?.toLowerCase() === expectedCall.to.toLowerCase() &&
+    transaction.input?.toLowerCase() === expectedCall.data.toLowerCase() &&
+    hexToDecimalString(transaction.value) === expectedCall.valueRaw;
+}
+
+function indexerOrderState(input: {
+  readonly status: "Open" | "Closed" | "Filled" | "Cancelled" | "Expired";
+  readonly filledQuantity: string;
+  readonly quantityRemaining: string;
+}): "ORDER_VERIFIED" | "UNFILLED" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED" | "EXPIRED" {
+  if (input.status === "Open") return "ORDER_VERIFIED";
+  if (input.status === "Filled") return "FILLED";
+  if (input.status === "Cancelled") return "CANCELLED";
+  if (input.status === "Expired") return "EXPIRED";
+  if (BigInt(input.filledQuantity) === 0n) return "UNFILLED";
+  return BigInt(input.quantityRemaining) === 0n ? "FILLED" : "PARTIALLY_FILLED";
+}
+
+async function reconcileExecutionIntent(input: {
+  readonly pool: pg.Pool;
+  readonly sessionId: string;
+  readonly intentId: string;
+  readonly config: RuntimeConfig;
+  readonly dreamDex: { readonly client: DreamDexSdkClient; readonly config: DreamDexReadConfig };
+}) {
+  const intentResult = await input.pool.query<{ candidate_payload: unknown }>(
+    `
+      SELECT ei.candidate_payload
+      FROM execution_intents ei
+      JOIN experiments e ON e.id = ei.experiment_id
+      WHERE ei.id = $1 AND e.created_by_session_id = $2
+      LIMIT 1
+    `,
+    [input.intentId, input.sessionId]
+  );
+  const candidate = PersistableExecutionCandidateSchema.safeParse(intentResult.rows[0]?.candidate_payload);
+  if (!candidate.success) {
+    return null;
+  }
+  const pendingTransactions = await input.pool.query<{
+    tx_hash: string;
+    tx_role: "approval" | "order";
+  }>(
+    `
+      SELECT tx_hash, tx_role
+      FROM chain_transactions
+      WHERE intent_id = $1
+        AND tx_role IN ('approval', 'order')
+        AND receipt_status IS NULL
+    `,
+    [input.intentId]
+  );
+  for (const pending of pendingTransactions.rows) {
+    const [transaction, receipt] = await Promise.all([
+      shannonRpc<RpcTransaction | null>(input.config, "eth_getTransactionByHash", [pending.tx_hash]),
+      shannonRpc<RpcReceipt | null>(input.config, "eth_getTransactionReceipt", [pending.tx_hash])
+    ]);
+    if (transaction === null || !executionCallMatches(candidate.data, pending.tx_role, transaction)) {
+      throw new Error("PERSISTED_EXECUTION_TX_CALL_MISMATCH");
+    }
+    if (receipt === null) {
+      continue;
+    }
+    const lifecycle = pending.tx_role === "order"
+      ? decodeOrderLifecycleFromReceipt({
+          poolAddress: candidate.data.market.poolAddress,
+          receiptStatus: receipt.status === "0x1",
+          receipt,
+          fallbackQuantityRaw: candidate.data.sizing.quantityRaw,
+          observedAt: new Date().toISOString()
+        })
+      : null;
+    if (
+      lifecycle !== null &&
+      lifecycle.orderId !== null &&
+      (lifecycle.quantityRaw !== candidate.data.sizing.quantityRaw ||
+        BigInt(lifecycle.filledQuantityRaw) > BigInt(candidate.data.sizing.quantityRaw) ||
+        BigInt(lifecycle.remainingQuantityRaw) > BigInt(candidate.data.sizing.quantityRaw))
+    ) {
+      throw new Error("ORDER_EVENT_MISMATCH");
+    }
+    await persistStrategyExecutionTransaction(input.pool, {
+      intentId: input.intentId,
+      candidate: candidate.data,
+      txHash: pending.tx_hash,
+      txRole: pending.tx_role,
+      transaction,
+      receipt,
+      lifecycle
+    });
+  }
+
+  const beforeIndexer = await loadCanonicalExecutionLifecycle(input.pool, {
+    sessionId: input.sessionId,
+    intentId: input.intentId
+  });
+  if (beforeIndexer === null) {
+    return null;
+  }
+  const reconciliationPayload: Record<string, unknown> = {
+    reconciledAt: new Date().toISOString(),
+    onchainOrder: "NOT_REQUESTED",
+    indexerOrder: "NOT_REQUESTED",
+    redemptionIndexer: "NOT_REQUESTED",
+    marketStatus: null,
+    claimableAmountRaw: "0",
+    estimatedPayoutRaw: "0",
+    sourceErrors: [] as string[]
+  };
+  const sourceErrors = reconciliationPayload.sourceErrors as string[];
+  const orderTxHash = beforeIndexer.transactions.order?.txHash;
+  if (beforeIndexer.order !== null && orderTxHash !== undefined && input.dreamDex.client.getOrderOnchain !== undefined) {
+    try {
+      const onchain = await input.dreamDex.client.getOrderOnchain(
+        candidate.data.market.poolAddress,
+        BigInt(beforeIndexer.order.orderId)
+      );
+      if (onchain === null) {
+        reconciliationPayload.onchainOrder = "NOT_ACTIVE_OR_TERMINAL";
+      } else {
+        reconciliationPayload.onchainOrder = "ACTIVE";
+        await input.pool.query(
+          `
+            INSERT INTO order_evidence(
+              tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
+              evidence_source, observed_at, payload
+            )
+            VALUES ($1, $2, 'ORDER_VERIFIED', $3, $4, 'SHANNON_RPC', now(), $5::jsonb)
+            ON CONFLICT (tx_hash, order_id, state, remaining_quantity_raw) DO UPDATE
+            SET observed_at = EXCLUDED.observed_at,
+                evidence_source = EXCLUDED.evidence_source,
+                payload = EXCLUDED.payload
+          `,
+          [
+            orderTxHash,
+            onchain.orderId.toString(),
+            onchain.fullQuantity.toString(),
+            onchain.quantityRemaining.toString(),
+            JSON.stringify({ activeAtChainHead: true, strategyLinked: true })
+          ]
+        );
+      }
+    } catch (error) {
+      reconciliationPayload.onchainOrder = "READ_FAILED";
+      sourceErrors.push(error instanceof Error ? error.message : "DreamDEX on-chain order read failed");
+    }
+  }
+  if (beforeIndexer.order !== null && orderTxHash !== undefined && input.dreamDex.client.getOrders !== undefined) {
+    try {
+      const rows = await input.dreamDex.client.getOrders(candidate.data.account, {
+        pool: candidate.data.market.poolAddress,
+        limit: 200
+      });
+      const indexed = rows.find((row) =>
+        row.orderId === beforeIndexer.order?.orderId &&
+        row.pool.toLowerCase() === candidate.data.market.poolAddress.toLowerCase() &&
+        row.market.toLowerCase() === candidate.data.market.stableMarketId.toLowerCase()
+      );
+      if (indexed === undefined) {
+        reconciliationPayload.indexerOrder = "DELAYED_OR_ABSENT";
+      } else {
+        reconciliationPayload.indexerOrder = "MATCHED";
+        const state = indexerOrderState(indexed);
+        await input.pool.query(
+          `
+            INSERT INTO order_evidence(
+              tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
+              evidence_source, observed_at, payload
+            )
+            VALUES ($1, $2, $3, $4, $5, 'DREAMDEX_INDEXER', now(), $6::jsonb)
+            ON CONFLICT (tx_hash, order_id, state, remaining_quantity_raw) DO UPDATE
+            SET observed_at = EXCLUDED.observed_at,
+                evidence_source = EXCLUDED.evidence_source,
+                payload = EXCLUDED.payload
+          `,
+          [
+            orderTxHash,
+            indexed.orderId,
+            state,
+            indexed.fullQuantity,
+            indexed.quantityRemaining,
+            JSON.stringify({
+              placedTxHash: indexed.placedTxHash,
+              filledQuantityRaw: indexed.filledQuantity,
+              indexerStatus: indexed.status,
+              strategyLinked: true
+            })
+          ]
+        );
+      }
+    } catch (error) {
+      reconciliationPayload.indexerOrder = "READ_FAILED";
+      sourceErrors.push(error instanceof Error ? error.message : "DreamDEX order indexer read failed");
+    }
+  }
+  try {
+    const market = await input.dreamDex.client.getBinaryMarket(candidate.data.market.stableMarketId);
+    reconciliationPayload.marketStatus = market?.status ?? null;
+  } catch (error) {
+    sourceErrors.push(error instanceof Error ? error.message : "DreamDEX market lifecycle read failed");
+  }
+  if (input.dreamDex.client.getClaimable !== undefined) {
+    try {
+      const claimable = await input.dreamDex.client.getClaimable(candidate.data.account);
+      const matching = claimable.filter((position) =>
+        position.marketId.toLowerCase() === candidate.data.market.stableMarketId.toLowerCase() &&
+        position.pool.toLowerCase() === candidate.data.market.poolAddress.toLowerCase()
+      );
+      reconciliationPayload.claimableAmountRaw = matching.reduce((sum, position) => sum + position.amount, 0n).toString();
+      reconciliationPayload.estimatedPayoutRaw = matching.reduce((sum, position) => sum + position.estPayout, 0n).toString();
+    } catch (error) {
+      sourceErrors.push(error instanceof Error ? error.message : "DreamDEX claimable read failed");
+    }
+  }
+  const beforeRedemption = await loadCanonicalExecutionLifecycle(input.pool, {
+    sessionId: input.sessionId,
+    intentId: input.intentId
+  });
+  if (
+    beforeRedemption !== null && beforeRedemption.order !== null &&
+    ["PARTIAL_FILL", "FULL_FILL"].includes(beforeRedemption.order.fillState) &&
+    input.dreamDex.client.getRouterActions !== undefined
+  ) {
+    if (beforeRedemption.transactions.redeem?.state === "CONFIRMED") {
+      reconciliationPayload.redemptionIndexer = "ALREADY_VERIFIED";
+    } else {
+      try {
+        const actions = await input.dreamDex.client.getRouterActions(candidate.data.account, {
+          market: candidate.data.market.stableMarketId,
+          kind: "Redeem",
+          limit: 20
+        });
+        const notBeforeMs = new Date(
+          beforeRedemption.transactions.order?.verifiedAt ?? beforeRedemption.createdAt
+        ).getTime();
+        const exactActions = actions.filter((action) => {
+          if (
+            action.kind !== "Redeem" || action.account.toLowerCase() !== candidate.data.account.toLowerCase() ||
+            action.market?.toLowerCase() !== candidate.data.market.stableMarketId.toLowerCase() ||
+            !TxHashSchema.safeParse(action.txHash).success || !/^[0-9]+$/.test(action.amount) ||
+            !/^[0-9]+$/.test(action.timestamp) || (action.payout !== null && !/^[0-9]+$/.test(action.payout))
+          ) {
+            return false;
+          }
+          return action.amount === beforeRedemption.order?.filledQuantityRaw &&
+            BigInt(action.timestamp) >= BigInt(Math.floor(notBeforeMs / 1000));
+        });
+        if (exactActions.length === 0) {
+          reconciliationPayload.redemptionIndexer = "DELAYED_OR_ABSENT";
+        } else if (exactActions.length > 1) {
+          reconciliationPayload.redemptionIndexer = "AMBIGUOUS";
+          sourceErrors.push("Multiple exact redemption actions matched this intent; attribution failed closed");
+        } else {
+          const action = exactActions[0];
+          if (action === undefined) throw new Error("REDEMPTION_ACTION_MISSING");
+          const [transaction, receipt] = await Promise.all([
+            shannonRpc<RpcTransaction | null>(input.config, "eth_getTransactionByHash", [action.txHash]),
+            shannonRpc<RpcReceipt | null>(input.config, "eth_getTransactionReceipt", [action.txHash])
+          ]);
+          if (transaction === null || receipt === null) {
+            reconciliationPayload.redemptionIndexer = "RPC_PENDING_OR_DELAYED";
+          } else if (receipt.status !== "0x1") {
+            reconciliationPayload.redemptionIndexer = "REVERTED";
+            sourceErrors.push("Indexed redemption transaction reverted on Shannon");
+          } else {
+            const exactRedemption = exactStrategyRedemption({
+              receipt,
+              account: candidate.data.account,
+              side: candidate.data.sizing.side,
+              amountRaw: action.amount,
+              payoutRaw: action.payout
+            });
+            if (
+              transaction.from?.toLowerCase() !== candidate.data.account.toLowerCase() ||
+              !AddressSchema.safeParse(transaction.to).success || transaction.input === undefined ||
+              transaction.input === "0x" || !/^0x[0-9a-fA-F]+$/.test(transaction.input) ||
+              exactRedemption === null
+            ) {
+              reconciliationPayload.redemptionIndexer = "RECEIPT_MISMATCH";
+              sourceErrors.push("Indexed redemption did not match the exact wallet, side, amount, and Shannon receipt");
+            } else {
+              await persistReconciledRedemption(input.pool, {
+                intentId: input.intentId,
+                ownerAddress: candidate.data.account,
+                txHash: action.txHash.toLowerCase(),
+                transaction,
+                receipt,
+                actionId: action.id,
+                amountRaw: exactRedemption.amountBurned,
+                payoutRaw: exactRedemption.collateralOut,
+                routedVia: action.routedVia
+              });
+              reconciliationPayload.redemptionIndexer = "MATCHED";
+              reconciliationPayload.redemptionAmountRaw = exactRedemption.amountBurned;
+              reconciliationPayload.redemptionPayoutRaw = exactRedemption.collateralOut;
+            }
+          }
+        }
+      } catch (error) {
+        reconciliationPayload.redemptionIndexer = "READ_FAILED";
+        sourceErrors.push(error instanceof Error ? error.message : "DreamDEX redemption reconciliation failed");
+      }
+    }
+  }
+  const afterReads = await loadCanonicalExecutionLifecycle(input.pool, {
+    sessionId: input.sessionId,
+    intentId: input.intentId
+  });
+  if (afterReads === null) {
+    return null;
+  }
+  const currentClaimableAmount = BigInt(String(reconciliationPayload.claimableAmountRaw));
+  const nextState =
+    afterReads.transactions.order?.state === "PENDING"
+      ? "TX_PENDING"
+      : afterReads.transactions.order?.state === "REVERTED"
+        ? "TX_REVERTED"
+        : afterReads.transactions.redeem?.state === "CONFIRMED" && currentClaimableAmount === 0n
+          ? "REDEEMED"
+          : currentClaimableAmount > 0n
+            ? "REDEEMABLE"
+            : afterReads.order?.state ?? afterReads.state;
+  await input.pool.query(
+    `
+      UPDATE execution_intents
+      SET state = $1,
+          last_reconciled_at = now(),
+          reconciliation_payload = $2::jsonb
+      WHERE id = $3
+    `,
+    [nextState, JSON.stringify(reconciliationPayload), input.intentId]
+  );
+  return await loadCanonicalExecutionLifecycle(input.pool, {
+    sessionId: input.sessionId,
+    intentId: input.intentId
+  });
 }
 
 function withoutSource<T extends { readonly source: unknown }>(input: T): Omit<T, "source"> {
@@ -359,6 +1867,9 @@ function policySupportedPlanes(policyId: string): readonly ("MAINNET_HISTORICAL"
   if (policyId === "reference-neutral") {
     return ["SHANNON_FORWARD"];
   }
+  if (policyId === "last-trade-forward-proxy") {
+    return ["SHANNON_FORWARD"];
+  }
   if (policyId === "historical-last-trade") {
     return ["MAINNET_HISTORICAL"];
   }
@@ -396,7 +1907,11 @@ function policyCatalog(
     description:
       adapter.policyId === "reference-book-tilt"
         ? "Captured-book tilt baseline. Historical use remains disabled until book reconstruction is verified."
-        : "Neutral watch-only baseline for calibration and workflow validation."
+        : adapter.policyId === "last-trade-forward-proxy"
+          ? adapter.version === "1.1.0"
+            ? "Forward challenger using a non-crossed YES midpoint, then a current-generation pre-outcome trade no older than 15 minutes, then one-sided book fallbacks. It never authorizes execution."
+            : "Frozen forward control using the live YES-term midpoint or ask-only fallback. It never authorizes execution."
+          : "Neutral watch-only baseline for calibration and workflow validation."
   }));
   const replayPolicies = historicalPolicies.map((adapter: HistoricalPolicyAdapter) => ({
     ...createHistoricalPolicyManifest(adapter),
@@ -407,6 +1922,126 @@ function policyCatalog(
         : "Uses only the latest verified pre-cutoff DreamDEX YES-term fill in the last 15 minutes; abstains when no qualifying fill exists."
   }));
   return [...livePolicies, ...replayPolicies];
+}
+
+function toExecutionDomainSnapshot(snapshot: {
+  readonly market: {
+    readonly stableMarketId: string;
+    readonly asset: "BTC" | "ETH";
+    readonly intervalSeconds: number | null;
+    readonly quoteDecimals: number;
+    readonly tradingStartSeconds: number;
+    readonly expirySeconds: number;
+    readonly lastPriceRaw: string | null;
+    readonly lastTradeAtSeconds: number | null;
+    readonly source: {
+      readonly sdkVersion: typeof DREAMDEX_MARKETS_SDK_VERSION;
+      readonly rpcUrl: string;
+      readonly indexerUrl: string;
+      readonly evidenceClass: string;
+      readonly retrievedAt: string;
+    };
+  };
+  readonly book: {
+    readonly yesBids: readonly { readonly priceRaw: string; readonly quantityRaw: string }[];
+    readonly yesAsks: readonly { readonly priceRaw: string; readonly quantityRaw: string }[];
+    readonly noAsks?: readonly { readonly priceRaw: string; readonly quantityRaw: string }[];
+  };
+}, mode: "YES_NATIVE" | "INVERSE_NO_ASK" = "YES_NATIVE") {
+  const scale = 10n ** BigInt(snapshot.market.quoteDecimals);
+  const asks =
+    mode === "YES_NATIVE"
+      ? snapshot.book.yesAsks
+      : (snapshot.book.noAsks ?? [])
+          .map((level) => {
+            const price = BigInt(level.priceRaw);
+            return {
+              priceRaw: price >= scale ? "0" : (scale - price).toString(),
+              quantityRaw: level.quantityRaw
+            };
+          })
+          .filter((level) => level.priceRaw !== "0");
+  return {
+    marketId: snapshot.market.stableMarketId,
+    chainId: SOMNIA_SHANNON_CHAIN_ID,
+    asset: snapshot.market.asset,
+    intervalSeconds: snapshot.market.intervalSeconds ?? 0,
+    quoteDecimals: snapshot.market.quoteDecimals,
+    capturedAt: snapshot.market.source.retrievedAt,
+    source: {
+      sdkVersion: snapshot.market.source.sdkVersion,
+      rpcUrl: snapshot.market.source.rpcUrl,
+      indexerUrl: snapshot.market.source.indexerUrl,
+      evidenceClass: snapshot.market.source.evidenceClass
+    },
+    book: {
+      bids: mode === "YES_NATIVE" ? snapshot.book.yesBids : [],
+      asks
+    },
+    marketWindow: {
+      tradingStartSeconds: snapshot.market.tradingStartSeconds,
+      expirySeconds: snapshot.market.expirySeconds
+    },
+    ...(snapshot.market.lastPriceRaw === null || snapshot.market.lastTradeAtSeconds === null
+      ? {}
+      : {
+          lastTrade: {
+            priceRaw: snapshot.market.lastPriceRaw,
+            timestampSeconds: snapshot.market.lastTradeAtSeconds
+          }
+        })
+  };
+}
+
+function floorToLot(quantity: bigint, lotSize: bigint): bigint {
+  if (lotSize <= 0n) {
+    return quantity;
+  }
+  return (quantity / lotSize) * lotSize;
+}
+
+function executionEscrowPriceRaw(side: "BUY_YES" | "BUY_NO", priceRaw: bigint, quoteDecimals: number): bigint {
+  if (side === "BUY_YES") {
+    return priceRaw;
+  }
+  const scale = 10n ** BigInt(quoteDecimals);
+  return priceRaw >= scale ? 0n : scale - priceRaw;
+}
+
+function boundedQuantityForEscrow(input: {
+  readonly maxEscrowRaw: bigint;
+  readonly priceRaw: bigint;
+  readonly quoteDecimals: number;
+  readonly availableQuantityRaw: bigint;
+  readonly lotSize: bigint;
+}): bigint {
+  if (input.priceRaw <= 0n || input.maxEscrowRaw <= 0n || input.availableQuantityRaw <= 0n) {
+    return 0n;
+  }
+  const scale = 10n ** BigInt(input.quoteDecimals);
+  const budgetQuantity = (input.maxEscrowRaw * scale) / input.priceRaw;
+  const capped = budgetQuantity < input.availableQuantityRaw ? budgetQuantity : input.availableQuantityRaw;
+  return floorToLot(capped, input.lotSize);
+}
+
+function minimumEscrowForQuantity(input: {
+  readonly quantityRaw: bigint;
+  readonly priceRaw: bigint;
+  readonly quoteDecimals: number;
+}): bigint {
+  if (input.quantityRaw <= 0n || input.priceRaw <= 0n) {
+    return 0n;
+  }
+  const scale = 10n ** BigInt(input.quoteDecimals);
+  return (input.quantityRaw * input.priceRaw + scale - 1n) / scale;
+}
+
+function displayQuoteAmount(raw: bigint, quoteDecimals: number, symbol: string): string {
+  const scale = 10n ** BigInt(quoteDecimals);
+  const whole = raw / scale;
+  const fraction = raw % scale;
+  const fractionText = fraction.toString().padStart(quoteDecimals, "0").replace(/0+$/, "");
+  return `${whole.toString()}${fractionText.length > 0 ? `.${fractionText}` : ""} ${symbol}`;
 }
 
 function createDefaultHistoricalConfig(config: RuntimeConfig): MainnetHistoricalDreamDexConfig {
@@ -1169,6 +2804,11 @@ async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: s
     episode_count: string;
     snapshot_count: string;
     decision_count: string;
+    eligible_decision_count: string;
+    abstention_count: string;
+    pending_outcome_count: string;
+    timing_excluded_decision_count: string;
+    excluded_episode_count: string;
     latest_decided_at: Date | null;
     latest_market_id: string | null;
   }>(
@@ -1177,12 +2817,51 @@ async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: s
         count(DISTINCT me.id) AS episode_count,
         count(DISTINCT ms.id) AS snapshot_count,
         count(DISTINCT sd.id) AS decision_count,
+        count(DISTINCT sd.id) FILTER (
+          WHERE sd.action <> 'ABSTAIN'
+            AND sd.forecast_p_up IS NOT NULL
+            AND ms.captured_at >= GREATEST(
+              COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
+              me.expires_at - make_interval(secs => sd.decision_offset_sec)
+            )
+            AND ms.captured_at < me.expires_at
+            AND s.resolved = true
+            AND s.voided = false
+            AND s.winner IN ('YES', 'NO')
+        ) AS eligible_decision_count,
+        count(DISTINCT sd.id) FILTER (
+          WHERE (sd.action = 'ABSTAIN' OR sd.forecast_p_up IS NULL)
+            AND ms.captured_at >= GREATEST(
+            COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
+            me.expires_at - make_interval(secs => sd.decision_offset_sec)
+          )
+            AND ms.captured_at < me.expires_at
+        ) AS abstention_count,
+        count(DISTINCT sd.id) FILTER (
+          WHERE sd.action <> 'ABSTAIN'
+            AND sd.forecast_p_up IS NOT NULL
+            AND ms.captured_at >= GREATEST(
+              COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
+              me.expires_at - make_interval(secs => sd.decision_offset_sec)
+            )
+            AND ms.captured_at < me.expires_at
+            AND (s.id IS NULL OR (s.resolved = false AND s.voided = false))
+        ) AS pending_outcome_count,
+        count(DISTINCT sd.id) FILTER (
+          WHERE ms.captured_at < GREATEST(
+            COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
+            me.expires_at - make_interval(secs => sd.decision_offset_sec)
+          )
+            OR ms.captured_at >= me.expires_at
+        ) AS timing_excluded_decision_count,
+        count(DISTINCT me.id) FILTER (WHERE me.state = 'EXCLUDED') AS excluded_episode_count,
         max(sd.decided_at) AS latest_decided_at,
         (array_agg(me.market_id ORDER BY sd.decided_at DESC NULLS LAST))[1] AS latest_market_id
       FROM experiments e
       LEFT JOIN market_episodes me ON me.experiment_id = e.id
       LEFT JOIN market_snapshots ms ON ms.episode_id = me.id
-      LEFT JOIN shadow_decisions sd ON sd.episode_id = me.id
+      LEFT JOIN shadow_decisions sd ON sd.snapshot_id = ms.id
+      LEFT JOIN settlements s ON s.market_id = me.market_id
       WHERE e.id = $1
         AND e.created_by_session_id = $2
       GROUP BY e.id
@@ -1194,6 +2873,11 @@ async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: s
     episodeCount: Number(row?.episode_count ?? 0),
     snapshotCount: Number(row?.snapshot_count ?? 0),
     decisionCount: Number(row?.decision_count ?? 0),
+    eligibleDecisionCount: Number(row?.eligible_decision_count ?? 0),
+    abstentionCount: Number(row?.abstention_count ?? 0),
+    pendingOutcomeCount: Number(row?.pending_outcome_count ?? 0),
+    timingExcludedDecisionCount: Number(row?.timing_excluded_decision_count ?? 0),
+    excludedEpisodeCount: Number(row?.excluded_episode_count ?? 0),
     latestDecidedAt: row?.latest_decided_at?.toISOString() ?? null,
     latestMarketId: row?.latest_market_id ?? null,
     sourcePlane: "SHANNON_FORWARD",
@@ -1337,6 +3021,9 @@ function verdictSummary(verdict: string, reasonCodes: readonly string[]): string
   if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
     return "Historical replay evidence is sufficient to start forward observation, but it does not authorize execution.";
   }
+  if (verdict === "STRATEGY_QUALIFIED") {
+    return "Forward evidence qualifies this exact strategy version for bounded execution review; current market executability remains a separate fresh check.";
+  }
   if (verdict === "HOLD") {
     return "Evidence supports continued observation without advancing the strategy.";
   }
@@ -1352,6 +3039,9 @@ function verdictSummary(verdict: string, reasonCodes: readonly string[]): string
 function nextActionForVerdict(verdict: string): string {
   if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
     return "START_FORWARD_OBSERVATION";
+  }
+  if (verdict === "STRATEGY_QUALIFIED") {
+    return "REVALIDATE_BOUNDED_EXECUTION_CANDIDATE";
   }
   if (verdict === "HOLD") {
     return "CONTINUE_OBSERVATION";
@@ -1373,6 +3063,13 @@ function doesNotAuthorizeForVerdict(verdict: string): readonly string[] {
     return [
       ...shared,
       "capital deployment without a separate human-authorized Shannon execution gate"
+    ];
+  }
+  if (verdict === "STRATEGY_QUALIFIED") {
+    return [
+      ...shared,
+      "wallet signing without fresh executable-market revalidation",
+      "filled execution until a confirmed receipt and DreamDEX events prove it"
     ];
   }
   return [
@@ -1418,8 +3115,16 @@ function progressionStages(input: {
     {
       stage: "Execution Proof",
       plane: "SHANNON_EXECUTION",
-      status: input.executionLinked === true ? "LINKED" : "UNLINKED_GLOBAL_PROOF_AVAILABLE",
-      detail: "Global EXG-003 proof remains separate unless explicitly linked to this candidate."
+      status:
+        input.executionLinked === true
+          ? "LINKED"
+          : input.verdict === "STRATEGY_QUALIFIED"
+            ? "FRESH_REVALIDATION_REQUIRED"
+            : "UNLINKED_GLOBAL_PROOF_AVAILABLE",
+      detail:
+        input.verdict === "STRATEGY_QUALIFIED"
+          ? "Strategy qualification is complete; no order is executable until the current market and wallet checks pass."
+          : "Global EXG-003 proof remains separate unless explicitly linked to this candidate."
     }
   ];
 }
@@ -1505,7 +3210,9 @@ function buildEvidenceGate(input: { readonly row: AssessmentDetailRow | null; re
         doesNotAuthorize: doesNotAuthorizeForVerdict(input.row.verdict),
         sourcePlane: input.row.evidence_plane,
         promotionScope:
-          input.row.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? input.row.promotion_scope : "NOT_APPLICABLE",
+          input.row.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" || input.row.verdict === "STRATEGY_QUALIFIED"
+            ? input.row.promotion_scope
+            : "NOT_APPLICABLE",
         decidedAt: input.row.created_at.toISOString()
       },
       progression: {
@@ -1667,6 +3374,74 @@ function buildExg003Proof() {
     }
   }
   return { proof: responseProof };
+}
+
+function buildObservationProof() {
+  const manifest = readEvidenceRecord("evidence/observations/manifest.json");
+  const validation = recordField(manifest, "validation");
+  const liveCapture = recordField(manifest, "liveCapture");
+  const markets = liveCapture.markets;
+  if (!Array.isArray(markets) || markets.some((market) => !isRecord(market))) {
+    throw new Error("Observation manifest markets are missing or malformed");
+  }
+  const observedMarketRecords = markets as readonly Record<string, unknown>[];
+  const observedMarkets = observedMarketRecords.map((market) => ({
+    stableMarketId: stringField(market, "stableMarketId"),
+    asset: stringField(market, "asset"),
+    intervalSeconds: numberField(market, "intervalSeconds"),
+    poolAddress: stringField(market, "poolAddress"),
+    marketNonce: stringField(market, "marketNonce"),
+    expiresAt: stringField(market, "expiresAt"),
+    snapshotId: stringField(market, "snapshotId"),
+    snapshotHash: stringField(market, "snapshot_hash"),
+    decisionCount: numberField(market, "decisionCount")
+  }));
+  return {
+    observationProof: {
+      proofId: "OBSERVE-001",
+      status: stringField(manifest, "status"),
+      capturedAt: stringField(manifest, "capturedAt"),
+      evidenceClass: stringField(manifest, "evidenceClass"),
+      scope: stringField(manifest, "scope"),
+      sourcePlane: "SHANNON_FORWARD",
+      chainId: SOMNIA_SHANNON_CHAIN_ID,
+      sdkVersion: DREAMDEX_MARKETS_SDK_VERSION,
+      transactionSubmitted: booleanField(liveCapture, "transactionSubmitted"),
+      walletRequired: booleanField(liveCapture, "walletRequired"),
+      experimentId: stringField(liveCapture, "experimentId"),
+      captureMethod: stringField(liveCapture, "captureMethod"),
+      observedMarketCount: observedMarkets.length,
+      totalShadowDecisions: observedMarkets.reduce((sum, market) => sum + market.decisionCount, 0),
+      implementedControls: stringArrayField(manifest, "implementedControls"),
+      observedMarkets,
+      validation: {
+        integrationTest: stringField(validation, "integrationTest"),
+        lint: stringField(validation, "lint"),
+        typecheck: stringField(validation, "typecheck"),
+        test: stringField(validation, "test"),
+        build: stringField(validation, "build"),
+        fullVerification: stringField(validation, "fullVerification")
+      },
+      judgeSummary: {
+        oneLine:
+          "OBSERVE-001 proves EdgeLab can capture pre-outcome Shannon decisions without a wallet or transaction.",
+        strongestEvidence: [
+          `${String(observedMarkets.length)} live DreamDEX markets observed`,
+          `${String(observedMarkets.reduce((sum, market) => sum + market.decisionCount, 0))} shadow decisions persisted`,
+          "snapshots and decisions inserted before market expiry",
+          "late or expired markets rejected before writes"
+        ],
+        nextMilestone:
+          "Link a promoted historical strategy to a larger forward sample, then evaluate settled outcomes before any execution exposure.",
+        blockedClaims: [
+          "realized PnL",
+          "filled execution",
+          "capital authorization",
+          "autonomous trading"
+        ]
+      }
+    }
+  };
 }
 
 function provenGateRows(input: {
@@ -1892,6 +3667,29 @@ function buildProvenExperimentReport() {
       replay: proven.replay,
       assessment: proven.assessment,
       evidenceGate: proven.evidenceGate,
+      judgeSummary: {
+        oneLine:
+          "EdgeLab promoted this DreamDEX strategy to forward observation, not execution exposure.",
+        currentVerdict: proven.assessment.verdict,
+        strongestEvidence: [
+          `${String(proven.replay.processedCount)} processed historical DreamDEX markets`,
+          `${String(proven.replay.scoredCount)} scored pre-outcome decisions`,
+          `Brier score ${formatMetric(proven.assessment.brierScore)}`,
+          `Calibration bias ${formatMetric(proven.assessment.calibrationBias)}`
+        ],
+        nextObservationMilestone: {
+          plane: "SHANNON_FORWARD",
+          action: proven.evidenceGate.decision.nextPermittedAction,
+          requirement:
+            "Persist forward decisions before outcomes, then re-evaluate without importing retrospective knowledge."
+        },
+        blockedClaims: [
+          "strategy-linked fill",
+          "realized wallet PnL",
+          "mainnet trading authorization",
+          "autonomous execution authorization"
+        ]
+      },
       executionProofRelationship: {
         plane: "SHANNON_EXECUTION",
         status: "UNLINKED_GLOBAL_PROOF_AVAILABLE",
@@ -2185,7 +3983,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
 
   app.get("/api/v1/invariants", () => ({
     product: "forward-testing-live-shadow-recent-window-dreamdex-lab",
-    verdicts: ["PROMOTE_TO_FORWARD_OBSERVATION", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"],
+    verdicts: ["PROMOTE_TO_FORWARD_OBSERVATION", "STRATEGY_QUALIFIED", "HOLD", "REJECT", "INSUFFICIENT_EVIDENCE"],
     boundaries: {
       serviceSignsTransactions: false,
       historicalClobBacktest: false,
@@ -2257,6 +4055,26 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "EXG_003_PROOF_UNAVAILABLE",
         error instanceof Error ? error.message : "EXG-003 proof unavailable",
+        false,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/observation-proof", (request, reply) => {
+    try {
+      return v2Data(buildObservationProof(), {
+        sourcePlane: "SHANNON_FORWARD",
+        chainId: SOMNIA_SHANNON_CHAIN_ID,
+        blockchainWrite: false,
+        proofAuthority: "captured-observe-001-manifest"
+      });
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "OBSERVATION_PROOF_UNAVAILABLE",
+        error instanceof Error ? error.message : "Observation proof unavailable",
         false,
         request.id
       );
@@ -2382,6 +4200,66 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "RESEARCH_SESSION_UNAVAILABLE",
         error instanceof Error ? error.message : "Research session unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/research-session/resume", async (request, reply) => {
+    const authorization = request.headers.authorization;
+    const rawSessionToken = typeof authorization === "string" && /^Bearer [a-f0-9]{64}$/.test(authorization)
+      ? authorization.slice("Bearer ".length)
+      : null;
+    if (rawSessionToken === null) {
+      return await v2Error(
+        reply,
+        401,
+        "RESEARCH_SESSION_RESUME_TOKEN_INVALID",
+        "A valid opaque research-session resume token is required",
+        false,
+        request.id
+      );
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await findActiveResearchSessionByTokenHash(pool, sha256(rawSessionToken));
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_EXPIRED", "Research session is expired or revoked", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      reply.setCookie(ResearchSessionCookie, rawSessionToken, sessionCookieOptions(config));
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "research_session.resume",
+        targetType: "research_session",
+        targetId: session.id,
+        outcome: "COOKIE_RESIGNED",
+        correlationId: request.id,
+        safeMetadata: { csrfVersion: session.csrfVersion }
+      });
+      return v2Data(
+        {
+          session: {
+            id: session.id,
+            expiresAt: session.expiresAt.toISOString(),
+            csrfVersion: session.csrfVersion
+          }
+        },
+        {
+          resumed: true,
+          tokenPolicy: "opaque-bearer-not-returned",
+          walletRequired: false
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "RESEARCH_SESSION_RESUME_FAILED",
+        error instanceof Error ? error.message : "Research session resume failed",
         true,
         request.id
       );
@@ -2707,6 +4585,10 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         sessionId: ensured.session.id,
         experimentId: params.data.experimentId
       });
+      const executionLifecycle = await loadCanonicalExecutionLifecycle(pool, {
+        sessionId: ensured.session.id,
+        experimentId: params.data.experimentId
+      });
       return v2Data(
         {
           report: {
@@ -2717,12 +4599,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
             replay: replay === null ? null : serializeReplayRun(replay),
             evidenceGate: buildEvidenceGate({ row: assessment, experimentId: params.data.experimentId }),
             liveShadow,
+            executionLifecycle,
             executionProofRelationship: {
               plane: "SHANNON_EXECUTION",
-              status: assessment?.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? "GLOBAL_PROOF_AVAILABLE_NOT_LINKED" : "NOT_LINKED",
-              proofRoute: "/proof",
+              status: executionLifecycle === null ? "NOT_LINKED" : "STRATEGY_LINKED_CANONICAL_RESULT",
+              proofRoute:
+                executionLifecycle === null
+                  ? "/proof"
+                  : `/proof?experimentId=${encodeURIComponent(params.data.experimentId)}`,
               detail:
-                "EXG-003 remains a separate Shannon proof unless a future human-authorized execution is linked to this exact experiment."
+                executionLifecycle === null
+                  ? "EXG-003 remains a separate Shannon proof until a human-authorized execution is linked to this exact experiment."
+                  : `Canonical result: ${executionLifecycle.publicClaim}. This does not imply profitability.`
             },
             exportPolicy: {
               format: "application/json",
@@ -3166,29 +5054,74 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (policy === null) {
         return await v2Error(reply, 409, "CANDIDATE_POLICY_MISSING", "Experiment has no candidate policy to evaluate", false, request.id);
       }
-      const replay = await getLatestReplayRunForExperiment(pool, {
-        sessionId: session.id,
-        experimentId: experiment.experimentId
-      });
-      if (replay === null || !["COMPLETED", "SUCCEEDED"].includes(replay.status)) {
+      const replay =
+        experiment.configuration.mode === "HISTORICAL_REPLAY"
+          ? await getLatestReplayRunForExperiment(pool, {
+              sessionId: session.id,
+              experimentId: experiment.experimentId
+            })
+          : null;
+      if (
+        experiment.configuration.mode === "HISTORICAL_REPLAY" &&
+        (replay === null || !["COMPLETED", "SUCCEEDED"].includes(replay.status))
+      ) {
         return await v2Error(reply, 409, "REPLAY_REQUIRED", "Run historical qualification before evaluating evidence", false, request.id);
       }
-      const assessment = await runMetricAssessment({
-        pool,
-        experimentId: experiment.experimentId,
-        policyVersionId: policy.policyVersionId,
-        replayRunId: replay.id,
-        evidencePlane: "MAINNET_HISTORICAL",
-        promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
-        ruleVersion: "eval-002-historical-replay-v1",
-        provenance: {
-          replayRunId: replay.id,
-          replayOutputHash: replay.outputHash,
-          sourcePlane: "MAINNET_HISTORICAL",
-          pnlLabel: "REPLAY_COUNTERFACTUAL_OR_NOT_AVAILABLE",
-          bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+      let assessment: Awaited<ReturnType<typeof runMetricAssessment>>;
+      if (experiment.configuration.mode === "LIVE_SHADOW") {
+        assessment = await runMetricAssessment({
+              pool,
+              experimentId: experiment.experimentId,
+              policyVersionId: policy.policyVersionId,
+              evidencePlane: "SHANNON_FORWARD",
+              promotionScope: "EXECUTION_EXPOSURE",
+              qualificationTarget: "EXECUTION_EXPOSURE",
+              ruleVersion: "eval-003-forward-qualification-v1",
+              provenance: {
+                sourcePlane: "SHANNON_FORWARD",
+                policyId: policy.policyId,
+                policyVersion: policy.version,
+                policySourceHash: policy.sourceHash,
+                qualificationMeaning: "STRATEGY_QUALIFIED_ONLY",
+                orderExecutabilitySeparate: true,
+                pnlStatus: "NOT_AVAILABLE"
+              }
+            });
+      } else {
+        if (replay === null) {
+          return await v2Error(reply, 409, "REPLAY_REQUIRED", "Run historical qualification before evaluating evidence", false, request.id);
         }
-      });
+        assessment = await runMetricAssessment({
+          pool,
+          experimentId: experiment.experimentId,
+          policyVersionId: policy.policyVersionId,
+          replayRunId: replay.id,
+          evidencePlane: "MAINNET_HISTORICAL",
+          promotionScope: "PROMOTE_TO_FORWARD_OBSERVATION",
+          qualificationTarget: "FORWARD_OBSERVATION",
+          ruleVersion: "eval-002-historical-replay-v1",
+          provenance: {
+            replayRunId: replay.id,
+            replayOutputHash: replay.outputHash,
+            sourcePlane: "MAINNET_HISTORICAL",
+            pnlLabel: "REPLAY_COUNTERFACTUAL_OR_NOT_AVAILABLE",
+            bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
+          }
+        });
+      }
+      await pool.query(
+        "UPDATE experiments SET status = $1, updated_at = now() WHERE id = $2",
+        [
+          assessment.verdict === "STRATEGY_QUALIFIED"
+            ? "PROMOTED"
+            : assessment.verdict === "REJECT"
+              ? "REJECT"
+              : assessment.verdict === "HOLD"
+                ? "HOLD"
+                : "INSUFFICIENT_EVIDENCE",
+          experiment.experimentId
+        ]
+      );
       await writeAudit(pool, {
         sessionId: session.id,
         action: "evaluation.create",
@@ -3196,14 +5129,18 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         targetId: experiment.experimentId,
         outcome: assessment.verdict,
         correlationId: request.id,
-        safeMetadata: { assessmentId: assessment.assessmentId, replayRunId: replay.id }
+        safeMetadata: {
+          assessmentId: assessment.assessmentId,
+          replayRunId: replay?.id ?? null,
+          evidencePlane: experiment.configuration.mode === "LIVE_SHADOW" ? "SHANNON_FORWARD" : "MAINNET_HISTORICAL"
+        }
       });
       return v2Data(
         { assessment },
         {
           applicationWrite: true,
           blockchainWrite: false,
-          sourcePlane: "MAINNET_HISTORICAL",
+          sourcePlane: experiment.configuration.mode === "LIVE_SHADOW" ? "SHANNON_FORWARD" : "MAINNET_HISTORICAL",
           verdictAuthority: "server-evaluation-engine"
         }
       );
@@ -3303,9 +5240,15 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         action: "live_shadow.observe",
         targetType: "experiment",
         targetId: experiment.experimentId,
-        outcome: "OBSERVED",
+        outcome:
+          result.discoveryIssue?.reasonCode ?? (result.leaseAcquired ? "OBSERVED" : "LEASE_NOT_ACQUIRED"),
         correlationId: request.id,
-        safeMetadata: { observedMarkets: result.observed.length, sourcePlane: "SHANNON_FORWARD" }
+        safeMetadata: {
+          observedMarkets: result.observed.length,
+          discoveredMarketCount: result.discoveredMarketCount,
+          discoveryMessage: result.discoveryIssue?.message ?? null,
+          sourcePlane: "SHANNON_FORWARD"
+        }
       });
       return v2Data(
         {
@@ -3319,7 +5262,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           applicationWrite: true,
           blockchainWrite: false,
           sourcePlane: "SHANNON_FORWARD",
-          preOutcomeBoundary: "shadow decision insert guarded before market expiry"
+          preOutcomeBoundary:
+            "snapshot captured at or after max(tradingStart + 1s, expiry - decisionOffsetSec) and before expiry"
         }
       );
     } catch (error) {
@@ -3328,6 +5272,66 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "LIVE_SHADOW_OBSERVE_FAILED",
         error instanceof Error ? error.message : "Live-shadow observation failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/experiments/:experimentId/live-shadow/reconcile", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id, params.error.issues);
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: params.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      if (experiment.configuration.mode !== "LIVE_SHADOW") {
+        return await v2Error(reply, 409, "LIVE_SHADOW_MODE_REQUIRED", "Only live-shadow experiments have forward settlements", false, request.id);
+      }
+      const dreamDex = requireDreamDex(deps);
+      const result = await reconcileSettlements({
+        pool,
+        dreamDexClient: dreamDex.client,
+        holderId: idempotencyKey,
+        experimentId: experiment.experimentId,
+        limit: 100
+      });
+      return v2Data(
+        {
+          reconciliation: result,
+          liveShadow: await loadLiveShadowState(pool, {
+            sessionId: session.id,
+            experimentId: experiment.experimentId
+          })
+        },
+        { applicationWrite: true, blockchainWrite: false, sourcePlane: "SHANNON_FORWARD" }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "FORWARD_SETTLEMENT_RECONCILIATION_FAILED",
+        error instanceof Error ? error.message : "Forward settlement reconciliation failed",
         true,
         request.id
       );
@@ -3831,6 +5835,1156 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         503,
         "DREAMDEX_UNAVAILABLE",
         error instanceof Error ? error.message : "DreamDEX unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/shannon/execution-candidate", async (request, reply) => {
+    const parsed = ExecutionCandidateQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return v2Error(
+        reply,
+        400,
+        "EXECUTION_CANDIDATE_INVALID",
+        "Execution-candidate request is invalid",
+        false,
+        request.id,
+        parsed.error.issues
+      );
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      const experiment = await getInteractiveExperiment(pool, {
+        sessionId: session.id,
+        experimentId: parsed.data.experimentId
+      });
+      if (experiment === null) {
+        return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      if (experiment.configuration.mode !== "LIVE_SHADOW") {
+        return await v2Error(
+          reply,
+          409,
+          "FORWARD_STRATEGY_REQUIRED",
+          "Execution candidates require a live-shadow strategy with qualified forward evidence",
+          false,
+          request.id
+        );
+      }
+      if (
+        !experiment.configuration.assets.includes(parsed.data.asset) ||
+        !experiment.configuration.intervals.includes(parsed.data.intervalSec)
+      ) {
+        return await v2Error(
+          reply,
+          409,
+          "STRATEGY_MARKET_SCOPE_MISMATCH",
+          "Requested asset and interval are outside the qualified strategy configuration",
+          false,
+          request.id
+        );
+      }
+      const qualifiedStrategy = await loadQualifiedStrategy(pool, {
+        sessionId: session.id,
+        experimentId: experiment.experimentId
+      });
+      if (qualifiedStrategy === null) {
+        return await v2Error(
+          reply,
+          409,
+          "STRATEGY_NOT_QUALIFIED",
+          "Forward evidence has not earned execution exposure for this exact strategy version",
+          false,
+          request.id
+        );
+      }
+      const dreamDex = requireDreamDex(deps);
+      const marketResult = await discoverSuccessorMarkets(dreamDex.client, dreamDex.config, {
+        assets: [parsed.data.asset],
+        intervals: [parsed.data.intervalSec]
+      });
+      if (!marketResult.ok) {
+        return await v2Error(reply, 502, marketResult.reasonCode, marketResult.message, true, request.id);
+      }
+
+      const market = marketResult.value[0];
+      if (market === undefined) {
+        return await v2Error(
+          reply,
+          502,
+          "DREAMDEX_NO_ELIGIBLE_MARKET",
+          "No eligible market was available for execution candidate construction",
+          true,
+          request.id
+        );
+      }
+      const snapshotResult = await captureMarketSnapshot(dreamDex.client, dreamDex.config, market.stableMarketId, 5);
+      if (!snapshotResult.ok) {
+        return await v2Error(reply, 502, snapshotResult.reasonCode, snapshotResult.message, true, request.id);
+      }
+
+      const adapter = policyAdapters.find(
+        (candidate) =>
+          candidate.policyId === qualifiedStrategy.policyId && candidate.version === qualifiedStrategy.policyVersion
+      );
+      if (adapter === undefined) {
+        return await v2Error(
+          reply,
+          503,
+          "POLICY_ADAPTER_MISSING",
+          "Strategy-linked forward policy adapter is unavailable",
+          true,
+          request.id
+        );
+      }
+
+      const nativeDomainSnapshot = MarketSnapshotSchema.parse(toExecutionDomainSnapshot(snapshotResult.value));
+      const nativeSnapshotHash = sha256(stableJson(nativeDomainSnapshot));
+      const nativeDecision = evaluatePolicy(adapter, {
+        snapshot: nativeDomainSnapshot,
+        decidedAt: nativeDomainSnapshot.capturedAt,
+        snapshotHash: nativeSnapshotHash
+      });
+      const inverseDomainSnapshot = MarketSnapshotSchema.parse(toExecutionDomainSnapshot(snapshotResult.value, "INVERSE_NO_ASK"));
+      const inverseSnapshotHash = sha256(stableJson(inverseDomainSnapshot));
+      const inverseDecision =
+        nativeDecision.action === "ABSTAIN" && snapshotResult.value.book.noAsks.length > 0
+          ? evaluatePolicy(adapter, {
+              snapshot: inverseDomainSnapshot,
+              decidedAt: inverseDomainSnapshot.capturedAt,
+              snapshotHash: inverseSnapshotHash
+            })
+          : null;
+      const useInverseNoSignal =
+        nativeDecision.action === "ABSTAIN" && inverseDecision !== null && inverseDecision.action !== "ABSTAIN" && inverseDecision.forecastPUp < 0.5;
+      const snapshotHash = useInverseNoSignal ? inverseSnapshotHash : nativeSnapshotHash;
+      const decision = useInverseNoSignal
+        ? {
+            ...inverseDecision,
+            reasonCodes: [...inverseDecision.reasonCodes, "INVERSE_NO_ASK_SIGNAL", "EXECUTABLE_SIDE_BUY_NO"]
+          }
+        : nativeDecision;
+      const side = decision.forecastPUp >= 0.5 ? "BUY_YES" : "BUY_NO";
+      const executableBook =
+        side === "BUY_YES" ? snapshotResult.value.book.yesAsks : snapshotResult.value.book.noAsks;
+      const topAsk = executableBook[0] ?? null;
+      const bookParamsResult = await readBinaryBookParams(dreamDex.client, dreamDex.config, market.poolAddress);
+      if (!bookParamsResult.ok) {
+        return await v2Error(reply, 502, bookParamsResult.reasonCode, bookParamsResult.message, true, request.id);
+      }
+      const bookParams = bookParamsResult.value;
+      const readinessResult =
+        deps.executionReadinessReader === undefined
+          ? await readExecutionReadiness(dreamDex.config, {
+              account: parsed.data.account,
+              marketAddress: market.marketAddress,
+              poolAddress: market.poolAddress
+            })
+          : {
+              ok: true as const,
+              value: await deps.executionReadinessReader({
+                account: parsed.data.account,
+                marketAddress: market.marketAddress,
+                poolAddress: market.poolAddress
+              })
+            };
+      if (!readinessResult.ok) {
+        return await v2Error(reply, 502, readinessResult.reasonCode, readinessResult.message, true, request.id);
+      }
+      const readiness = readinessResult.value;
+      const maxEscrowRaw = BigInt(parsed.data.maxEscrowRaw);
+      const expireTimestampNs = `${String(market.expirySeconds)}000000000`;
+      const escrowPriceRaw =
+        topAsk === null
+          ? 0n
+          : executionEscrowPriceRaw(side, BigInt(topAsk.priceRaw), market.quoteDecimals);
+      const minimumEscrowRaw =
+        topAsk === null
+          ? null
+          : minimumEscrowForQuantity({
+              quantityRaw: bookParams.minQuantity,
+              priceRaw: escrowPriceRaw,
+              quoteDecimals: market.quoteDecimals
+            });
+      const quantityRaw =
+        topAsk === null
+          ? 0n
+          : boundedQuantityForEscrow({
+              maxEscrowRaw,
+              priceRaw: escrowPriceRaw,
+              quoteDecimals: market.quoteDecimals,
+              availableQuantityRaw: BigInt(topAsk.quantityRaw),
+              lotSize: bookParams.lotSize
+            });
+      const validatedAt = new Date().toISOString();
+      const nowSeconds = Math.floor(new Date(validatedAt).getTime() / 1000);
+      const expiryHeadroomSeconds = market.expirySeconds - nowSeconds;
+      const requiredEscrowRaw =
+        topAsk === null
+          ? 0n
+          : minimumEscrowForQuantity({
+              quantityRaw,
+              priceRaw: escrowPriceRaw,
+              quoteDecimals: market.quoteDecimals
+            });
+      const sideProbability = side === "BUY_YES" ? decision.forecastPUp : 1 - decision.forecastPUp;
+      const sideAskProbability = Number(escrowPriceRaw) / Number(10n ** BigInt(market.quoteDecimals));
+      const priceAcceptable = topAsk !== null && sideAskProbability <= Math.min(1, sideProbability + 0.05);
+      const blockedReasons = [
+        ...(decision.action === "ABSTAIN" ? ["POLICY_ABSTAINED"] : []),
+        ...(topAsk === null ? ["NO_EXECUTABLE_TOP_ASK"] : []),
+        ...(topAsk !== null && !priceAcceptable ? ["PRICE_OUTSIDE_STRATEGY_LIMIT"] : []),
+        ...(topAsk !== null && quantityRaw < bookParams.minQuantity ? ["ORDER_CAP_BELOW_POOL_MINIMUM"] : []),
+        ...(expiryHeadroomSeconds < parsed.data.minExpiryHeadroomSec ? ["EXPIRY_HEADROOM_TOO_LOW"] : []),
+        ...(!readiness.collateralBindingMatches || readiness.marketCollateral.toLowerCase() !== market.collateral.toLowerCase()
+          ? ["COLLATERAL_BINDING_MISMATCH"]
+          : []),
+        ...(BigInt(readiness.walletBalanceRaw) < requiredEscrowRaw ? ["INSUFFICIENT_TUSDC_BALANCE"] : []),
+        ...(BigInt(readiness.walletNativeBalanceRaw) === 0n ? ["INSUFFICIENT_STT_GAS"] : [])
+      ];
+      const intentPayload = {
+        route: "GET /api/v2/shannon/execution-candidate",
+        experimentId: qualifiedStrategy.experimentId,
+        configurationId: qualifiedStrategy.configurationId,
+        assessmentId: qualifiedStrategy.assessmentId,
+        assessmentHash: qualifiedStrategy.assessmentHash,
+        account: parsed.data.account.toLowerCase(),
+        sourcePlane: "SHANNON_EXECUTION",
+        authority: "browser-wallet-human-gated-only",
+        policy: {
+          policyId: decision.policyId,
+          policyVersion: decision.policyVersion,
+          policyHash: decision.policyHash
+        },
+        decision: {
+          forecastPUp: decision.forecastPUp,
+          action: decision.action,
+          reasonCodes: decision.reasonCodes
+        },
+        market: {
+          stableMarketId: market.stableMarketId,
+          poolAddress: market.poolAddress,
+          asset: market.asset,
+          intervalSeconds: market.intervalSeconds,
+          expirySeconds: market.expirySeconds
+        },
+        order: {
+          side,
+          orderType: 2,
+          priceRaw: topAsk?.priceRaw ?? null,
+          quantityRaw: quantityRaw.toString(),
+          maxEscrowRaw: maxEscrowRaw.toString(),
+          expireTimestampNs
+        },
+        readiness: {
+          observedBlockNumber: readiness.observedBlockNumber,
+          marketCollateral: readiness.marketCollateral.toLowerCase(),
+          poolCollateral: readiness.poolCollateral.toLowerCase(),
+          walletBalanceRaw: readiness.walletBalanceRaw,
+          walletAllowanceRaw: readiness.walletAllowanceRaw,
+          walletNativeBalanceRaw: readiness.walletNativeBalanceRaw,
+          requiredEscrowRaw: requiredEscrowRaw.toString(),
+          priceAcceptable
+        },
+        blockedReasons
+      };
+      const intentHash = sha256(stableJson(intentPayload));
+      const unsigned =
+        blockedReasons.length > 0 || topAsk === null
+          ? null
+          : await buildUnsignedBinaryOrderEvidence(dreamDex.client, dreamDex.config, {
+              ownerAddress: parsed.data.account,
+              poolAddress: market.poolAddress,
+              side,
+              priceRaw: topAsk.priceRaw,
+              quantityRaw: quantityRaw.toString(),
+              expireTimestampNs,
+              orderType: 2,
+              quoteDecimals: market.quoteDecimals,
+              collateralAddress: readiness.marketCollateral
+            });
+      if (unsigned !== null && !unsigned.ok) {
+        return await v2Error(reply, 502, unsigned.reasonCode, unsigned.message, true, request.id);
+      }
+
+      return v2Data(
+        {
+          executionCandidate: {
+            status: blockedReasons.length === 0 ? "READY" : "BLOCKED",
+            intentHash,
+            account: parsed.data.account,
+            validatedAt,
+            sourcePlane: "SHANNON_EXECUTION",
+            network: {
+              name: "Somnia Shannon Testnet",
+              chainId: SOMNIA_SHANNON_CHAIN_ID
+            },
+            market: {
+              stableMarketId: market.stableMarketId,
+              marketAddress: market.marketAddress,
+              poolAddress: market.poolAddress,
+              asset: market.asset,
+              intervalSeconds: market.intervalSeconds,
+              expirySeconds: market.expirySeconds,
+              quoteDecimals: market.quoteDecimals,
+              collateral: market.collateral
+            },
+            strategyLink: {
+              experimentId: qualifiedStrategy.experimentId,
+              configurationId: qualifiedStrategy.configurationId,
+              assessmentId: qualifiedStrategy.assessmentId,
+              assessmentHash: qualifiedStrategy.assessmentHash,
+              qualificationVerdict: "STRATEGY_QUALIFIED",
+              qualificationRuleVersion: qualifiedStrategy.ruleVersion,
+              eligibleForwardObservationCount: qualifiedStrategy.sampleSize,
+              qualifiedAt: qualifiedStrategy.qualifiedAt.toISOString(),
+              sourceObservationPolicy: `${qualifiedStrategy.policyId}@${qualifiedStrategy.policyVersion}`,
+              linkedHistoricalPolicy: "historical-last-trade@1.1.0",
+              snapshotHash,
+              decision
+            },
+            risk: {
+              maxEscrowRaw: maxEscrowRaw.toString(),
+              maxEscrowDisplay: displayQuoteAmount(maxEscrowRaw, market.quoteDecimals, "tUSDC"),
+              orderCount: 1,
+              orderType: "ImmediateOrCancel",
+              serverSigner: false,
+              mainnetWrite: false,
+              expiryHeadroomSeconds,
+              minExpiryHeadroomSec: parsed.data.minExpiryHeadroomSec,
+              minimumPoolEscrowRaw: minimumEscrowRaw?.toString() ?? null,
+              minimumPoolEscrowDisplay:
+                minimumEscrowRaw === null ? null : displayQuoteAmount(minimumEscrowRaw, market.quoteDecimals, "tUSDC"),
+              capAdequateForPoolMinimum: minimumEscrowRaw === null ? false : maxEscrowRaw >= minimumEscrowRaw,
+              priceAcceptable,
+              sideProbability,
+              sideAskProbability,
+              requiredEscrowRaw: requiredEscrowRaw.toString(),
+              observedBlockNumber: readiness.observedBlockNumber,
+              collateralResolvedFromMarket: readiness.marketCollateral,
+              poolCollateral: readiness.poolCollateral,
+              collateralBindingMatches: readiness.collateralBindingMatches,
+              walletBalanceRaw: readiness.walletBalanceRaw,
+              walletAllowanceRaw: readiness.walletAllowanceRaw,
+              walletNativeBalanceRaw: readiness.walletNativeBalanceRaw,
+              walletHasRequiredCollateral: BigInt(readiness.walletBalanceRaw) >= requiredEscrowRaw,
+              walletHasGas: BigInt(readiness.walletNativeBalanceRaw) > 0n
+            },
+            sizing: {
+              side,
+              priceRaw: topAsk?.priceRaw ?? null,
+              availableQuantityRaw: topAsk?.quantityRaw ?? null,
+              quantityRaw: quantityRaw.toString(),
+              minQuantityRaw: bookParams.minQuantity.toString(),
+              lotSizeRaw: bookParams.lotSize.toString(),
+              tickSizeRaw: bookParams.tickSize.toString(),
+              expireTimestampNs
+            },
+            unsignedTransactions: unsigned === null ? null : unsigned.value,
+            blockedReasons,
+            controls: [
+              "server returns unsigned calls only",
+              "wallet must approve every transaction",
+              "fixed 0.01 tUSDC maximum escrow",
+              "single Shannon testnet IOC order",
+              "mainnet writes remain forbidden"
+            ],
+            blockedClaims: [
+              "profitable strategy",
+              "autonomous execution",
+              "mainnet readiness",
+              "filled order until a receipt proves it"
+            ]
+          }
+        },
+        {
+          sourcePlane: "SHANNON_EXECUTION",
+          blockchainWrite: false,
+          walletRequired: true,
+          chainId: SOMNIA_SHANNON_CHAIN_ID
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "DREAMDEX_UNAVAILABLE",
+        error instanceof Error ? error.message : "DreamDEX unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/shannon/execution-candidates/revalidate", async (request, reply) => {
+    const parsed = ExecutionCandidateQuerySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return await v2Error(
+        reply,
+        400,
+        "EXECUTION_CANDIDATE_INVALID",
+        "Execution-candidate revalidation request is invalid",
+        false,
+        request.id,
+        parsed.error.issues
+      );
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const query = new URLSearchParams({
+        experimentId: parsed.data.experimentId,
+        account: parsed.data.account,
+        asset: parsed.data.asset,
+        intervalSec: String(parsed.data.intervalSec),
+        maxEscrowRaw: parsed.data.maxEscrowRaw,
+        minExpiryHeadroomSec: String(parsed.data.minExpiryHeadroomSec)
+      });
+      const freshResponse = await app.inject({
+        method: "GET",
+        url: `/api/v2/shannon/execution-candidate?${query.toString()}`,
+        headers: request.headers.cookie === undefined ? {} : { cookie: request.headers.cookie }
+      });
+      const freshBody: unknown = freshResponse.json();
+      if (freshResponse.statusCode !== 200) {
+        return await reply.code(freshResponse.statusCode).send(freshBody);
+      }
+      const candidateEnvelope = z.object({ data: z.object({ executionCandidate: z.unknown() }) }).safeParse(freshBody);
+      if (!candidateEnvelope.success) {
+        return await v2Error(
+          reply,
+          503,
+          "EXECUTION_CANDIDATE_REVALIDATION_FAILED",
+          "Fresh candidate response could not be verified",
+          true,
+          request.id
+        );
+      }
+      const candidate = PersistableExecutionCandidateSchema.safeParse(candidateEnvelope.data.data.executionCandidate);
+      if (!candidate.success) {
+        const blockedReasons = z
+          .object({ status: z.literal("BLOCKED"), blockedReasons: z.array(z.string()) })
+          .safeParse(candidateEnvelope.data.data.executionCandidate);
+        return await v2Error(
+          reply,
+          409,
+          "ORDER_NOT_EXECUTABLE",
+          "The freshly revalidated market is not currently executable",
+          true,
+          request.id,
+          blockedReasons.success ? { blockedReasons: blockedReasons.data.blockedReasons } : candidate.error.issues
+        );
+      }
+      const intentId = await persistReadyExecutionCandidate(pool, { candidate: candidate.data, idempotencyKey });
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "execution_candidate.revalidate",
+        targetType: "execution_intent",
+        targetId: intentId,
+        outcome: "READY",
+        correlationId: request.id,
+        safeMetadata: {
+          experimentId: candidate.data.strategyLink.experimentId,
+          assessmentId: candidate.data.strategyLink.assessmentId,
+          marketId: candidate.data.market.stableMarketId,
+          sourcePlane: "SHANNON_EXECUTION"
+        }
+      });
+      return await reply.code(201).send(
+        v2Data(
+          {
+            executionCandidate: candidate.data,
+            intentId
+          },
+          {
+            sourcePlane: "SHANNON_EXECUTION",
+            blockchainWrite: false,
+            walletRequired: true,
+            freshlyRevalidated: true,
+            chainId: SOMNIA_SHANNON_CHAIN_ID
+          }
+        )
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXECUTION_CANDIDATE_REVALIDATION_FAILED",
+        error instanceof Error ? error.message : "Execution candidate revalidation failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/execution-intents/:intentId/revalidate-order", async (request, reply) => {
+    const params = z.object({ intentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXECUTION_INTENT_ID_INVALID", "Execution intent ID is invalid", false, request.id);
+    }
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const intentResult = await pool.query<{ candidate_payload: unknown; state: string; approval_confirmed: boolean }>(
+        `
+          SELECT ei.candidate_payload, ei.state,
+                 COALESCE(bool_or(ct.tx_role = 'approval' AND ct.receipt_status = true), false) AS approval_confirmed
+          FROM execution_intents ei
+          JOIN experiments e ON e.id = ei.experiment_id
+          LEFT JOIN chain_transactions ct ON ct.intent_id = ei.id
+          WHERE ei.id = $1 AND e.created_by_session_id = $2
+          GROUP BY ei.id
+          LIMIT 1
+        `,
+        [params.data.intentId, session.id]
+      );
+      const intent = intentResult.rows[0];
+      const persistedCandidate = PersistableExecutionCandidateSchema.safeParse(intent?.candidate_payload);
+      if (intent === undefined || !persistedCandidate.success) {
+        return await v2Error(reply, 404, "EXECUTION_INTENT_NOT_FOUND", "Execution intent was not found", false, request.id);
+      }
+      if (["TX_REVERTED", "FAILED", "CANCELLED", "EXPIRED"].includes(intent.state)) {
+        return await v2Error(reply, 409, "EXECUTION_INTENT_TERMINAL", "Execution intent is already terminal", false, request.id);
+      }
+      if (persistedCandidate.data.unsignedTransactions.approval !== null && !intent.approval_confirmed) {
+        return await v2Error(
+          reply,
+          409,
+          "EXACT_APPROVAL_REQUIRED",
+          "Confirm the exact tUSDC approval before revalidating the order for signing",
+          true,
+          request.id
+        );
+      }
+      const query = new URLSearchParams({
+        experimentId: persistedCandidate.data.strategyLink.experimentId,
+        account: persistedCandidate.data.account,
+        asset: persistedCandidate.data.market.asset,
+        intervalSec: String(persistedCandidate.data.market.intervalSeconds),
+        maxEscrowRaw: persistedCandidate.data.risk.maxEscrowRaw,
+        minExpiryHeadroomSec: String(persistedCandidate.data.risk.minExpiryHeadroomSec)
+      });
+      const freshResponse = await app.inject({
+        method: "GET",
+        url: `/api/v2/shannon/execution-candidate?${query.toString()}`,
+        headers: request.headers.cookie === undefined ? {} : { cookie: request.headers.cookie }
+      });
+      const freshBody: unknown = freshResponse.json();
+      if (freshResponse.statusCode !== 200) {
+        return await reply.code(freshResponse.statusCode).send(freshBody);
+      }
+      const freshEnvelope = z.object({ data: z.object({ executionCandidate: z.unknown() }) }).safeParse(freshBody);
+      const freshCandidate = freshEnvelope.success
+        ? PersistableExecutionCandidateSchema.safeParse(freshEnvelope.data.data.executionCandidate)
+        : null;
+      if (freshCandidate === null || !freshCandidate.success) {
+        const blocked = freshEnvelope.success
+          ? z.object({ blockedReasons: z.array(z.string()) }).safeParse(freshEnvelope.data.data.executionCandidate)
+          : null;
+        return await v2Error(
+          reply,
+          409,
+          "ORDER_NOT_EXECUTABLE",
+          "Fresh signing-time validation closed the execution gate",
+          true,
+          request.id,
+          blocked?.success === true ? { blockedReasons: blocked.data.blockedReasons } : undefined
+        );
+      }
+      const original = persistedCandidate.data;
+      const fresh = freshCandidate.data;
+      const immutableBindingMatches =
+        original.account.toLowerCase() === fresh.account.toLowerCase() &&
+        original.strategyLink.experimentId === fresh.strategyLink.experimentId &&
+        original.strategyLink.assessmentId === fresh.strategyLink.assessmentId &&
+        original.strategyLink.assessmentHash === fresh.strategyLink.assessmentHash &&
+        original.market.stableMarketId.toLowerCase() === fresh.market.stableMarketId.toLowerCase() &&
+        original.market.poolAddress.toLowerCase() === fresh.market.poolAddress.toLowerCase() &&
+        original.market.collateral.toLowerCase() === fresh.market.collateral.toLowerCase() &&
+        original.sizing.side === fresh.sizing.side &&
+        original.sizing.priceRaw === fresh.sizing.priceRaw &&
+        original.sizing.quantityRaw === fresh.sizing.quantityRaw &&
+        stableJson(original.unsignedTransactions.order) === stableJson(fresh.unsignedTransactions.order);
+      if (!immutableBindingMatches) {
+        await pool.query("UPDATE execution_intents SET state = 'EXPIRED' WHERE id = $1", [params.data.intentId]);
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_INTENT_STALE",
+          "Market generation, price, quantity, collateral, or exact order calldata changed; prepare a new candidate",
+          false,
+          request.id
+        );
+      }
+      await pool.query(
+        "UPDATE execution_intents SET order_revalidated_at = $1, last_validated_at = $1 WHERE id = $2",
+        [fresh.validatedAt, params.data.intentId]
+      );
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "execution_order.revalidate",
+        targetType: "execution_intent",
+        targetId: params.data.intentId,
+        outcome: "READY_FOR_WALLET_SIGNING",
+        correlationId: request.id,
+        safeMetadata: {
+          assessmentId: original.strategyLink.assessmentId,
+          marketId: original.market.stableMarketId,
+          observedBlockNumber: fresh.risk.observedBlockNumber
+        }
+      });
+      return v2Data(
+        {
+          executionCandidate: original,
+          intentId: params.data.intentId,
+          signingValidation: {
+            status: "READY",
+            validatedAt: fresh.validatedAt,
+            observedBlockNumber: fresh.risk.observedBlockNumber,
+            exactOrderCallUnchanged: true
+          }
+        },
+        {
+          sourcePlane: "SHANNON_EXECUTION",
+          blockchainWrite: false,
+          walletRequired: true,
+          signingTimeRevalidation: true,
+          chainId: SOMNIA_SHANNON_CHAIN_ID
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "ORDER_REVALIDATION_FAILED",
+        error instanceof Error ? error.message : "Order signing-time revalidation failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/shannon/controlled-liquidity-candidate", async (request, reply) => {
+    const parsed = ControlledLiquidityQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return v2Error(
+        reply,
+        400,
+        "CONTROLLED_LIQUIDITY_INVALID",
+        "Controlled-liquidity request is invalid",
+        false,
+        request.id,
+        parsed.error.issues
+      );
+    }
+    try {
+      const dreamDex = requireDreamDex(deps);
+      const marketResult = await discoverSuccessorMarkets(dreamDex.client, dreamDex.config, {
+        assets: [parsed.data.asset],
+        intervals: [parsed.data.intervalSec]
+      });
+      if (!marketResult.ok) {
+        return await v2Error(reply, 502, marketResult.reasonCode, marketResult.message, true, request.id);
+      }
+      const market = marketResult.value[0];
+      if (market === undefined) {
+        return await v2Error(
+          reply,
+          502,
+          "DREAMDEX_NO_ELIGIBLE_MARKET",
+          "No eligible market was available for controlled liquidity setup",
+          true,
+          request.id
+        );
+      }
+      const bookParamsResult = await readBinaryBookParams(dreamDex.client, dreamDex.config, market.poolAddress);
+      if (!bookParamsResult.ok) {
+        return await v2Error(reply, 502, bookParamsResult.reasonCode, bookParamsResult.message, true, request.id);
+      }
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expiryHeadroomSeconds = market.expirySeconds - nowSeconds;
+      const quantityRaw = floorToLot(BigInt(parsed.data.quantityRaw), bookParamsResult.value.lotSize);
+      const blockedReasons = [
+        ...(parsed.data.maker.toLowerCase() === ShannonProofWalletAddress ? ["MAKER_MATCHES_PROOF_WALLET"] : []),
+        ...(quantityRaw < bookParamsResult.value.minQuantity ? ["ORDER_CAP_BELOW_POOL_MINIMUM"] : []),
+        ...(expiryHeadroomSeconds < parsed.data.minExpiryHeadroomSec ? ["EXPIRY_HEADROOM_TOO_LOW"] : [])
+      ];
+      const expireTimestampNs = `${String(market.expirySeconds)}000000000`;
+      const setup =
+        blockedReasons.length > 0
+          ? null
+          : await buildControlledLiquidityEvidence(dreamDex.config, {
+              makerAddress: parsed.data.maker,
+              poolAddress: market.poolAddress,
+              side: parsed.data.side,
+              priceRaw: parsed.data.priceRaw,
+              quantityRaw: quantityRaw.toString(),
+              expireTimestampNs
+            });
+      if (setup !== null && !setup.ok) {
+        return await v2Error(reply, 502, setup.reasonCode, setup.message, true, request.id);
+      }
+      return v2Data(
+        {
+          controlledLiquidityCandidate: {
+            status: blockedReasons.length === 0 ? "READY" : "BLOCKED",
+            maker: parsed.data.maker,
+            sourcePlane: "SHANNON_EXECUTION",
+            network: {
+              name: "Somnia Shannon Testnet",
+              chainId: SOMNIA_SHANNON_CHAIN_ID
+            },
+            market: {
+              stableMarketId: market.stableMarketId,
+              marketAddress: market.marketAddress,
+              poolAddress: market.poolAddress,
+              asset: market.asset,
+              intervalSeconds: market.intervalSeconds,
+              expirySeconds: market.expirySeconds,
+              quoteDecimals: market.quoteDecimals,
+              collateral: market.collateral
+            },
+            setup: setup === null ? null : setup.value,
+            sizing: {
+              side: parsed.data.side,
+              priceRaw: parsed.data.priceRaw,
+              quantityRaw: quantityRaw.toString(),
+              minQuantityRaw: bookParamsResult.value.minQuantity.toString(),
+              lotSizeRaw: bookParamsResult.value.lotSize.toString(),
+              expireTimestampNs
+            },
+            risk: {
+              controlledLiquidity: true,
+              organicLiquidityClaim: false,
+              serverSigner: false,
+              mainnetWrite: false,
+              approvalScope: "exact collateral approval for mint; ERC-6909 pool operator approval for sell escrow",
+              maxSetupCollateralRaw: quantityRaw.toString(),
+              maxSetupCollateralDisplay: displayQuoteAmount(quantityRaw, market.quoteDecimals, "tUSDC"),
+              expiryHeadroomSeconds,
+              minExpiryHeadroomSec: parsed.data.minExpiryHeadroomSec
+            },
+            blockedReasons,
+            nextStep:
+              blockedReasons.length === 0
+                ? "Submit setup calls from a separate maker wallet, then rerun the execution watcher with the proof wallet."
+                : "Wait for a fresher market or raise the bounded setup quantity to the displayed pool minimum."
+          }
+        },
+        {
+          sourcePlane: "SHANNON_EXECUTION",
+          blockchainWrite: false,
+          walletRequired: true,
+          controlledLiquidity: true,
+          chainId: SOMNIA_SHANNON_CHAIN_ID
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "CONTROLLED_LIQUIDITY_UNAVAILABLE",
+        error instanceof Error ? error.message : "Controlled liquidity setup unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/shannon/execution-receipts", async (request, reply) => {
+    const parsed = ExecutionReceiptImportSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return v2Error(
+        reply,
+        400,
+        "EXECUTION_RECEIPT_INVALID",
+        "Execution receipt import is invalid",
+        false,
+        request.id,
+        parsed.error.issues
+      );
+    }
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const intentResult = await pool.query<{
+        id: string;
+        state: string;
+        candidate_payload: unknown;
+        order_revalidated_at: Date | null;
+      }>(
+        `
+          SELECT ei.id, ei.state, ei.candidate_payload, ei.order_revalidated_at
+          FROM execution_intents ei
+          JOIN experiments e ON e.id = ei.experiment_id
+          WHERE ei.intent_hash = $1
+            AND e.created_by_session_id = $2
+          LIMIT 1
+        `,
+        [parsed.data.intentHash, session.id]
+      );
+      const intent = intentResult.rows[0];
+      if (intent === undefined) {
+        return await v2Error(
+          reply,
+          404,
+          "EXECUTION_INTENT_NOT_FOUND",
+          "No freshly revalidated strategy-linked execution intent matches this hash",
+          false,
+          request.id
+        );
+      }
+      const candidate = PersistableExecutionCandidateSchema.safeParse(intent.candidate_payload);
+      if (!candidate.success) {
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_INTENT_INVALID",
+          "Persisted execution intent cannot be verified against its canonical candidate",
+          false,
+          request.id
+        );
+      }
+      const [transaction, receipt] = await Promise.all([
+        shannonRpc<RpcTransaction | null>(config, "eth_getTransactionByHash", [parsed.data.txHash]),
+        shannonRpc<RpcReceipt | null>(config, "eth_getTransactionReceipt", [parsed.data.txHash])
+      ]);
+      if (transaction === null) {
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_TX_NOT_FOUND",
+          "Submitted transaction is not visible on Somnia Shannon yet",
+          true,
+          request.id
+        );
+      }
+      if (transaction.from?.toLowerCase() !== candidate.data.account.toLowerCase()) {
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_TX_SENDER_MISMATCH",
+          "Submitted transaction sender does not match the candidate wallet",
+          false,
+          request.id
+        );
+      }
+      const expectedCall =
+        parsed.data.txRole === "order"
+          ? candidate.data.unsignedTransactions.order
+          : candidate.data.unsignedTransactions.approval;
+      if (expectedCall === null) {
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_TX_ROLE_UNEXPECTED",
+          "This execution intent does not require the submitted transaction role",
+          false,
+          request.id
+        );
+      }
+      if (
+        transaction.to?.toLowerCase() !== expectedCall.to.toLowerCase() ||
+        transaction.input?.toLowerCase() !== expectedCall.data.toLowerCase() ||
+        hexToDecimalString(transaction.value) !== expectedCall.valueRaw
+      ) {
+        return await v2Error(
+          reply,
+          409,
+          "EXECUTION_TX_CALL_MISMATCH",
+          "Submitted transaction does not exactly match the freshly revalidated unsigned call",
+          false,
+          request.id
+        );
+      }
+      if (parsed.data.txRole === "order" && candidate.data.unsignedTransactions.approval !== null) {
+        const approval = await pool.query<{ receipt_status: boolean | null }>(
+          "SELECT receipt_status FROM chain_transactions WHERE intent_id = $1 AND tx_role = 'approval' LIMIT 1",
+          [intent.id]
+        );
+        if (approval.rows[0]?.receipt_status !== true) {
+          return await v2Error(
+            reply,
+            409,
+            "EXACT_APPROVAL_REQUIRED",
+            "The exact tUSDC approval receipt must be confirmed before the order receipt is accepted",
+            true,
+            request.id
+          );
+        }
+      }
+      if (
+        parsed.data.txRole === "order" &&
+        (intent.order_revalidated_at === null || Date.now() - intent.order_revalidated_at.getTime() > 120_000)
+      ) {
+        return await v2Error(
+          reply,
+          409,
+          "FRESH_ORDER_REVALIDATION_REQUIRED",
+          "Revalidate this exact order immediately before requesting the wallet signature",
+          true,
+          request.id
+        );
+      }
+      const verifiedAt = new Date().toISOString();
+      const lifecycle =
+        parsed.data.txRole === "order" && receipt !== null
+          ? decodeOrderLifecycleFromReceipt({
+              poolAddress: candidate.data.market.poolAddress,
+              receiptStatus: receipt.status === "0x1",
+              receipt,
+              fallbackQuantityRaw: candidate.data.sizing.quantityRaw,
+              observedAt: verifiedAt
+            })
+          : null;
+      if (
+        lifecycle !== null &&
+        lifecycle.orderId !== null &&
+        (lifecycle.quantityRaw !== candidate.data.sizing.quantityRaw ||
+          BigInt(lifecycle.filledQuantityRaw) > BigInt(candidate.data.sizing.quantityRaw) ||
+          BigInt(lifecycle.remainingQuantityRaw) > BigInt(candidate.data.sizing.quantityRaw))
+      ) {
+        return await v2Error(
+          reply,
+          409,
+          "ORDER_EVENT_MISMATCH",
+          "DreamDEX receipt events do not match the exact requested candidate quantity",
+          false,
+          request.id
+        );
+      }
+      const persisted = await persistStrategyExecutionTransaction(pool, {
+        intentId: intent.id,
+        candidate: candidate.data,
+        txHash: parsed.data.txHash,
+        txRole: parsed.data.txRole,
+        transaction,
+        receipt,
+        lifecycle
+      });
+      return await reply.code(receipt === null ? 202 : 201).send(
+        v2Data(
+          {
+            executionReceipt: {
+              status: persisted.state,
+              intentId: persisted.intentId,
+              intentHash: parsed.data.intentHash,
+              txHash: parsed.data.txHash,
+              txRole: parsed.data.txRole,
+              account: candidate.data.account,
+              receiptStatus: receipt === null ? null : receipt.status === "0x1",
+              blockNumber: receipt === null ? null : hexToDecimalString(receipt.blockNumber),
+              logHash: persisted.logHash,
+              lifecycleDecoded: parsed.data.txRole === "order" && persisted.orderId !== null,
+              order: persisted.orderId === null ? null : {
+                orderId: persisted.orderId,
+                state: persisted.orderState,
+                requestedQuantityRaw: lifecycle?.quantityRaw ?? candidate.data.sizing.quantityRaw,
+                filledQuantityRaw: lifecycle?.filledQuantityRaw ?? "0",
+                remainingQuantityRaw: lifecycle?.remainingQuantityRaw ?? candidate.data.sizing.quantityRaw,
+                fillCount: persisted.fillCount,
+                fillState: classifyExecutionFillState({
+                  orderState: persisted.orderState,
+                  filledQuantityRaw: lifecycle?.filledQuantityRaw ?? "0",
+                  remainingQuantityRaw: lifecycle?.remainingQuantityRaw ?? candidate.data.sizing.quantityRaw,
+                  hasOrderEvidence: true
+                }),
+                terminal:
+                  persisted.orderState === "FILLED" ||
+                  persisted.orderState === "UNFILLED" ||
+                  persisted.orderState === "PARTIALLY_FILLED" ||
+                  persisted.orderState === "CANCELLED" ||
+                  persisted.orderState === "EXPIRED" ||
+                  persisted.orderState === "FAILED"
+              },
+              nextMissingProof:
+                receipt === null
+                  ? "Retry reconciliation after the Somnia Shannon receipt is available."
+                  : persisted.orderId === null
+                  ? "Decode DreamDEX order events from this strategy-linked transaction receipt."
+                  : BigInt(lifecycle?.filledQuantityRaw ?? "0") > 0n
+                    ? "Follow settlement and redemption for the filled strategy-linked order."
+                    : "The confirmed IOC order produced no fill; no settlement or redemption claim is made."
+            }
+          },
+          {
+            sourcePlane: "SHANNON_EXECUTION",
+            blockchainWrite: false,
+            serverVerified: true,
+            chainId: SOMNIA_SHANNON_CHAIN_ID
+          }
+        )
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXECUTION_RECEIPT_IMPORT_FAILED",
+        error instanceof Error ? error.message : "Execution receipt import failed",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/execution-intents/:intentId", async (request, reply) => {
+    const params = z.object({ intentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXECUTION_INTENT_ID_INVALID", "Execution intent ID is invalid", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      const lifecycle = await loadCanonicalExecutionLifecycle(pool, {
+        sessionId: session.id,
+        intentId: params.data.intentId
+      });
+      if (lifecycle === null) {
+        return await v2Error(reply, 404, "EXECUTION_INTENT_NOT_FOUND", "Execution intent was not found", false, request.id);
+      }
+      return v2Data(
+        { executionLifecycle: lifecycle },
+        { sourcePlane: "SHANNON_EXECUTION", canonical: true, blockchainWrite: false }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXECUTION_LIFECYCLE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Execution lifecycle unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.get("/api/v2/experiments/:experimentId/execution", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      const lifecycle = await loadCanonicalExecutionLifecycle(pool, {
+        sessionId: session.id,
+        experimentId: params.data.experimentId
+      });
+      return v2Data(
+        { executionLifecycle: lifecycle },
+        { sourcePlane: "SHANNON_EXECUTION", canonical: true, blockchainWrite: false }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXECUTION_LIFECYCLE_UNAVAILABLE",
+        error instanceof Error ? error.message : "Execution lifecycle unavailable",
+        true,
+        request.id
+      );
+    }
+  });
+
+  app.post("/api/v2/execution-intents/:intentId/reconcile", async (request, reply) => {
+    const params = z.object({ intentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) {
+      return await v2Error(reply, 400, "EXECUTION_INTENT_ID_INVALID", "Execution intent ID is invalid", false, request.id);
+    }
+    try {
+      requireIdempotencyKey(request.headers);
+    } catch {
+      return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id);
+    }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) {
+        return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      }
+      if (!requireCsrf(request, session)) {
+        return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      }
+      const lifecycle = await reconcileExecutionIntent({
+        pool,
+        sessionId: session.id,
+        intentId: params.data.intentId,
+        config,
+        dreamDex: requireDreamDex(deps)
+      });
+      if (lifecycle === null) {
+        return await v2Error(reply, 404, "EXECUTION_INTENT_NOT_FOUND", "Execution intent was not found", false, request.id);
+      }
+      await writeAudit(pool, {
+        sessionId: session.id,
+        action: "execution.reconcile",
+        targetType: "execution_intent",
+        targetId: params.data.intentId,
+        outcome: lifecycle.state,
+        correlationId: request.id,
+        safeMetadata: {
+          publicClaim: lifecycle.publicClaim,
+          orderState: lifecycle.order?.state ?? null,
+          settlementState: lifecycle.settlement.state,
+          redemptionState: lifecycle.redemption.state
+        }
+      });
+      return v2Data(
+        { executionLifecycle: lifecycle },
+        { sourcePlane: "SHANNON_EXECUTION", canonical: true, blockchainWrite: false, safeToRetry: true }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "EXECUTION_RECONCILIATION_FAILED",
+        error instanceof Error ? error.message : "Execution reconciliation failed",
         true,
         request.id
       );

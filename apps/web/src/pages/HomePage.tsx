@@ -1,5 +1,39 @@
 import { Link } from "react-router-dom";
+import { QualificationJourney, type QualificationJourneyStage } from "../components/QualificationJourney.js";
 import { capturedSummary, capturedSummarySource } from "../data.js";
+
+const publicJourney: readonly QualificationJourneyStage[] = [
+  {
+    title: "Strategy + exact policy",
+    status: "RECORDED",
+    detail: "Versioned strategy and deterministic promotion rules.",
+    state: "complete"
+  },
+  {
+    title: "Forward OOS evidence",
+    status: "REQUIRED NEXT",
+    detail: "Genuine market generations captured before outcomes.",
+    state: "current"
+  },
+  {
+    title: "Strategy qualification",
+    status: "GATED",
+    detail: "Requires 30 eligible settled observations on one exact track.",
+    state: "locked"
+  },
+  {
+    title: "Fresh executable market",
+    status: "LOCKED",
+    detail: "Only checked after deterministic qualification.",
+    state: "locked"
+  },
+  {
+    title: "Wallet receipt + reconciliation",
+    status: "UNPROVEN",
+    detail: "Approval, IOC order, fill and settlement remain evidence-bound.",
+    state: "unproven"
+  }
+] as const;
 
 export default function HomePage() {
   const summary = capturedSummary;
@@ -8,49 +42,102 @@ export default function HomePage() {
       <section className="heroGrid" aria-label="EdgeLab product overview">
         <div className="heroCopy">
           <p className="eyebrow">DreamDEX strategy qualification lab</p>
-          <h1>Test a DreamDEX strategy before putting capital behind it.</h1>
+          <h1>EdgeLab decides whether a DreamDEX strategy has earned progression.</h1>
           <p>
-            EdgeLab is the promotion layer before trading terminals and autonomous agents. It
-            combines authentic DreamDEX history, forward/live-shadow validation, and bounded
-            Shannon execution proof to decide the next safe testing step.
+            Before a strategy reaches execution exposure, EdgeLab checks the evidence chain:
+            historical replay, forward observation, and bounded human-authorized Shannon proof.
+            A weak candidate is blocked instead of dressed up as a trading signal.
           </p>
           <div className="actionRow">
-            <Link className="primaryAction large" to="/lab">
-              Open Strategy Lab
+            <Link className="primaryAction large" to="/lab/proven-experiment">
+              Open Judge Verdict
             </Link>
-            <Link className="secondaryAction" to="/lab/proven-experiment">
-              See Proven Experiment
+            <Link className="secondaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
+              Track Forward Qualification
             </Link>
           </div>
         </div>
         <div className="modelPanel" aria-label="EdgeLab evidence model">
-          <div className="modelInput">
-            <span>Historical Reality</span>
-            <strong>Mainnet read-only</strong>
+          <div className="verdictCard">
+            <span>Current public verdict</span>
+            <strong>Promote to forward observation</strong>
+            <p>Historical evidence passed the gate. Execution exposure remains closed.</p>
           </div>
-          <div className="modelInput">
-            <span>Forward Evidence</span>
-            <strong>Shannon observation</strong>
+          <div className="scoreStrip" aria-label="Current evidence scorecard">
+            <div>
+              <span>Processed</span>
+              <strong>97</strong>
+            </div>
+            <div>
+              <span>Scored</span>
+              <strong>36</strong>
+            </div>
+            <div>
+              <span>Brier</span>
+              <strong>0.1775</strong>
+            </div>
+            <div>
+              <span>Bias</span>
+              <strong>0.0333</strong>
+            </div>
           </div>
-          <div className="modelInput">
-            <span>Execution Reality</span>
-            <strong>Human-authorized proof</strong>
+          <div className="modelInput status-verified">
+            <span>1. Historical reality</span>
+            <strong>Mainnet read-only passed</strong>
+          </div>
+          <div className="modelInput status-allowed-next">
+            <span>2. Forward evidence</span>
+            <strong>Next required observation</strong>
+          </div>
+          <div className="modelInput status-unlinked-global-proof-available">
+            <span>3. Execution reality</span>
+            <strong>{`${String(summary.chain.submittedOrderCount)} order / ${String(summary.chain.fillCount)} fills / ${summary.chain.latestTerminalState ?? "no terminal state"}`}</strong>
           </div>
           <div className="modelGate">
-            <span>Evidence Gate</span>
-            <strong>advance only when evidence earns it</strong>
+            <span>Gate rule</span>
+            <strong>No filled strategy proof, no capital claim.</strong>
           </div>
         </div>
       </section>
 
-      <section className="routePanel compactPanel thesisPanel" aria-label="Why EdgeLab exists">
-        <span className="label">Why EdgeLab exists</span>
-        <h2>A strategy does not graduate because it looks promising once.</h2>
-        <p>
-          EdgeLab forces every candidate through the same evidence chain: historical reality,
-          forward observation, execution proof, and a server-authored verdict. If the evidence is
-          thin, the product blocks advancement instead of manufacturing confidence.
-        </p>
+      <QualificationJourney stages={publicJourney} />
+
+      <section className="routePanel compactPanel thesisPanel" aria-label="Judge mode">
+        <div className="sectionHeader">
+          <div>
+            <span className="label">Judge mode</span>
+            <h2>One question, one verdict, every missing proof visible.</h2>
+          </div>
+          <span className="statusPill emphasisPill">Qualification before execution</span>
+        </div>
+        <div className="verdictLadder">
+          <div className="ladderStep complete">
+            <span>01</span>
+            <strong>Historical replay passed</strong>
+            <p>Authentic DreamDEX mainnet history, strict anti-lookahead, server-authored metrics.</p>
+          </div>
+          <div className="ladderStep current">
+                <span>02</span>
+                <strong>Forward observation required</strong>
+                <p>Next evidence must be captured before outcomes on Shannon live-shadow mode.</p>
+                <Link className="textLink" to="/observation">
+                  View OBSERVE-001 proof
+                </Link>
+              </div>
+          <div className="ladderStep blocked">
+            <span>03</span>
+            <strong>Execution exposure blocked</strong>
+            <p>EXG-003 proves protocol lifecycle only; no strategy-linked fill or PnL is claimed.</p>
+          </div>
+        </div>
+        <div className="actionRow judgeActions">
+          <Link className="secondaryAction" to="/evidence/proven-experiment">
+            Inspect Evidence Gate
+          </Link>
+          <Link className="textLink" to="/observation">
+            Inspect forward observation evidence
+          </Link>
+        </div>
       </section>
 
       <section className="threeColumn" aria-label="Core product workflow">
@@ -79,7 +166,7 @@ export default function HomePage() {
               summary.chain.latestTerminalState ?? "unavailable"
             }. Source: ${capturedSummarySource}.`}</p>
           <Link className="textLink" to="/proof">
-            View verified execution
+            View captured no-fill lifecycle
           </Link>
         </article>
       </section>

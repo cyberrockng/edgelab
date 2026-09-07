@@ -22,6 +22,24 @@ const strategyOptions = [
     allowedModes: ["HISTORICAL_REPLAY"]
   },
   {
+    key: "last-trade-forward-proxy@1.0.0",
+    policyId: "last-trade-forward-proxy",
+    policyVersion: "1.0.0",
+    label: "Last-Trade Forward Proxy",
+    description:
+      "Shannon forward companion to the proven historical last-trade strategy. Watches live YES-term midpoint only when both book sides exist; never executes.",
+    allowedModes: ["LIVE_SHADOW"]
+  },
+  {
+    key: "last-trade-forward-proxy@1.1.0",
+    policyId: "last-trade-forward-proxy",
+    policyVersion: "1.1.0",
+    label: "Last-Trade Forward Proxy Challenger",
+    description:
+      "Shannon forward challenger using a valid midpoint, a fresh pre-outcome current-market trade, or a one-sided book fallback. It remains watch-only and must earn qualification independently.",
+    allowedModes: ["LIVE_SHADOW"]
+  },
+  {
     key: "reference-book-tilt@1.0.0",
     policyId: "reference-book-tilt",
     policyVersion: "1.0.0",
@@ -61,7 +79,7 @@ export default function LabPage() {
   const initialMode = modeValue(searchParams.get("mode"));
   const [name, setName] = useState(searchParams.get("name") ?? (seededMarketId === null ? "BTC historical qualification" : "Market-selected qualification"));
   const [strategyKey, setStrategyKey] = useState<(typeof strategyOptions)[number]["key"]>(
-    initialMode === "LIVE_SHADOW" ? "reference-neutral@1.0.0" : "historical-last-trade@1.1.0"
+    initialMode === "LIVE_SHADOW" ? "last-trade-forward-proxy@1.1.0" : "historical-last-trade@1.1.0"
   );
   const [mode, setMode] = useState<ExperimentCreateInput["mode"]>(initialMode);
   const [asset, setAsset] = useState<ExperimentCreateInput["asset"]>(assetValue(searchParams.get("asset")));

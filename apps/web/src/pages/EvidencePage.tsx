@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { apiErrorMessage, fetchEvidenceGate, fetchProvenExperiment, minimumSample } from "../data.js";
+import { ExecutionLifecycleSummary } from "../components/ExecutionLifecycleSummary.js";
+import { apiErrorMessage, fetchEvidenceGate, fetchExperimentExecution, fetchProvenExperiment, minimumSample } from "../data.js";
 
 function normalizeStatus(status: string): string {
   return status.replaceAll("_", "-").replaceAll(" ", "-").toLowerCase();
@@ -17,6 +18,9 @@ function displayToken(value: string): string {
 function verdictLead(verdict: string | null): string {
   if (verdict === "PROMOTE_TO_FORWARD_OBSERVATION") {
     return "Advance to forward observation.";
+  }
+  if (verdict === "STRATEGY_QUALIFIED") {
+    return "Eligible for fresh bounded execution review.";
   }
   if (verdict === "HOLD") {
     return "Keep observing before advancement.";
@@ -43,6 +47,11 @@ export default function EvidencePage() {
     enabled: isProvenExperiment,
     queryKey: ["proven-experiment", experimentId],
     queryFn: () => fetchProvenExperiment("proven-experiment")
+  });
+  const executionQuery = useQuery({
+    enabled: canLoadEvidence,
+    queryKey: ["experiment", experimentId, "execution"],
+    queryFn: () => fetchExperimentExecution(experimentId ?? "")
   });
   const evidence = evidenceQuery.data?.data.evidence ?? provenQuery.data?.data.provenExperiment.evidenceGate ?? null;
   const sampleSize = 0;
@@ -85,10 +94,11 @@ export default function EvidencePage() {
     <div className="pageStack">
       <section className="routeHero">
         <p className="eyebrow">Evidence Gate</p>
-        <h1>What evidence caused the strategy decision?</h1>
+        <h1>The gate shows what the strategy earned, and what it has not earned.</h1>
         <p>
-          Start from an Experiment Workspace, then use this gate to inspect the server-authored
-          verdict, missing evidence, next action, and boundaries.
+          A promoted historical strategy does not become an execution strategy. EdgeLab makes the
+          next permitted observation step, missing evidence, and forbidden claims visible in one
+          server-authored decision.
         </p>
       </section>
       <section className="evidenceGate" aria-label="Evidence gate">
@@ -106,6 +116,23 @@ export default function EvidencePage() {
           <strong>{gateVerdict}</strong>
           <p className="verdictLead">{verdictLead(evidence?.assessment.verdict ?? null)}</p>
           <p>{gateDetail}</p>
+          {evidence?.assessment.verdict === "PROMOTE_TO_FORWARD_OBSERVATION" ? (
+            <p className="decisionNote">
+              Competitive point: this is a positive verdict and a restriction at the same time.
+              The strategy earned forward observation only; execution exposure remains closed
+              until separate live evidence exists.
+            </p>
+          ) : null}
+          {evidence?.assessment.verdict === "STRATEGY_QUALIFIED" && validUuid(experimentId) ? (
+            <p className="decisionNote">
+              This qualifies the strategy, not the market. A candidate must still pass fresh liquidity,
+              price, pool, expiry, collateral, allowance, balance, account, and network checks.
+              {" "}
+              <Link to={`/execution-candidate?experimentId=${encodeURIComponent(experimentId)}`}>
+                Revalidate a bounded candidate
+              </Link>
+            </p>
+          ) : null}
           {qualificationIncomplete ? (
             <p className="decisionNote">
               EdgeLab found real DreamDEX evidence and evaluated it. Advancement remains closed
@@ -180,9 +207,29 @@ export default function EvidencePage() {
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">Next Evidence</p>
-                <h2>{displayToken(evidence.decision.nextPermittedAction)}</h2>
+                <h2>Observation is the next product milestone.</h2>
               </div>
-              <span className="statusPill">Boundary preserved</span>
+              <span className="statusPill">{displayToken(evidence.decision.nextPermittedAction)}</span>
+            </div>
+            <div className="verdictLadder compactLadder">
+              <div className="ladderStep complete">
+                <span>Earned</span>
+                <strong>Historical qualification</strong>
+                <p>Forecast quality and calibration were measured from pre-outcome replay frames.</p>
+              </div>
+              <div className="ladderStep current">
+                <span>Now</span>
+                <strong>Forward observation</strong>
+                <p>Capture Shannon decisions before outcomes. This is the phase competitors with live proof force EdgeLab to strengthen.</p>
+                <Link className="textLink" to="/observation">
+                  View OBSERVE-001 proof
+                </Link>
+              </div>
+              <div className="ladderStep blocked">
+                <span>Blocked</span>
+                <strong>Execution exposure</strong>
+                <p>No strategy-linked fill, settlement, or realized PnL is counted yet.</p>
+              </div>
             </div>
             <div className="progressionHub">
               <div>
@@ -203,7 +250,16 @@ export default function EvidencePage() {
             </div>
           </section>
         ) : null}
-        <div className={`gateOutput ${evidence === null ? "neutralGate" : "verifiedGate"}`}>
+        {executionQuery.isError ? (
+          <div className="stateBox errorState" role="alert">
+            {apiErrorMessage(executionQuery.error)}
+          </div>
+        ) : null}
+        {executionQuery.data?.data.executionLifecycle !== null &&
+        executionQuery.data?.data.executionLifecycle !== undefined ? (
+          <ExecutionLifecycleSummary lifecycle={executionQuery.data.data.executionLifecycle} />
+        ) : null}
+        <div className={`gateOutput fullWidthGateOutput ${evidence === null ? "neutralGate" : "verifiedGate"}`}>
           <span>Gate output</span>
           <strong>{gateVerdict}</strong>
           <p>
@@ -220,6 +276,9 @@ export default function EvidencePage() {
               to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation"
             >
               Start Forward Observation
+            </Link>
+            <Link className="secondaryAction" to="/observation">
+              View Observation Proof
             </Link>
             <a
               className="secondaryAction"
