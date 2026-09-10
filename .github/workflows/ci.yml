@@ -9,6 +9,9 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_ADMIN_URL: postgres://edgelab:edgelab@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://edgelab:edgelab@localhost:5432/edgelab_test
     services:
       postgres:
         image: postgres:17-alpine
