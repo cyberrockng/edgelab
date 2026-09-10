@@ -3,16 +3,16 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 const sampleHistoricalMarketId = ["0x", "0".repeat(60), "1bb7"].join("");
 
 const productRoutes = [
-  { path: "/", heading: "EdgeLab decides whether a DreamDEX strategy has earned progression." },
+  { path: "/", heading: "Does your strategy improve on the market?" },
   { path: "/markets", heading: "Browse historical and live Event Contract markets without mixing networks." },
   { path: `/markets/${sampleHistoricalMarketId}?plane=mainnet-history`, heading: "Inspect one DreamDEX market with source provenance." },
-  { path: "/lab", heading: "Create an evidence-backed strategy experiment." },
-  { path: "/lab/demo-experiment", heading: "Run replay, observe forward decisions, and evaluate evidence." },
-  { path: "/observation", heading: "EdgeLab already proves the next phase can run before outcomes exist." },
-  { path: "/execution-candidate", heading: "Strategy-linked order bytes, without server custody." },
-  { path: "/compare", heading: "Compare evidence dimensions, not vanity scores." },
-  { path: "/evidence/proven-experiment", heading: "The gate shows what the strategy earned, and what it has not earned." },
-  { path: "/proof", heading: "EXPIRED" },
+  { path: "/lab", heading: "Studies and assessments" },
+  { path: "/lab/demo-experiment/results", heading: "Run replay, observe forward decisions, and evaluate evidence." },
+  { path: "/evidence/archive/observe-001", heading: "EdgeLab already proves the next phase can run before outcomes exist." },
+  { path: "/lab/8f78008c-fd22-413f-b41d-4919d3a49f14/execution", heading: "Strategy-linked order bytes, without server custody." },
+  { path: "/lab/compare", heading: "Compare evidence dimensions, not vanity scores." },
+  { path: "/lab/proven-experiment/evidence", heading: "The gate shows what the strategy earned, and what it has not earned." },
+  { path: "/evidence/archive/exg-003", heading: "EXPIRED" },
   { path: "/how-it-works", heading: "Evidence-gated promotion keeps the product honest." }
 ] as const;
 
@@ -47,24 +47,12 @@ test("homepage explains the interactive product and links to real routes", async
   expect(response?.ok()).toBe(true);
 
   await expect(page.getByRole("heading", { name: productRoutes[0].heading })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open Judge Verdict" })).toHaveAttribute(
-    "href",
-    "/lab/proven-experiment"
-  );
-  await expect(page.getByRole("link", { name: "Explore DreamDEX history" })).toHaveAttribute(
-    "href",
-    "/markets?plane=mainnet-history"
-  );
-  await expect(page.getByRole("link", { name: "Inspect Evidence Gate" })).toHaveAttribute(
-    "href",
-    "/evidence/proven-experiment"
-  );
-  await expect(page.getByRole("link", { name: "View captured no-fill lifecycle" })).toHaveAttribute("href", "/proof");
-  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Historical reality");
-  await expect(page.getByLabel("EdgeLab evidence model")).toContainText("Gate rule");
-  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("Forward OOS evidence");
-  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("GATED");
-  await expect(page.getByLabel("Product boundary")).toContainText("Promotion means forward observation");
+  await expect(page.getByRole("link", { name: "Open Lab" })).toHaveAttribute("href", "/lab");
+  await expect(page.getByRole("link", { name: "View example study" })).toHaveAttribute("href", "/lab/proven-experiment/results");
+  await expect(page.getByLabel("Featured study")).toContainText("Historical screening passed");
+  await expect(page.getByLabel("Featured study")).toContainText("market-relative assessment is unavailable");
+  await expect(page.getByLabel("Study progression")).toContainText("Collect observations");
+  await expect(page.getByLabel("Current public campaign")).toContainText("No current campaign published");
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
@@ -122,7 +110,10 @@ test("navigation, active route state, and keyboard focus work", async ({ page },
   }
   await page.getByRole("link", { name: "Markets" }).click();
   await expect(page).toHaveURL(/\/markets$/);
-  await expect(page.getByRole("link", { name: "Markets" })).toHaveClass(/active/);
+  const activeMarketsLink = testInfo.project.name.includes("mobile")
+    ? page.locator(".mobileNav a", { hasText: "Markets" })
+    : page.getByRole("link", { name: "Markets" });
+  await expect(activeMarketsLink).toHaveClass(/active/);
   await expect(page.locator(":focus")).toHaveAttribute("id", "main-content");
 });
 
@@ -139,15 +130,16 @@ test("market filters update URL state and keep source provenance visible", async
 
 test("strategy lab creates a persisted research-session experiment", async ({ page }) => {
   await gotoRoute(page, "/lab");
+  await page.getByRole("button", { name: "New experiment" }).click();
   await page.getByLabel("Experiment name").fill(`E2E replay ${String(Date.now())}`);
-  await page.getByLabel("Strategy").selectOption("historical-last-trade@1.1.0");
+  await page.getByLabel("Candidate strategy").selectOption("historical-last-trade@1.1.0");
   await page.getByLabel("Mode").selectOption("HISTORICAL_REPLAY");
-  await page.getByLabel("Asset universe").selectOption("BTC");
+  await page.getByLabel("Asset").selectOption("BTC");
   await page.getByLabel("Interval").selectOption("3600");
-  await expect(page.getByRole("button", { name: "Create Experiment" })).toBeEnabled({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Create Experiment" }).click();
+  await expect(page.getByRole("button", { name: "Create experiment" })).toBeEnabled({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Create experiment" }).click();
 
-  await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}$/, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/lab\/[0-9a-f-]{36}\/results$/, { timeout: 15_000 });
   await expect(page.getByLabel("Experiment workspace state")).toContainText("Application state");
   await expect(page.getByLabel("Experiment workspace state")).toContainText("MAINNET_HISTORICAL", { timeout: 15_000 });
   await expect(page.getByLabel("Experiment workspace state")).toContainText("Last-Trade Probability");
@@ -155,7 +147,7 @@ test("strategy lab creates a persisted research-session experiment", async ({ pa
 });
 
 test("proven experiment path exposes captured replay without favorable-data claims", async ({ page }) => {
-  await gotoRoute(page, "/lab/proven-experiment");
+  await gotoRoute(page, "/lab/proven-experiment/results");
   const workspace = page.getByRole("region", { name: "Proven experiment workspace" });
   await expect(page.getByRole("heading", { name: "This strategy earned observation, not execution." })).toBeVisible();
   await expect(workspace).toContainText("PUBLIC PROVEN");
@@ -167,12 +159,12 @@ test("proven experiment path exposes captured replay without favorable-data clai
   await expect(workspace.getByRole("link", { name: "Start Forward Observation" })).toHaveAttribute("href", /mode=live-shadow/);
   await expect(workspace.getByRole("link", { name: "Export Report" })).toHaveAttribute("href", /proven-experiments\/proven-experiment\/report/);
   await page.getByRole("link", { name: "View Evidence Gate" }).click();
-  await expect(page).toHaveURL("/evidence/proven-experiment");
+  await expect(page).toHaveURL("/lab/proven-experiment/evidence");
   await expect(page.getByRole("region", { name: "Evidence gate" })).toContainText("PROMOTE_TO_FORWARD_OBSERVATION");
 });
 
 test("public comparison separates evidence phases without fake strategy performance", async ({ page }) => {
-  await gotoRoute(page, "/compare");
+  await gotoRoute(page, "/lab/compare");
   const comparison = page.getByRole("region", { name: "Public comparison" });
   await expect(comparison).toContainText("One proven experiment, three maturity gaps");
   await expect(comparison.getByLabel("Decision-useful public comparison")).toContainText("Historical signal");
@@ -186,26 +178,23 @@ test("public comparison separates evidence phases without fake strategy performa
 
 test("strategy lab exposes captured experiments and live-shadow starter state", async ({ page }) => {
   await gotoRoute(page, "/lab");
-  await expect(page.getByRole("region", { name: "Captured experiment library" })).toContainText("Proven replay");
-  await expect(page.getByRole("region", { name: "Captured experiment library" }).getByRole("link", { name: "Export Report" })).toHaveAttribute(
-    "href",
-    /proven-experiments\/proven-experiment\/report/
-  );
+  await expect(page.getByRole("region", { name: "Public examples" })).toContainText("Proven replay");
+  await expect(page.getByRole("region", { name: "Public examples" }).getByRole("link", { name: "Open study" })).toHaveAttribute("href", "/lab/proven-experiment/results");
 
   await gotoRoute(page, "/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation");
-  await expect(page.getByRole("heading", { name: "Create an evidence-backed strategy experiment." })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Studies and assessments" })).toBeVisible({
     timeout: process.env.E2E_BASE_URL === undefined ? 5_000 : 15_000
   });
   await expect(page.getByLabel("Experiment name")).toHaveValue("BTC forward observation", {
     timeout: process.env.E2E_BASE_URL === undefined ? 5_000 : 15_000
   });
   await expect(page.getByLabel("Mode")).toHaveValue("LIVE_SHADOW");
-  await expect(page.getByLabel("Strategy")).toHaveValue("last-trade-forward-proxy@1.1.0");
+  await expect(page.getByLabel("Candidate strategy")).toHaveValue("last-trade-forward-proxy@1.1.0");
   await expect(page.getByLabel("Interval")).toHaveValue("900");
 });
 
 test("evidence route does not manufacture a final verdict in the browser", async ({ page }) => {
-  await gotoRoute(page, "/evidence/proven-experiment");
+  await gotoRoute(page, "/lab/proven-experiment/evidence");
   const gate = page.getByRole("region", { name: "Evidence gate" });
   await expect(gate).toContainText("PROMOTE TO FORWARD OBSERVATION");
   await expect(gate).toContainText("Historical replay evidence meets sample, Brier score, and calibration thresholds");
@@ -221,10 +210,8 @@ test("evidence route does not manufacture a final verdict in the browser", async
 
 test("execution route keeps wallet transaction authority closed before READY", async ({ page }) => {
   await gotoRoute(page, "/execution-candidate");
-  await expect(page.getByLabel("Qualification to receipt journey")).toContainText("Forward qualification");
-  await expect(page.getByText("Your OKX transaction approval is not needed yet.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Submit Bounded Shannon Order" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Connect OKX Account (No Signing)" })).toBeEnabled();
+  await expect(page).toHaveURL("/lab?notice=choose-experiment");
+  await expect(page.getByRole("status")).toContainText("Choose a strategy before reviewing testnet execution");
 });
 
 test("execution deep link preserves the exact strategy track for a demo handoff", async ({ page }) => {
@@ -233,6 +220,8 @@ test("execution deep link preserves the exact strategy track for a demo handoff"
     page,
     `/execution-candidate?experimentId=${experimentId}&asset=ETH&intervalSec=3600`
   );
+
+  await expect(page).toHaveURL(`/lab/${experimentId}/execution?asset=ETH&intervalSec=3600`);
 
   await expect(page.getByLabel("Qualified forward experiment ID")).toHaveValue(experimentId);
   await expect(page.getByLabel("Asset")).toHaveValue("ETH");

@@ -1940,6 +1940,57 @@ dd {
   }
 }
 
+.reliabilityPanel { margin-top: 1.25rem; }
+.reliabilityChart { display: block; width: min(100%, 28rem); margin: 1rem auto; color: var(--muted); overflow: visible; }
+.reliabilityReference { stroke: currentColor; stroke-dasharray: 5 5; }
+.reliabilityInterval { stroke-width: 2; }
+.reliabilityPoint.candidate, .reliabilityInterval.candidate { fill: var(--current); stroke: var(--current); }
+.reliabilityPoint.market, .reliabilityInterval.market { fill: var(--ink); stroke: var(--ink); }
+.tableScroll { overflow-x: auto; }
+.reliabilityTable { width: 100%; border-collapse: collapse; }
+.reliabilityTable th, .reliabilityTable td { padding: 0.6rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+
+.experimentFrame { display: grid; gap: 12px; }
+.experimentTabs {
+  position: sticky; z-index: 8; top: 76px; display: flex; gap: 4px; overflow-x: auto;
+  padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgb(251 252 250 / 96%);
+}
+.experimentTabs a { padding: 9px 13px; border-radius: var(--radius-sm); color: var(--muted); font-weight: 850; text-decoration: none; }
+.experimentTabs a.active { background: var(--rail); color: #fff; }
+.overviewHero { min-height: min(640px, calc(100vh - 160px)); align-items: center; }
+.featuredStudy {
+  display: grid; gap: 12px; padding: clamp(20px, 3vw, 34px); border: 1px solid #2d3934;
+  border-radius: var(--radius-md); background: var(--rail); color: #f7faf6;
+}
+.featuredStudy h2, .featuredStudy p, .featuredStudy .label { color: inherit; }
+.featuredStudy .statusPill { border-color: #65736d; color: #e9f1ec; }
+.featuredVerdict { color: #bde4c9; font-size: clamp(1.4rem, 2.2vw, 2.2rem); }
+.studyCohort, .smallPrint { color: #c9d4cf !important; }
+.smallPrint { font-size: .82rem; }
+.progressionStrip {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--surface-strong);
+}
+.progressionStrip > div { display: grid; gap: 6px; padding: 18px; border-right: 1px solid var(--line); }
+.progressionStrip > div:last-child { border-right: 0; }
+.progressionStrip span { color: var(--current); font-size: .75rem; font-weight: 900; }
+.progressionStrip p { font-size: .88rem; }
+.labHero { display: flex; gap: 18px; align-items: end; justify-content: space-between; }
+.studyForm { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.studyForm fieldset { display: grid; gap: 13px; min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.studyForm legend { padding: 0 6px; color: var(--ink); font-weight: 900; }
+.textButton { display: inline; padding: 0; border: 0; background: transparent; color: inherit; text-decoration: underline; }
+
+@media (max-width: 800px) {
+  .progressionStrip, .studyForm { grid-template-columns: 1fr; }
+  .progressionStrip > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .progressionStrip > div:last-child { border-bottom: 0; }
+  .labHero { align-items: stretch; flex-direction: column; }
+  .environmentBadge { display: none; }
+  .overviewHero { min-height: auto; }
+}
+
 /* Hybrid dark minimal-fintech design system */
 :root {
   color-scheme: dark;

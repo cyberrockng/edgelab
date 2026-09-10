@@ -2,7 +2,7 @@
 
 ## Deadline control
 
-Current public Somnia messaging says Event Contracts Hackathon submissions close **2026-09-08 at 23:59 UTC**. Automated access could not verify the authenticated DoraHacks countdown, and an older repository snapshot recorded a conflicting 18:00 UTC interpretation. Keep the safer internal cutoff of **2026-09-08 at 15:00 UTC (16:00 WAT)** and verify the exact countdown inside the entrant's authenticated DoraHacks form before relying on any later time.
+The entrant reports less than 24 hours remain as of **2026-09-10**. The authenticated submission form is the controlling clock. Verify it now, record the displayed deadline, and plan to upload several hours early. Public search results do not expose a reliable current countdown.
 
 ## Required submission package
 
@@ -33,7 +33,7 @@ Current public Somnia messaging says Event Contracts Hackathon submissions close
 
 **DreamDEX/Somnia integration:** DreamDEX Event Contract markets, order books, pool parameters, fills, and settlement data are read through `@somnia-chain/markets-sdk` and bounded fallbacks. Historical research is read-only on Somnia mainnet `5031`; forward observation and optional owner-approved proof are bounded to Shannon testnet `50312`.
 
-**Current evidence disclosure:** Replace this sentence immediately before submission with the exact live result. If no track qualifies, state: “The full lifecycle is implemented and locally verified; the live campaign remains below deterministic qualification, so strategy-linked execution is correctly blocked. EXG-003 is an unlinked real no-fill protocol artifact, not strategy performance proof.”
+**Current evidence disclosure:** “The full v4 lifecycle is implemented and locally verified. The fixed 28-day live study began on 10 September 2026 and cannot mature before submission, so strategy-linked execution is correctly blocked. EXG-003 is a separate real Shannon no-fill protocol artifact, not strategy performance proof.”
 
 **Repository:** https://github.com/cyberrockng/edgelab
 
@@ -45,14 +45,14 @@ Current public Somnia messaging says Event Contracts Hackathon submissions close
 
 ### Now
 
-- Keep PostgreSQL, application, two observation campaigns, and two execution watchers running.
-- Rehearse both branches in `docs/DEMO_SCRIPT.md`.
+- Keep PostgreSQL, the application, and the single BTC 15m v4 observation campaign running.
+- Rehearse the honest-gate branch in `docs/DEMO_SCRIPT.md`.
 - Run `pnpm demo:open -- --smoke` and one silent screen-recording rehearsal.
 - Prepare the DoraHacks draft without submitting premature claims.
 
-### When an exact track reaches 30
+### When the v4 study ends
 
-1. Confirm all 30 are eligible and settled on one exact policy/asset/interval track.
+1. Confirm at least 200 paired observations are settled on the one exact policy/asset/interval cohort and the fixed 28-day window has ended.
 2. Run deterministic evaluation and record the exact verdict and reason codes.
 3. If qualified, request a fresh candidate; do not reuse historical READY output.
 4. If blocked, record the actionable blocker and use the honest-gate video branch.

@@ -6,15 +6,15 @@ Target: 2:40–2:55. Record at 1440×900 or 1920×1080, 30 fps. Never display `.
 
 1. Confirm `/healthz` and `/readyz` are green and note the exact current eligible counts.
 2. Run `pnpm demo:open -- --smoke` to verify the authenticated campaign workspace without printing its session credential.
-3. Run `pnpm demo:open` to open six ordered, read-only recording tabs for the v1.1 BTC 1h track.
+3. Run `pnpm demo:open` to open six ordered, read-only recording tabs for the v1.1 BTC 15m v4 track.
 4. Close notifications, password managers, unrelated tabs, developer tools, and terminals containing environment values.
 5. Use a normal browser profile with the OKX extension only if an exact track is qualified **and** a fresh candidate is `READY`. The demo helper is intentionally read-only and does not load wallet extensions.
 6. Record one clean narration take, then add a title card and captions. Do not accelerate wallet prompts or edit separate transactions to look atomic.
 
 ## Branch decision immediately before recording
 
-- **Branch A — qualified lifecycle:** use only if the exact displayed policy/asset/interval has at least 30 eligible settled observations and the server assessment says `STRATEGY_QUALIFIED`.
-- **Branch B — honest gate:** use if the threshold or policy gates have not passed. Showing that EdgeLab refuses execution is a valid product demonstration.
+- **Branch A — qualified lifecycle:** use only if the fixed 28-day study has ended, the exact displayed policy/asset/interval has at least 200 paired observations, and v4 says `ELIGIBLE_FOR_FRESH_REVIEW`.
+- **Branch B — honest gate:** use for this submission because the v4 study cannot mature before the deadline. Showing that EdgeLab refuses execution is the product demonstration.
 - Never combine BTC and ETH, 15m and 1h, or v1.0 and v1.1 counts.
 
 ## Timed narration and shots
@@ -33,17 +33,17 @@ Target: 2:40–2:55. Record at 1440×900 or 1920×1080, 30 fps. Never display `.
 
 ### 0:42–1:18 — Genuine forward campaign
 
-**Shot:** Live campaign tab. Show `last-trade-forward-proxy@1.1.0`, the exact BTC 1h configuration, eligible count, abstentions, pending outcomes, timing exclusions, and latest market.
+**Shot:** Live campaign tab. Show `last-trade-forward-proxy@1.1.0`, the exact BTC 15m configuration, fixed window, eligible count, abstentions, pending outcomes, timing exclusions, and latest market.
 
-**Say:** “Next, EdgeLab commits predictions before Shannon outcomes exist. This durable campaign follows rotating market generations, deduplicates observations, survives restarts, preserves abstentions and data errors, and reconciles settlement later. The qualification requirement is 30 eligible settled observations on one exact track. Raw uptime and executable liquidity cannot inflate this number.”
+**Say:** “Next, EdgeLab commits predictions and a two-sided book midpoint before Shannon outcomes exist. This durable campaign follows rotating market generations, captures only in the final five-second window, survives restarts, preserves exclusions, and reconciles settlement later. The frozen v4 protocol requires 200 paired observations across a fixed 28-day study. Raw polling cannot inflate the sample.”
 
 ### 1:18–1:42 — Deterministic verdict
 
 **Shot:** Evaluation area in the campaign workspace.
 
-**Branch A say:** “The exact track reached the required evidence threshold. The server applies a versioned deterministic policy and records `STRATEGY_QUALIFIED` with its reasons.”
+**Branch A say:** “The exact track completed its fixed study. The server applies paired Brier, calibration, integrity, coverage, and captured-book economic rules and records `ELIGIBLE_FOR_FRESH_REVIEW` with its reasons.”
 
-**Branch B say:** “This track currently has [READ THE DISPLAYED COUNT] eligible observations. The missing evidence remains visible, so the server refuses to qualify it. That refusal is the control—not a demo failure.”
+**Branch B say:** “This study began on September 10 and cannot complete its fixed 28-day window before submission. The missing samples, days, coverage, and economic evidence remain visible, so the server returns `BLOCKED`. That refusal is the control.”
 
 ### 1:42–2:15 — Fresh execution gate
 
@@ -51,7 +51,7 @@ Target: 2:40–2:55. Record at 1440×900 or 1920×1080, 30 fps. Never display `.
 
 **Branch A say:** “Qualification unlocks only a fresh market review. EdgeLab resolves the current market and collateral, checks liquidity, lot and minimum quantity, expiry headroom, wallet funds, allowance, network, and a 0.01 tUSDC cap. It revalidates again before signing, and the server returns unsigned calls only.”
 
-**Branch B say:** “Even if a market is liquid, this request fails with `STRATEGY_NOT_QUALIFIED`. Market executability can never qualify an unproven strategy.”
+**Branch B say:** “Even if a market is liquid, this request remains blocked because the v4 forecast and captured-book economic criteria have not passed. Current executability cannot qualify an unfinished study.”
 
 If Branch A is `READY` and the owner chooses to execute, switch to the normal OKX-enabled browser. Confirm Shannon chain `50312`, the selected account, contract-resolved tUSDC address, exact approval amount, order bytes, IOC behavior, and cap. Approve each wallet request manually. Never paste or reveal a private key or seed phrase.
 

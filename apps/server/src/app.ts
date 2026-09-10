@@ -73,6 +73,7 @@ import {
   listHistoricalCandles,
   listHistoricalFillsByMarket,
   listHistoricalOrdersByMarket,
+  planExecutableQuote,
   readExecutionReadiness,
   readBinaryBookParams,
   resolveHistoricalCutoffBlock,
@@ -92,7 +93,8 @@ import {
   type HistoricalCutoffBlock,
   type MainnetHistoricalDreamDexConfig
 } from "@edgelab/dreamdex";
-import { EVALUATION_VERSION, runMetricAssessment } from "@edgelab/evaluate";
+import { EVALUATION_VERSION, runMetricAssessment, runV4Assessment } from "@edgelab/evaluate";
+import { calculatePairedMetrics, pairedMovingBlockDeltaInterval, type PairedForecastObservation } from "@edgelab/metrics";
 import { observeExperiment } from "@edgelab/observe";
 import {
   createHistoricalPolicyManifest,
@@ -133,7 +135,8 @@ const IntentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const IdempotencyKeySchema = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const ResearchSessionCookie = "edgelab_research_session";
 const CsrfHeader = "x-csrf-token";
-const SessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const SessionTtlMs = 35 * 24 * 60 * 60 * 1000;
+const SigningAuthorizationTtlMs = 120_000;
 const PublicReadRateLimit = 240;
 const PublicWriteRateLimit = 60;
 const ResearchSessionCreateRateLimit = 30;
@@ -191,6 +194,9 @@ const ExecutionCandidateQuerySchema = z.object({
     .regex(/^[0-9]+$/)
     .default("10000")
     .refine((value) => BigInt(value) > 0n && BigInt(value) <= 10_000n, "maxEscrowRaw must be 1..10000"),
+  requestedQuantityRaw: z.string().regex(/^[0-9]+$/).optional()
+    .refine((value) => value === undefined || BigInt(value) > 0n, "requestedQuantityRaw must be positive"),
+  worstPriceRaw: z.string().regex(/^[0-9]+$/).optional(),
   minExpiryHeadroomSec: z.coerce.number().int().min(60).max(600).default(120)
 });
 const ControlledLiquidityQuerySchema = z.object({
@@ -238,7 +244,7 @@ const PersistableExecutionCandidateSchema = z.object({
     experimentId: z.string().uuid(),
     assessmentId: z.string().uuid(),
     assessmentHash: z.string().regex(/^[a-f0-9]{64}$/),
-    qualificationVerdict: z.literal("STRATEGY_QUALIFIED"),
+    qualificationVerdict: z.enum(["STRATEGY_QUALIFIED", "FORWARD_CRITERIA_MET"]),
     snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
     decision: z.object({
       policyId: z.string().min(1),
@@ -257,6 +263,30 @@ const PersistableExecutionCandidateSchema = z.object({
     priceRaw: z.string().regex(/^[0-9]+$/),
     quantityRaw: z.string().regex(/^[0-9]+$/)
   }).passthrough(),
+  quotePlan: z.object({
+    requestedQuantityRaw: z.string().regex(/^[0-9]+$/),
+    fillableQuantityRaw: z.string().regex(/^[0-9]+$/),
+    unfilledQuantityRaw: z.string().regex(/^[0-9]+$/),
+    averagePriceRaw: z.string().regex(/^[0-9]+$/).nullable(),
+    worstPriceRaw: z.string().regex(/^[0-9]+$/).nullable(),
+    totalCollateralRaw: z.string().regex(/^[0-9]+$/),
+    conservativeExpectedNetRaw: z.string().regex(/^-?[0-9]+$/),
+    conservativeExpectedNetAtPriceCapRaw: z.string().regex(/^-?[0-9]+$/),
+    reviewedPriceCapRaw: z.string().regex(/^[0-9]+$/),
+    levelsConsumed: z.array(z.object({ priceRaw: z.string(), quantityRaw: z.string() })),
+    passesConservativeEdge: z.boolean(),
+    reasonCodes: z.array(z.string())
+  }),
+  quoteBook: z.object({ rawLevels: z.array(z.object({ priceRaw: z.string(), quantityRaw: z.string() })) }),
+  quotePolicy: z.object({
+    modelHaircutPpm: z.literal(50000),
+    slippageReservePpm: z.literal(10000),
+    minimumEdgePpm: z.literal(10000),
+    estimatedFeesRaw: z.string(),
+    gasTreatment: z.literal("EXCLUDED_NATIVE_UNIT_DISCLOSURE"),
+    policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+    reviewExpiresAt: z.iso.datetime()
+  }),
   unsignedTransactions: z.object({
     approval: z.object({
       to: AddressSchema,
@@ -348,6 +378,7 @@ interface QualifiedStrategyRecord {
   readonly ruleVersion: string;
   readonly sampleSize: number;
   readonly qualifiedAt: Date;
+  readonly qualificationVerdict: "STRATEGY_QUALIFIED" | "FORWARD_CRITERIA_MET";
 }
 
 async function loadQualifiedStrategy(
@@ -366,6 +397,7 @@ async function loadQualifiedStrategy(
     rule_version: string;
     sample_size: number;
     qualified_at: Date;
+    qualification_verdict: "STRATEGY_QUALIFIED" | "FORWARD_CRITERIA_MET";
   }>(
     `
       SELECT
@@ -379,7 +411,8 @@ async function loadQualifiedStrategy(
         latest_assessment.assessment_hash,
         latest_assessment.rule_version,
         latest_assessment.sample_size,
-        latest_assessment.qualified_at
+        latest_assessment.qualified_at,
+        latest_assessment.qualification_verdict
       FROM experiments e
       JOIN experiment_configuration_versions ecv ON ecv.id = e.active_configuration_id
       JOIN experiment_policy_versions epv
@@ -393,18 +426,29 @@ async function loadQualifiedStrategy(
           mr.sample_size,
           mr.evaluation_version,
           ea.created_at AS qualified_at,
-          ea.verdict
+          ea.verdict,
+          CASE WHEN av4.execution_eligibility = 'ELIGIBLE_FOR_FRESH_REVIEW'
+            THEN 'FORWARD_CRITERIA_MET' ELSE ea.verdict END AS qualification_verdict,
+          av4.execution_eligibility,
+          av4.forecast_status,
+          av4.economics_status
         FROM metric_runs mr
         JOIN evidence_assessments ea ON ea.metric_run_id = mr.id
+        LEFT JOIN assessment_v4_details av4 ON av4.assessment_id = ea.id
         WHERE mr.experiment_id = e.id
           AND mr.policy_version_id = pv.id
           AND mr.evidence_plane = 'SHANNON_FORWARD'
-          AND mr.promotion_scope = 'EXECUTION_EXPOSURE'
+          AND (mr.promotion_scope = 'EXECUTION_EXPOSURE' OR mr.evaluation_version = 'edgelab-evaluation-v4')
         ORDER BY ea.created_at DESC, ea.id DESC
         LIMIT 1
-      ) latest_assessment
-        ON latest_assessment.verdict = 'STRATEGY_QUALIFIED'
-        AND latest_assessment.evaluation_version = $3
+      ) latest_assessment ON (
+        (latest_assessment.verdict = 'STRATEGY_QUALIFIED' AND latest_assessment.evaluation_version = $3)
+        OR
+        (latest_assessment.evaluation_version = 'edgelab-evaluation-v4'
+          AND latest_assessment.forecast_status = 'FORWARD_CRITERIA_MET'
+          AND latest_assessment.economics_status = 'SCENARIO_CRITERIA_MET'
+          AND latest_assessment.execution_eligibility = 'ELIGIBLE_FOR_FRESH_REVIEW')
+      )
       WHERE e.id = $1
         AND e.created_by_session_id = $2
         AND ecv.mode = 'LIVE_SHADOW'
@@ -426,7 +470,8 @@ async function loadQualifiedStrategy(
         assessmentHash: row.assessment_hash,
         ruleVersion: row.rule_version,
         sampleSize: row.sample_size,
-        qualifiedAt: row.qualified_at
+        qualifiedAt: row.qualified_at,
+        qualificationVerdict: row.qualification_verdict
       };
 }
 
@@ -744,9 +789,16 @@ async function persistReadyExecutionCandidate(
         FROM policy_versions pv
         JOIN metric_runs mr ON mr.policy_version_id = pv.id
         JOIN evidence_assessments ea ON ea.metric_run_id = mr.id
+        LEFT JOIN assessment_v4_details av4 ON av4.assessment_id = ea.id
         WHERE ea.id = $1
           AND ea.assessment_hash = $2
-          AND ea.verdict = 'STRATEGY_QUALIFIED'
+          AND (
+            ea.verdict = 'STRATEGY_QUALIFIED'
+            OR (mr.evaluation_version = 'edgelab-evaluation-v4'
+              AND av4.forecast_status = 'FORWARD_CRITERIA_MET'
+              AND av4.economics_status = 'SCENARIO_CRITERIA_MET'
+              AND av4.execution_eligibility = 'ELIGIBLE_FOR_FRESH_REVIEW')
+          )
           AND mr.experiment_id = $3
           AND pv.policy_id = $4
           AND pv.version = $5
@@ -813,6 +865,21 @@ async function persistReadyExecutionCandidate(
     if (intentId === undefined) {
       throw new Error("EXECUTION_INTENT_INSERT_FAILED");
     }
+    await client.query(
+      `INSERT INTO execution_quote_details(
+        execution_intent_id,raw_levels,requested_quantity_raw,fillable_quantity_raw,lot_size_raw,tick_size_raw,
+        max_collateral_raw,average_price_raw,worst_price_raw,conservative_net_raw,reserves,policy_hash,review_expires_at)
+       VALUES ($1,$2::jsonb,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)`,
+      [intentId, JSON.stringify(candidate.quoteBook.rawLevels), candidate.quotePlan.requestedQuantityRaw,
+        candidate.quotePlan.fillableQuantityRaw, candidate.sizing.lotSizeRaw, candidate.sizing.tickSizeRaw,
+        candidate.risk.maxEscrowRaw, candidate.quotePlan.averagePriceRaw, candidate.quotePlan.worstPriceRaw,
+        candidate.quotePlan.conservativeExpectedNetRaw,
+        JSON.stringify({ modelHaircutPpm: candidate.quotePolicy.modelHaircutPpm, slippageReservePpm: candidate.quotePolicy.slippageReservePpm,
+          minimumEdgePpm: candidate.quotePolicy.minimumEdgePpm, estimatedFeesRaw: candidate.quotePolicy.estimatedFeesRaw,
+          gasTreatment: candidate.quotePolicy.gasTreatment, reviewedPriceCapRaw: candidate.quotePlan.reviewedPriceCapRaw,
+          conservativeExpectedNetAtPriceCapRaw: candidate.quotePlan.conservativeExpectedNetAtPriceCapRaw }),
+        candidate.quotePolicy.policyHash, candidate.quotePolicy.reviewExpiresAt]
+    );
     await client.query("COMMIT");
     return intentId;
   } catch (error) {
@@ -2008,22 +2075,6 @@ function executionEscrowPriceRaw(side: "BUY_YES" | "BUY_NO", priceRaw: bigint, q
   return priceRaw >= scale ? 0n : scale - priceRaw;
 }
 
-function boundedQuantityForEscrow(input: {
-  readonly maxEscrowRaw: bigint;
-  readonly priceRaw: bigint;
-  readonly quoteDecimals: number;
-  readonly availableQuantityRaw: bigint;
-  readonly lotSize: bigint;
-}): bigint {
-  if (input.priceRaw <= 0n || input.maxEscrowRaw <= 0n || input.availableQuantityRaw <= 0n) {
-    return 0n;
-  }
-  const scale = 10n ** BigInt(input.quoteDecimals);
-  const budgetQuantity = (input.maxEscrowRaw * scale) / input.priceRaw;
-  const capped = budgetQuantity < input.availableQuantityRaw ? budgetQuantity : input.availableQuantityRaw;
-  return floorToLot(capped, input.lotSize);
-}
-
 function minimumEscrowForQuantity(input: {
   readonly quantityRaw: bigint;
   readonly priceRaw: bigint;
@@ -2820,44 +2871,45 @@ async function loadLiveShadowState(pool: pg.Pool, input: { readonly sessionId: s
         count(DISTINCT sd.id) FILTER (
           WHERE sd.action <> 'ABSTAIN'
             AND sd.forecast_p_up IS NOT NULL
-            AND ms.captured_at >= GREATEST(
-              COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
-              me.expires_at - make_interval(secs => sd.decision_offset_sec)
-            )
-            AND ms.captured_at < me.expires_at
+            AND ms.captured_at >= CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec + 5)
+              ELSE GREATEST(COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz), me.expires_at - make_interval(secs => sd.decision_offset_sec)) END
+            AND ms.captured_at < CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec) ELSE me.expires_at END
             AND s.resolved = true
             AND s.voided = false
             AND s.winner IN ('YES', 'NO')
         ) AS eligible_decision_count,
         count(DISTINCT sd.id) FILTER (
           WHERE (sd.action = 'ABSTAIN' OR sd.forecast_p_up IS NULL)
-            AND ms.captured_at >= GREATEST(
-            COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
-            me.expires_at - make_interval(secs => sd.decision_offset_sec)
-          )
-            AND ms.captured_at < me.expires_at
+            AND ms.captured_at >= CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec + 5)
+              ELSE GREATEST(COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz), me.expires_at - make_interval(secs => sd.decision_offset_sec)) END
+            AND ms.captured_at < CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec) ELSE me.expires_at END
         ) AS abstention_count,
         count(DISTINCT sd.id) FILTER (
           WHERE sd.action <> 'ABSTAIN'
             AND sd.forecast_p_up IS NOT NULL
-            AND ms.captured_at >= GREATEST(
-              COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
-              me.expires_at - make_interval(secs => sd.decision_offset_sec)
-            )
-            AND ms.captured_at < me.expires_at
+            AND ms.captured_at >= CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec + 5)
+              ELSE GREATEST(COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz), me.expires_at - make_interval(secs => sd.decision_offset_sec)) END
+            AND ms.captured_at < CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec) ELSE me.expires_at END
             AND (s.id IS NULL OR (s.resolved = false AND s.voided = false))
         ) AS pending_outcome_count,
         count(DISTINCT sd.id) FILTER (
-          WHERE ms.captured_at < GREATEST(
-            COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz),
-            me.expires_at - make_interval(secs => sd.decision_offset_sec)
-          )
-            OR ms.captured_at >= me.expires_at
+          WHERE ms.captured_at < CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec + 5)
+              ELSE GREATEST(COALESCE(me.trading_starts_at + interval '1 second', '-infinity'::timestamptz), me.expires_at - make_interval(secs => sd.decision_offset_sec)) END
+            OR ms.captured_at >= CASE WHEN ecv.rule_version='edgelab-evaluation-v4'
+              THEN me.expires_at - make_interval(secs => sd.decision_offset_sec) ELSE me.expires_at END
         ) AS timing_excluded_decision_count,
         count(DISTINCT me.id) FILTER (WHERE me.state = 'EXCLUDED') AS excluded_episode_count,
         max(sd.decided_at) AS latest_decided_at,
         (array_agg(me.market_id ORDER BY sd.decided_at DESC NULLS LAST))[1] AS latest_market_id
       FROM experiments e
+      JOIN experiment_configuration_versions ecv ON ecv.id=e.active_configuration_id
       LEFT JOIN market_episodes me ON me.experiment_id = e.id
       LEFT JOIN market_snapshots ms ON ms.episode_id = me.id
       LEFT JOIN shadow_decisions sd ON sd.snapshot_id = ms.id
@@ -3715,6 +3767,128 @@ function buildProvenExperimentReport() {
   };
 }
 
+interface FrozenComparisonScope {
+  readonly mode: "MATCHED_INTERSECTION" | "DESCRIPTIVE_ONLY";
+  readonly manifestHash: string;
+  readonly reason: string;
+  readonly intersectionSize: number;
+  readonly assessmentIds: readonly string[];
+  readonly exclusionsByAssessment: Readonly<Record<string, number>>;
+  readonly matchedMetricsByAssessment: Readonly<Record<string, {
+    readonly pairedSampleSize: number;
+    readonly candidateBrier: number | null;
+    readonly marketBrier: number | null;
+    readonly brierSkill: number | null;
+    readonly candidateEce: number | null;
+    readonly marketEce: number | null;
+    readonly deltaInterval: { readonly lower: number; readonly upper: number; readonly distinctDayBlocks: number; readonly familySize: number } | null;
+  }>>;
+}
+
+async function buildFrozenComparisonScope(
+  pool: pg.Pool | pg.PoolClient,
+  assessmentIds: readonly string[]
+): Promise<{ readonly mode: FrozenComparisonScope["mode"]; readonly manifest: Record<string, unknown>; readonly manifestHash: string }> {
+  const result = await pool.query<{
+    assessment_id: string;
+    rule_version: string;
+    evidence_plane: string;
+    canonical_input: { observations?: readonly {
+      observationKey?: unknown; candidateProbability?: unknown; marketProbability?: unknown;
+      outcomeUp?: unknown; observedAt?: unknown;
+    }[] };
+    family: string | null;
+    timing: unknown;
+    cohort: unknown;
+  }>(
+    `SELECT ea.id AS assessment_id, mr.rule_version, mr.evidence_plane, mr.canonical_input,
+            op.family, op.manifest->'timing' AS timing, op.manifest->'cohort' AS cohort
+       FROM evidence_assessments ea
+       JOIN metric_runs mr ON mr.id = ea.metric_run_id
+       LEFT JOIN assessment_v4_details av4 ON av4.assessment_id = ea.id
+       LEFT JOIN observation_protocols op ON op.id = av4.protocol_id
+      WHERE ea.id = ANY($1::uuid[])`,
+    [[...assessmentIds]]
+  );
+  const byId = new Map(result.rows.map((row) => [row.assessment_id, row]));
+  const rows = assessmentIds.flatMap((id) => {
+    const row = byId.get(id);
+    return row === undefined ? [] : [row];
+  });
+  const first = rows[0];
+  const v4Compatible = rows.length === assessmentIds.length && first !== undefined && rows.every((row) =>
+    row.rule_version === "edgelab-evaluation-v4" &&
+    row.evidence_plane === "SHANNON_FORWARD" &&
+    row.family !== null && row.family === first.family &&
+    stableJson(row.timing) === stableJson(first.timing) &&
+    stableJson(row.cohort) === stableJson(first.cohort)
+  );
+  const keySets = rows.map((row) => new Set(
+    (row.canonical_input.observations ?? []).flatMap((observation) =>
+      typeof observation.observationKey === "string" ? [observation.observationKey] : []
+    )
+  ));
+  const intersection = v4Compatible && keySets[0] !== undefined
+    ? [...keySets[0]].filter((key) => keySets.every((set) => set.has(key))).sort()
+    : [];
+  const mode = v4Compatible ? "MATCHED_INTERSECTION" : "DESCRIPTIVE_ONLY";
+  const reason = v4Compatible
+    ? "Shared v4 source plane, cohort, and decision timing; metrics may be recomputed on the frozen observation-key intersection."
+    : "Different evidence scopes — descriptive comparison only.";
+  const exclusionsByAssessment = Object.fromEntries(assessmentIds.map((id, index) => [
+    id,
+    Math.max(0, (keySets[index]?.size ?? 0) - intersection.length)
+  ]));
+  const intersectionSet = new Set(intersection);
+  const comparisonSeed = sha256(stableJson({ assessmentIds: [...assessmentIds], intersectionObservationKeys: intersection }));
+  const matchedMetricsByAssessment = v4Compatible ? Object.fromEntries(rows.map((row) => {
+    const observations: PairedForecastObservation[] = (row.canonical_input.observations ?? []).flatMap((observation) =>
+      typeof observation.observationKey === "string" && intersectionSet.has(observation.observationKey) &&
+      typeof observation.candidateProbability === "number" &&
+      (typeof observation.marketProbability === "number" || observation.marketProbability === null) &&
+      typeof observation.outcomeUp === "boolean" && typeof observation.observedAt === "string"
+        ? [{
+            observationKey: observation.observationKey,
+            candidateProbability: observation.candidateProbability,
+            marketProbability: observation.marketProbability,
+            outcomeUp: observation.outcomeUp,
+            observedAt: observation.observedAt
+          }]
+        : []
+    );
+    const metrics = calculatePairedMetrics(observations);
+    const interval = pairedMovingBlockDeltaInterval(observations, {
+      seed: comparisonSeed, replicates: 10_000, blockLengthDays: 2, familySize: assessmentIds.length
+    });
+    return [row.assessment_id, {
+      pairedSampleSize: metrics.pairedSampleSize,
+      candidateBrier: metrics.candidateBrier,
+      marketBrier: metrics.marketBrier,
+      brierSkill: metrics.brierSkill,
+      candidateEce: metrics.candidateEce,
+      marketEce: metrics.marketEce,
+      deltaInterval: interval === null ? null : {
+        lower: interval.lower, upper: interval.upper,
+        distinctDayBlocks: interval.distinctDayBlocks, familySize: interval.familySize
+      }
+    }];
+  })) : {};
+  const manifest = {
+    schemaVersion: "edgelab-comparison-scope-v1",
+    mode,
+    reason,
+    assessmentIds: [...assessmentIds],
+    cohort: v4Compatible ? first.cohort : null,
+    timing: v4Compatible ? first.timing : null,
+    intersectionObservationKeys: intersection,
+    intersectionSize: intersection.length,
+    comparisonSeed,
+    exclusionsByAssessment,
+    matchedMetricsByAssessment
+  };
+  return { mode, manifest, manifestHash: sha256(stableJson(manifest)) };
+}
+
 async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string; readonly comparisonId: string }) {
   const result = await pool.query<{
     comparison_id: string;
@@ -3768,12 +3942,31 @@ async function loadComparison(pool: pg.Pool, input: { readonly sessionId: string
   if (row === undefined) {
     return null;
   }
+  const scopeResult = await pool.query<{ comparison_mode: FrozenComparisonScope["mode"]; manifest: Record<string, unknown>; manifest_hash: string }>(
+    "SELECT comparison_mode, manifest, manifest_hash FROM comparison_scope_manifests WHERE comparison_set_id = $1",
+    [input.comparisonId]
+  );
+  const scopeRow = scopeResult.rows[0];
+  const scopeManifest = scopeRow?.manifest ?? {};
   return {
     comparisonId: row.comparison_id,
     name: row.name.replace(/#[A-Za-z0-9._:-]{8,128}$/, ""),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
-    items: Array.isArray(row.items) ? row.items : []
+    items: Array.isArray(row.items) ? row.items : [],
+    scope: scopeRow === undefined ? null : {
+      mode: scopeRow.comparison_mode,
+      manifestHash: scopeRow.manifest_hash,
+      reason: typeof scopeManifest.reason === "string" ? scopeManifest.reason : "Comparison scope is frozen.",
+      intersectionSize: typeof scopeManifest.intersectionSize === "number" ? scopeManifest.intersectionSize : 0,
+      assessmentIds: Array.isArray(scopeManifest.assessmentIds) ? scopeManifest.assessmentIds.filter((id): id is string => typeof id === "string") : [],
+      exclusionsByAssessment: typeof scopeManifest.exclusionsByAssessment === "object" && scopeManifest.exclusionsByAssessment !== null
+        ? scopeManifest.exclusionsByAssessment as Record<string, number>
+        : {},
+      matchedMetricsByAssessment: typeof scopeManifest.matchedMetricsByAssessment === "object" && scopeManifest.matchedMetricsByAssessment !== null
+        ? scopeManifest.matchedMetricsByAssessment as FrozenComparisonScope["matchedMetricsByAssessment"]
+        : {}
+    } satisfies FrozenComparisonScope
   };
 }
 
@@ -4040,6 +4233,54 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       { immutableVersions: true }
     )
   );
+
+  app.get("/api/v2/public/overview", (request, reply) => {
+    try {
+      const proven = buildProvenExperiment().provenExperiment;
+      const sourceDigest = createHash("sha256")
+        .update(`${proven.reproducibility.assessmentHash}:${proven.assessment.createdAt}`)
+        .digest("hex");
+      reply.header("cache-control", "public, max-age=15");
+      reply.header("etag", `"${sourceDigest}"`);
+      return v2Data(
+        {
+          schemaVersion: "edgelab-public-overview-v1",
+          example: {
+            slug: proven.slug,
+            title: proven.title,
+            asset: proven.market.asset,
+            intervalSeconds: proven.market.intervalSeconds,
+            evidencePlane: proven.source.plane,
+            assessedAt: proven.assessment.createdAt,
+            sampleSize: proven.assessment.sampleSize,
+            processedCount: proven.replay.processedCount,
+            exclusionCount: proven.assessment.exclusionCount,
+            verdict: proven.assessment.verdict,
+            brierScore: proven.assessment.brierScore,
+            marketComparisonAvailable: false,
+            selectionDisclosure: proven.selectionDisclosure
+          },
+          currentCampaign: null
+        },
+        {
+          asOf: proven.assessment.createdAt,
+          sourcePlane: "MAINNET_HISTORICAL",
+          evidenceClass: "CAPTURED",
+          ruleVersion: "edgelab-evaluation-v3",
+          sourceDigest
+        }
+      );
+    } catch (error) {
+      return v2Error(
+        reply,
+        503,
+        "PUBLIC_OVERVIEW_UNAVAILABLE",
+        error instanceof Error ? error.message : "Public overview unavailable",
+        true,
+        request.id
+      );
+    }
+  });
 
   app.get("/api/v2/proof/exg-003", (request, reply) => {
     try {
@@ -4400,8 +4641,10 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           { quota: MaxExperimentsPerSession }
         );
       }
-      const windowFrom = parsed.data.windowFrom === undefined ? null : new Date(parsed.data.windowFrom);
-      const windowTo = parsed.data.windowTo === undefined ? null : new Date(parsed.data.windowTo);
+      const requestedWindowFrom = parsed.data.windowFrom === undefined ? null : new Date(parsed.data.windowFrom);
+      const requestedWindowTo = parsed.data.windowTo === undefined ? null : new Date(parsed.data.windowTo);
+      const windowFrom = parsed.data.mode === "LIVE_SHADOW" ? requestedWindowFrom ?? new Date() : requestedWindowFrom;
+      const windowTo = parsed.data.mode === "LIVE_SHADOW" ? requestedWindowTo ?? new Date((windowFrom?.getTime() ?? Date.now()) + 28 * 86_400_000) : requestedWindowTo;
       if (windowFrom !== null && windowTo !== null && windowFrom >= windowTo) {
         return await v2Error(reply, 400, "EXPERIMENT_WINDOW_INVALID", "Historical window start must precede end", false, request.id);
       }
@@ -4431,7 +4674,9 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         windowFrom: windowFrom?.toISOString() ?? null,
         windowTo: windowTo?.toISOString() ?? null,
         decisionOffsetSec: effectiveDecisionOffsetSec,
-        decisionBoundaryRule: "decisionAt = max(tradingStart + 1s, expiry - decisionOffsetSec)",
+        decisionBoundaryRule: parsed.data.mode === "LIVE_SHADOW"
+          ? "capture snapshot in [decisionDeadline-5s, decisionDeadline); receive candidate strictly before deadline"
+          : "decisionAt = max(tradingStart + 1s, expiry - decisionOffsetSec)",
         riskEnvelopeId: parsed.data.riskEnvelopeId,
         policy: {
           policyId: policy.policyId,
@@ -4459,7 +4704,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           windowFrom,
           windowTo,
           decisionOffsetSec: effectiveDecisionOffsetSec,
-          ruleVersion: "interactive-2.0.1-deep-audit",
+          ruleVersion: parsed.data.mode === "LIVE_SHADOW" ? "edgelab-evaluation-v4" : "interactive-2.0.1-deep-audit",
           config: configPayload,
           configHash: sha256(stableJson(configPayload))
         },
@@ -4471,6 +4716,49 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       });
       if (experiment === null) {
         return await v2Error(reply, 500, "EXPERIMENT_CREATE_UNREADABLE", "Created experiment could not be reloaded", true, request.id);
+      }
+      if (experiment.configuration.mode === "LIVE_SHADOW") {
+        const protocolWindowFrom = experiment.configuration.windowFrom ?? new Date();
+        const protocolWindowTo = experiment.configuration.windowTo ?? new Date(protocolWindowFrom.getTime() + 28 * 86_400_000);
+        const protocolManifest = {
+          schemaVersion: "edgelab-observation-protocol-v4",
+          family: `${experiment.configuration.assets.join("+")}:${experiment.configuration.intervals.join("+")}:${String(experiment.configuration.decisionOffsetSec)}`,
+          candidate: { policyId: policy.policyId, version: policy.version, sourceHash: policy.sourceHash },
+          sourcePlane: "SHANNON_FORWARD",
+          cohort: { assets: experiment.configuration.assets, intervals: experiment.configuration.intervals },
+          timing: { decisionOffsetSec: experiment.configuration.decisionOffsetSec, snapshotLeadSec: 5, candidateMustArriveBeforeDeadline: true },
+          baseline: "NON_CROSSED_POSITIVE_SIZE_TWO_SIDED_YES_MIDPOINT",
+          window: { from: protocolWindowFrom.toISOString(), to: protocolWindowTo.toISOString() },
+          thresholds: { exploratoryFloor: 30, formalFloor: 200, minimumUtcDays: 20, pairedCoverage: .8, candidateEceMax: .05, excessEceMax: .02 },
+          inference: { method: "PAIRED_MOVING_BLOCK_BOOTSTRAP", blockLengthDays: 2, replicates: 10_000, alpha: .05 },
+          economics: {
+            classification: "SIMULATED_FROM_CAPTURED_BOOK",
+            fixedBankrollQuoteUnits: 100,
+            perWindowBudgetQuoteUnits: 1,
+            modelHaircutPpm: 50_000,
+            slippageReservePpm: 10_000,
+            minimumEdgePpm: 10_000,
+            adversePriceAddendPpm: 10_000,
+            positionPolicy: "HOLD_TO_AUTHORITATIVE_SETTLEMENT",
+            gasTreatment: "DISCLOSED_NOT_CONVERTED_TO_PAYOUT_UNITS"
+          },
+          capturedBook: { depthPerSide: 10, incompleteDepthProducesExplicitPartialOrSourceState: true },
+          stoppingRule: "ONE_FORMAL_DECISION_AT_FIXED_END"
+        };
+        const protocolHash = sha256(stableJson(protocolManifest));
+        const insertedProtocol = await pool.query<{ id: string }>(
+          `INSERT INTO observation_protocols(experiment_id, configuration_id, family, rule_version, window_from, window_to, manifest, manifest_hash)
+           VALUES ($1,$2,$3,'edgelab-evaluation-v4',$4,$5,$6::jsonb,$7)
+           ON CONFLICT (configuration_id) DO NOTHING RETURNING id`,
+          [experiment.experimentId, experiment.configuration.id, protocolManifest.family, protocolWindowFrom, protocolWindowTo, JSON.stringify(protocolManifest), protocolHash]
+        );
+        const protocolId = insertedProtocol.rows[0]?.id ?? (await pool.query<{ id: string }>("SELECT id FROM observation_protocols WHERE configuration_id = $1", [experiment.configuration.id])).rows[0]?.id;
+        if (protocolId === undefined) throw new Error("Observation protocol registration failed");
+        await pool.query(
+          `INSERT INTO campaign_runs(experiment_id, configuration_id, protocol_id, lifecycle, next_boundary_at)
+           VALUES ($1,$2,$3,'STARTING',$4) ON CONFLICT (protocol_id) DO NOTHING`,
+          [experiment.experimentId, experiment.configuration.id, protocolId, protocolWindowFrom]
+        );
       }
       await writeAudit(pool, {
         sessionId: session.id,
@@ -4589,6 +4877,64 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         sessionId: ensured.session.id,
         experimentId: params.data.experimentId
       });
+      const v4Result = await pool.query<{
+        assessment_id: string; manifest: Record<string, unknown>; manifest_hash: string; source_digest: string;
+        paired_metrics: unknown; intervals: unknown; sample_counts: unknown; coverage: unknown; integrity_status: unknown;
+        algorithm: string; seed: string; canonical_input: { observations?: readonly { observationKey?: unknown }[] };
+      }>(
+        `SELECT ea.id AS assessment_id, op.manifest, op.manifest_hash, av4.source_digest, av4.paired_metrics,
+                av4.intervals, av4.sample_counts, av4.coverage, av4.integrity_status, av4.algorithm, av4.seed, mr.canonical_input
+           FROM assessment_v4_details av4
+           JOIN evidence_assessments ea ON ea.id = av4.assessment_id
+           JOIN metric_runs mr ON mr.id = ea.metric_run_id
+           JOIN observation_protocols op ON op.id = av4.protocol_id
+          WHERE op.experiment_id = $1 ORDER BY ea.created_at DESC LIMIT 1`,
+        [experiment.experimentId]
+      );
+      const v4Row = v4Result.rows[0];
+      const pairedExport = v4Row === undefined ? [] : (await pool.query<{
+        chain_id: number; venue_id: string; market_generation_id: string; decision_offset_sec: number;
+        snapshot_hash: string; candidate_probability: number | null; baseline_probability: number | null;
+        captured_at: Date; decision_deadline: Date; candidate_received_at: Date | null; action: string;
+        inclusion_reason: string; outcome: string | null; outcome_provenance: unknown; integrity_status: unknown;
+      }>(
+        `SELECT pfr.chain_id,pfr.venue_id,pfr.market_generation_id,pfr.decision_offset_sec,pfr.snapshot_hash,
+                pfr.candidate_probability,pfr.baseline_probability,pfr.captured_at,pfr.decision_deadline,
+                pfr.candidate_received_at,pfr.action,pfr.inclusion_reason,COALESCE(pfr.outcome,s.winner) AS outcome,
+                COALESCE(pfr.outcome_provenance,s.payload) AS outcome_provenance,pfr.integrity_status
+           FROM paired_forecast_records pfr
+           JOIN observation_protocols op ON op.id=pfr.protocol_id
+           LEFT JOIN settlements s ON s.market_id=pfr.market_generation_id
+          WHERE op.experiment_id=$1 ORDER BY pfr.captured_at,pfr.id`,
+        [experiment.experimentId]
+      )).rows;
+      const selectedKeys = new Set((v4Row?.canonical_input.observations ?? []).flatMap((observation) =>
+        typeof observation.observationKey === "string" ? [observation.observationKey] : []
+      ));
+      const exportedRows = pairedExport.map((row) => {
+        const observationKey = `${String(row.chain_id)}:${row.venue_id}:${row.market_generation_id}:${String(row.decision_offset_sec)}`;
+        return {
+          observationKey, marketGenerationId: row.market_generation_id, snapshotHash: row.snapshot_hash,
+          capturedAt: row.captured_at.toISOString(), decisionDeadline: row.decision_deadline.toISOString(),
+          candidateReceivedAt: row.candidate_received_at?.toISOString() ?? null,
+          candidateProbability: row.candidate_probability, baselineProbability: row.baseline_probability,
+          action: row.action, outcome: row.outcome, outcomeProvenance: row.outcome_provenance,
+          inclusionReason: row.inclusion_reason, integrityStatus: row.integrity_status,
+          selected: selectedKeys.has(observationKey),
+          exclusionReason: selectedKeys.has(observationKey) ? null : row.candidate_probability === null ? "CANDIDATE_MISSING" : row.baseline_probability === null ? "BASELINE_MISSING" : row.outcome === null ? "OUTCOME_UNAVAILABLE" : "NOT_IN_FROZEN_ASSESSMENT"
+        };
+      });
+      const v4MarkdownReport = v4Row === undefined ? null : [
+        "# EdgeLab v4 assessment",
+        "",
+        `Assessment: ${v4Row.assessment_id}`,
+        `Protocol manifest: ${v4Row.manifest_hash}`,
+        `Source digest: ${v4Row.source_digest}`,
+        `Selected paired rows: ${String(exportedRows.filter((row) => row.selected).length)}`,
+        `Excluded rows: ${String(exportedRows.filter((row) => !row.selected).length)}`,
+        "",
+        "The assessment is reproducible from the frozen protocol and included rows. Forecast evidence does not authorize execution or establish realized profit."
+      ].join("\n");
       return v2Data(
         {
           report: {
@@ -4599,6 +4945,22 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
             replay: replay === null ? null : serializeReplayRun(replay),
             evidenceGate: buildEvidenceGate({ row: assessment, experimentId: params.data.experimentId }),
             liveShadow,
+            v4Evaluation: v4Row === undefined ? null : {
+              assessmentId: v4Row.assessment_id,
+              protocolManifest: v4Row.manifest,
+              protocolManifestHash: v4Row.manifest_hash,
+              sourceDigest: v4Row.source_digest,
+              pairedMetrics: v4Row.paired_metrics,
+              intervals: v4Row.intervals,
+              sampleCounts: v4Row.sample_counts,
+              coverage: v4Row.coverage,
+              integrityStatus: v4Row.integrity_status,
+              algorithm: v4Row.algorithm,
+              seed: v4Row.seed,
+              markdownReport: v4MarkdownReport,
+              selectedRows: exportedRows.filter((row) => row.selected),
+              excludedRows: exportedRows.filter((row) => !row.selected)
+            },
             executionLifecycle,
             executionProofRelationship: {
               plane: "SHANNON_EXECUTION",
@@ -5024,6 +5386,65 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
     }
   });
 
+  app.get("/api/v2/experiments/:experimentId/v4-assessment/latest", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id);
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const owned = await getInteractiveExperiment(pool, { sessionId: ensured.session.id, experimentId: params.data.experimentId });
+      if (owned === null) return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      const result = await pool.query<{ assessment_id: string; protocol_id: string; forecast_status: string; economics_status: string; execution_eligibility: string; paired_metrics: unknown; intervals: unknown; sample_counts: unknown; coverage: unknown; economics_metrics: unknown; integrity_status: unknown; algorithm: string; seed: string; source_digest: string; created_at: Date }>(
+        `SELECT av4.*, ea.created_at FROM assessment_v4_details av4 JOIN evidence_assessments ea ON ea.id=av4.assessment_id
+         JOIN observation_protocols op ON op.id=av4.protocol_id WHERE op.experiment_id=$1 ORDER BY ea.created_at DESC LIMIT 1`,
+        [owned.experimentId]
+      );
+      const row = result.rows[0];
+      return v2Data({ assessment: row === undefined ? null : {
+        assessmentId: row.assessment_id, protocolId: row.protocol_id, ruleVersion: "edgelab-evaluation-v4",
+        forecastStatus: row.forecast_status, economicsStatus: row.economics_status,
+        executionEligibility: row.execution_eligibility, pairedMetrics: row.paired_metrics,
+        intervals: row.intervals, sampleCounts: row.sample_counts, coverage: row.coverage,
+        economicsMetrics: row.economics_metrics,
+        integrityStatus: row.integrity_status, algorithm: row.algorithm, seed: row.seed,
+        sourceDigest: row.source_digest, createdAt: row.created_at.toISOString()
+      }, csrfToken: ensured.csrfToken }, { ownership: "research-session", sourcePlane: "SHANNON_FORWARD", ruleVersion: "edgelab-evaluation-v4" });
+    } catch (error) {
+      return v2Error(reply, 503, "V4_ASSESSMENT_UNAVAILABLE", error instanceof Error ? error.message : "V4 assessment unavailable", true, request.id);
+    }
+  });
+
+  app.post("/api/v2/experiments/:experimentId/evaluate-v4", async (request, reply) => {
+    const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return await v2Error(reply, 400, "EXPERIMENT_ID_INVALID", "Experiment ID is invalid", false, request.id);
+    try { requireIdempotencyKey(request.headers); } catch { return await v2Error(reply, 400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", false, request.id); }
+    try {
+      const pool = requirePool(deps);
+      const session = await requireResearchSession(pool, request);
+      if (session === null) return await v2Error(reply, 401, "RESEARCH_SESSION_REQUIRED", "Create a research session first", false, request.id);
+      if (!requireCsrf(request, session)) return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
+      const experiment = await getInteractiveExperiment(pool, { sessionId: session.id, experimentId: params.data.experimentId });
+      if (experiment === null) return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      if (experiment.configuration.ruleVersion !== "edgelab-evaluation-v4") return await v2Error(reply, 409, "V4_PROTOCOL_REQUIRED", "This study was not registered under evaluation v4", false, request.id);
+      const assessment = await runV4Assessment({ pool, experimentId: experiment.experimentId });
+      await writeAudit(pool, { sessionId: session.id, action: "evaluation.v4.create", targetType: "experiment", targetId: experiment.experimentId, outcome: assessment.forecastStatus, correlationId: request.id, safeMetadata: { assessmentId: assessment.assessmentId, protocolId: assessment.protocolId, sourceDigest: assessment.sourceDigest } });
+      return v2Data({ assessment: {
+        assessmentId: assessment.assessmentId, protocolId: assessment.protocolId, ruleVersion: "edgelab-evaluation-v4",
+        forecastStatus: assessment.forecastStatus, economicsStatus: assessment.economics.status, executionEligibility: assessment.executionEligibility,
+        reasonCodes: assessment.reasonCodes, pairedMetrics: assessment.pairedMetrics,
+        intervals: { deltaBrier: assessment.deltaInterval, stressMeanPerWindowReturn: assessment.economics.stressInterval },
+        sampleCounts: { paired: assessment.pairedMetrics.pairedSampleSize, eligibleScheduled: assessment.eligibleScheduledCount },
+        coverage: { paired: assessment.coverage, scenario: assessment.economics.coverage },
+        economicsMetrics: assessment.economics,
+        integrityStatus: assessment.integrityStatus,
+        algorithm: assessment.algorithm, seed: assessment.seed,
+        sourceDigest: assessment.sourceDigest, createdAt: assessment.createdAt.toISOString()
+      } }, { applicationWrite: true, blockchainWrite: false, sourcePlane: "SHANNON_FORWARD", ruleVersion: "edgelab-evaluation-v4", executionEligibility: assessment.executionEligibility });
+    } catch (error) {
+      return v2Error(reply, 503, "V4_EVALUATION_FAILED", error instanceof Error ? error.message : "V4 evaluation failed", true, request.id);
+    }
+  });
+
   app.post("/api/v2/experiments/:experimentId/evaluate", async (request, reply) => {
     const params = z.object({ experimentId: z.string().uuid() }).safeParse(request.params);
     if (!params.success) {
@@ -5049,6 +5470,9 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       });
       if (experiment === null) {
         return await v2Error(reply, 404, "EXPERIMENT_NOT_FOUND", "Experiment was not found for this research session", false, request.id);
+      }
+      if (experiment.configuration.ruleVersion === "edgelab-evaluation-v4") {
+        return await v2Error(reply, 409, "V4_EVALUATION_ENDPOINT_REQUIRED", "Use the v4 assessment endpoint for this frozen protocol", false, request.id);
       }
       const policy = candidatePolicy(experiment);
       if (policy === null) {
@@ -5480,6 +5904,12 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
               [comparisonId, assessmentId, displayOrder]
             );
           }
+          const frozenScope = await buildFrozenComparisonScope(client, parsed.data.assessmentIds);
+          await client.query(
+            `INSERT INTO comparison_scope_manifests(comparison_set_id, comparison_mode, manifest, manifest_hash)
+             VALUES ($1,$2,$3::jsonb,$4)`,
+            [comparisonId, frozenScope.mode, JSON.stringify(frozenScope.manifest), frozenScope.manifestHash]
+          );
         } else {
           comparisonId = existingRow.id;
         }
@@ -5554,6 +5984,42 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         true,
         request.id
       );
+    }
+  });
+
+  app.get("/api/v2/comparisons/:comparisonId/report", async (request, reply) => {
+    const params = z.object({ comparisonId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return await v2Error(reply, 400, "COMPARISON_ID_INVALID", "Comparison ID is invalid", false, request.id);
+    try {
+      const pool = requirePool(deps);
+      const ensured = await ensureResearchSession(pool, config, request, reply);
+      const comparison = await loadComparison(pool, { sessionId: ensured.session.id, comparisonId: params.data.comparisonId });
+      if (comparison === null) return await v2Error(reply, 404, "COMPARISON_NOT_FOUND", "Comparison was not found for this research session", false, request.id);
+      return v2Data({
+        report: {
+          schemaVersion: "edgelab-comparison-report-v1",
+          generatedAt: new Date().toISOString(),
+          comparison,
+          markdownReport: [
+            `# ${comparison.name}`,
+            "",
+            `Comparison: ${comparison.comparisonId}`,
+            `Scope: ${comparison.scope?.mode ?? "UNAVAILABLE"}`,
+            `Intersection observations: ${String(comparison.scope?.intersectionSize ?? 0)}`,
+            `Scope manifest: ${comparison.scope?.manifestHash ?? "UNAVAILABLE"}`,
+            "",
+            comparison.scope?.reason ?? "Comparison scope is unavailable."
+          ].join("\n"),
+          limits: [
+            "Matched metrics apply only to the frozen shared observation-key intersection.",
+            "Descriptive comparisons do not support relative ranking.",
+            "Forecast evidence does not authorize execution or establish realized profit."
+          ],
+          exportPolicy: { sanitized: true, privateSecretsIncluded: false }
+        }
+      }, { ownership: "research-session", reportType: "sanitized-comparison-report", blockchainWrite: false });
+    } catch (error) {
+      return v2Error(reply, 503, "COMPARISON_REPORT_UNAVAILABLE", error instanceof Error ? error.message : "Comparison report unavailable", true, request.id);
     }
   });
 
@@ -5973,7 +6439,6 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       const side = decision.forecastPUp >= 0.5 ? "BUY_YES" : "BUY_NO";
       const executableBook =
         side === "BUY_YES" ? snapshotResult.value.book.yesAsks : snapshotResult.value.book.noAsks;
-      const topAsk = executableBook[0] ?? null;
       const bookParamsResult = await readBinaryBookParams(dreamDex.client, dreamDex.config, market.poolAddress);
       if (!bookParamsResult.ok) {
         return await v2Error(reply, 502, bookParamsResult.reasonCode, bookParamsResult.message, true, request.id);
@@ -5999,48 +6464,66 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       }
       const readiness = readinessResult.value;
       const maxEscrowRaw = BigInt(parsed.data.maxEscrowRaw);
+      const payoutScale = 10n ** BigInt(market.quoteDecimals);
+      const requestedQuantityRaw = parsed.data.requestedQuantityRaw ?? payoutScale.toString();
+      const sideProbabilityPpm = Math.max(0, Math.min(1_000_000, Math.round((side === "BUY_YES" ? decision.forecastPUp : 1 - decision.forecastPUp) * 1_000_000)));
+      const defaultCapPpm = Math.max(0, sideProbabilityPpm - 50_000 - 10_000 - 10_000);
+      const defaultCapRaw = ((payoutScale * BigInt(defaultCapPpm) / 1_000_000n) / bookParams.tickSize) * bookParams.tickSize;
+      const reviewedWorstPriceRaw = parsed.data.worstPriceRaw ?? defaultCapRaw.toString();
+      const economicLevels = executableBook.flatMap((level) => {
+        const economicPrice = executionEscrowPriceRaw(side, BigInt(level.priceRaw), market.quoteDecimals);
+        return economicPrice > 0n && BigInt(level.quantityRaw) > 0n
+          ? [{ priceRaw: economicPrice.toString(), quantityRaw: level.quantityRaw }]
+          : [];
+      });
+      const quotePolicy = {
+        modelHaircutPpm: 50_000 as const,
+        slippageReservePpm: 10_000 as const,
+        minimumEdgePpm: 10_000 as const,
+        estimatedFeesRaw: "0",
+        gasTreatment: "EXCLUDED_NATIVE_UNIT_DISCLOSURE" as const
+      };
+      const quotePlan = planExecutableQuote({
+        levels: economicLevels,
+        requestedQuantityRaw,
+        lotSizeRaw: bookParams.lotSize.toString(),
+        tickSizeRaw: bookParams.tickSize.toString(),
+        payoutScaleRaw: payoutScale.toString(),
+        maxCollateralRaw: maxEscrowRaw.toString(),
+        worstPriceRaw: reviewedWorstPriceRaw,
+        sideProbabilityPpm,
+        ...quotePolicy
+      });
+      const executionPriceRaw = quotePlan.worstPriceRaw === null
+        ? null
+        : (side === "BUY_YES" ? BigInt(quotePlan.worstPriceRaw) : payoutScale - BigInt(quotePlan.worstPriceRaw)).toString();
       const expireTimestampNs = `${String(market.expirySeconds)}000000000`;
-      const escrowPriceRaw =
-        topAsk === null
-          ? 0n
-          : executionEscrowPriceRaw(side, BigInt(topAsk.priceRaw), market.quoteDecimals);
-      const minimumEscrowRaw =
-        topAsk === null
-          ? null
-          : minimumEscrowForQuantity({
-              quantityRaw: bookParams.minQuantity,
-              priceRaw: escrowPriceRaw,
-              quoteDecimals: market.quoteDecimals
-            });
-      const quantityRaw =
-        topAsk === null
-          ? 0n
-          : boundedQuantityForEscrow({
-              maxEscrowRaw,
-              priceRaw: escrowPriceRaw,
-              quoteDecimals: market.quoteDecimals,
-              availableQuantityRaw: BigInt(topAsk.quantityRaw),
-              lotSize: bookParams.lotSize
-            });
       const validatedAt = new Date().toISOString();
       const nowSeconds = Math.floor(new Date(validatedAt).getTime() / 1000);
       const expiryHeadroomSeconds = market.expirySeconds - nowSeconds;
-      const requiredEscrowRaw =
-        topAsk === null
-          ? 0n
-          : minimumEscrowForQuantity({
-              quantityRaw,
-              priceRaw: escrowPriceRaw,
-              quoteDecimals: market.quoteDecimals
-            });
+      const requiredEscrowRaw = BigInt(quotePlan.totalCollateralRaw);
+      const minimumEscrowRaw = quotePlan.worstPriceRaw === null ? null : minimumEscrowForQuantity({
+        quantityRaw: bookParams.minQuantity,
+        priceRaw: BigInt(quotePlan.worstPriceRaw),
+        quoteDecimals: market.quoteDecimals
+      });
       const sideProbability = side === "BUY_YES" ? decision.forecastPUp : 1 - decision.forecastPUp;
-      const sideAskProbability = Number(escrowPriceRaw) / Number(10n ** BigInt(market.quoteDecimals));
-      const priceAcceptable = topAsk !== null && sideAskProbability <= Math.min(1, sideProbability + 0.05);
+      const sideAskProbability = quotePlan.averagePriceRaw === null ? null : Number(BigInt(quotePlan.averagePriceRaw)) / Number(payoutScale);
+      const quoteCapturedAt = snapshotResult.value.market.source.retrievedAt;
+      const metadataCheckedAt = market.source.retrievedAt;
+      const quoteAgeMs = new Date(validatedAt).getTime() - new Date(quoteCapturedAt).getTime();
+      const metadataAgeMs = new Date(validatedAt).getTime() - new Date(metadataCheckedAt).getTime();
+      const reviewExpiresAt = new Date(new Date(validatedAt).getTime() + 5_000).toISOString();
+      const quotePolicyHash = sha256(stableJson({ ...quotePolicy, planner: "MULTI_LEVEL_INTEGER_V1" }));
       const blockedReasons = [
         ...(decision.action === "ABSTAIN" ? ["POLICY_ABSTAINED"] : []),
-        ...(topAsk === null ? ["NO_EXECUTABLE_TOP_ASK"] : []),
-        ...(topAsk !== null && !priceAcceptable ? ["PRICE_OUTSIDE_STRATEGY_LIMIT"] : []),
-        ...(topAsk !== null && quantityRaw < bookParams.minQuantity ? ["ORDER_CAP_BELOW_POOL_MINIMUM"] : []),
+        ...(economicLevels.length === 0 ? ["NO_EXECUTABLE_TOP_ASK"] : []),
+        ...quotePlan.reasonCodes.filter((reason) => reason !== "PARTIAL_DEPTH_REQUIRES_REVIEW"),
+        ...(BigInt(quotePlan.fillableQuantityRaw) > 0n && BigInt(quotePlan.fillableQuantityRaw) < bookParams.minQuantity ? ["ORDER_CAP_BELOW_POOL_MINIMUM"] : []),
+        ...(quoteAgeMs < -1_000 ? ["QUOTE_TIMESTAMP_IN_FUTURE"] : []),
+        ...(quoteAgeMs > 5_000 ? ["BOOK_TOO_OLD"] : []),
+        ...(metadataAgeMs < -1_000 ? ["METADATA_TIMESTAMP_IN_FUTURE"] : []),
+        ...(metadataAgeMs > 15_000 ? ["MARKET_METADATA_TOO_OLD"] : []),
         ...(expiryHeadroomSeconds < parsed.data.minExpiryHeadroomSec ? ["EXPIRY_HEADROOM_TOO_LOW"] : []),
         ...(!readiness.collateralBindingMatches || readiness.marketCollateral.toLowerCase() !== market.collateral.toLowerCase()
           ? ["COLLATERAL_BINDING_MISMATCH"]
@@ -6077,8 +6560,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         order: {
           side,
           orderType: 2,
-          priceRaw: topAsk?.priceRaw ?? null,
-          quantityRaw: quantityRaw.toString(),
+          priceRaw: executionPriceRaw,
+          quantityRaw: quotePlan.fillableQuantityRaw,
           maxEscrowRaw: maxEscrowRaw.toString(),
           expireTimestampNs
         },
@@ -6090,20 +6573,22 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           walletAllowanceRaw: readiness.walletAllowanceRaw,
           walletNativeBalanceRaw: readiness.walletNativeBalanceRaw,
           requiredEscrowRaw: requiredEscrowRaw.toString(),
-          priceAcceptable
+          conservativeEdgePasses: quotePlan.passesConservativeEdge
         },
+        quotePlan,
+        quotePolicy: { ...quotePolicy, policyHash: quotePolicyHash, reviewExpiresAt },
         blockedReasons
       };
       const intentHash = sha256(stableJson(intentPayload));
       const unsigned =
-        blockedReasons.length > 0 || topAsk === null
+        blockedReasons.length > 0 || executionPriceRaw === null
           ? null
           : await buildUnsignedBinaryOrderEvidence(dreamDex.client, dreamDex.config, {
               ownerAddress: parsed.data.account,
               poolAddress: market.poolAddress,
               side,
-              priceRaw: topAsk.priceRaw,
-              quantityRaw: quantityRaw.toString(),
+              priceRaw: executionPriceRaw,
+              quantityRaw: quotePlan.fillableQuantityRaw,
               expireTimestampNs,
               orderType: 2,
               quoteDecimals: market.quoteDecimals,
@@ -6140,7 +6625,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
               configurationId: qualifiedStrategy.configurationId,
               assessmentId: qualifiedStrategy.assessmentId,
               assessmentHash: qualifiedStrategy.assessmentHash,
-              qualificationVerdict: "STRATEGY_QUALIFIED",
+              qualificationVerdict: qualifiedStrategy.qualificationVerdict,
               qualificationRuleVersion: qualifiedStrategy.ruleVersion,
               eligibleForwardObservationCount: qualifiedStrategy.sampleSize,
               qualifiedAt: qualifiedStrategy.qualifiedAt.toISOString(),
@@ -6151,6 +6636,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
             },
             risk: {
               maxEscrowRaw: maxEscrowRaw.toString(),
+              reviewedWorstPriceRaw,
               maxEscrowDisplay: displayQuoteAmount(maxEscrowRaw, market.quoteDecimals, "tUSDC"),
               orderCount: 1,
               orderType: "ImmediateOrCancel",
@@ -6162,7 +6648,7 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
               minimumPoolEscrowDisplay:
                 minimumEscrowRaw === null ? null : displayQuoteAmount(minimumEscrowRaw, market.quoteDecimals, "tUSDC"),
               capAdequateForPoolMinimum: minimumEscrowRaw === null ? false : maxEscrowRaw >= minimumEscrowRaw,
-              priceAcceptable,
+              priceAcceptable: quotePlan.passesConservativeEdge,
               sideProbability,
               sideAskProbability,
               requiredEscrowRaw: requiredEscrowRaw.toString(),
@@ -6178,13 +6664,22 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
             },
             sizing: {
               side,
-              priceRaw: topAsk?.priceRaw ?? null,
-              availableQuantityRaw: topAsk?.quantityRaw ?? null,
-              quantityRaw: quantityRaw.toString(),
+              priceRaw: executionPriceRaw,
+              availableQuantityRaw: economicLevels.reduce((sum, level) => sum + BigInt(level.quantityRaw), 0n).toString(),
+              quantityRaw: quotePlan.fillableQuantityRaw,
+              requestedQuantityRaw: quotePlan.requestedQuantityRaw,
+              unfilledQuantityRaw: quotePlan.unfilledQuantityRaw,
               minQuantityRaw: bookParams.minQuantity.toString(),
               lotSizeRaw: bookParams.lotSize.toString(),
               tickSizeRaw: bookParams.tickSize.toString(),
               expireTimestampNs
+            },
+            quotePlan,
+            quoteBook: { rawLevels: executableBook },
+            quotePolicy: { ...quotePolicy, policyHash: quotePolicyHash, reviewExpiresAt },
+            freshness: {
+              quoteCapturedAt, metadataCheckedAt, quoteAgeMs, metadataAgeMs,
+              maxBookAgeMs: 5_000, maxMetadataAgeMs: 15_000, allowedFutureSkewMs: 1_000
             },
             unsignedTransactions: unsigned === null ? null : unsigned.value,
             blockedReasons,
@@ -6250,6 +6745,28 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (!requireCsrf(request, session)) {
         return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
       }
+      const prior = await pool.query<{ id: string; candidate_payload: unknown }>(
+        `SELECT ei.id,ei.candidate_payload FROM execution_intents ei
+          JOIN experiments e ON e.id=ei.experiment_id
+         WHERE ei.idempotency_key=$1 AND e.created_by_session_id=$2 LIMIT 1`,
+        [idempotencyKey, session.id]
+      );
+      if (prior.rows[0] !== undefined) {
+        const priorCandidate = PersistableExecutionCandidateSchema.safeParse(prior.rows[0].candidate_payload);
+        const matches = priorCandidate.success &&
+          priorCandidate.data.strategyLink.experimentId === parsed.data.experimentId &&
+          priorCandidate.data.account.toLowerCase() === parsed.data.account.toLowerCase() &&
+          priorCandidate.data.market.asset === parsed.data.asset &&
+          priorCandidate.data.market.intervalSeconds === parsed.data.intervalSec &&
+          priorCandidate.data.risk.maxEscrowRaw === parsed.data.maxEscrowRaw &&
+          (parsed.data.requestedQuantityRaw === undefined || priorCandidate.data.quotePlan.requestedQuantityRaw === parsed.data.requestedQuantityRaw) &&
+          (parsed.data.worstPriceRaw === undefined || priorCandidate.data.risk.reviewedWorstPriceRaw === parsed.data.worstPriceRaw);
+        if (!matches) return await v2Error(reply, 409, "IDEMPOTENCY_CONFLICT", "Idempotency key is already bound to a different execution request", false, request.id);
+        return await reply.code(200).send(v2Data(
+          { executionCandidate: priorCandidate.data, intentId: prior.rows[0].id },
+          { sourcePlane: "SHANNON_EXECUTION", blockchainWrite: false, walletRequired: true, idempotentReplay: true, chainId: SOMNIA_SHANNON_CHAIN_ID }
+        ));
+      }
       const query = new URLSearchParams({
         experimentId: parsed.data.experimentId,
         account: parsed.data.account,
@@ -6258,6 +6775,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         maxEscrowRaw: parsed.data.maxEscrowRaw,
         minExpiryHeadroomSec: String(parsed.data.minExpiryHeadroomSec)
       });
+      if (parsed.data.requestedQuantityRaw !== undefined) query.set("requestedQuantityRaw", parsed.data.requestedQuantityRaw);
+      if (parsed.data.worstPriceRaw !== undefined) query.set("worstPriceRaw", parsed.data.worstPriceRaw);
       const freshResponse = await app.inject({
         method: "GET",
         url: `/api/v2/shannon/execution-candidate?${query.toString()}`,
@@ -6354,9 +6873,9 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       if (!requireCsrf(request, session)) {
         return await v2Error(reply, 403, "CSRF_TOKEN_INVALID", "Research-session CSRF token is missing or invalid", false, request.id);
       }
-      const intentResult = await pool.query<{ candidate_payload: unknown; state: string; approval_confirmed: boolean }>(
+      const intentResult = await pool.query<{ candidate_payload: unknown; state: string; expires_at: Date; approval_confirmed: boolean }>(
         `
-          SELECT ei.candidate_payload, ei.state,
+          SELECT ei.candidate_payload, ei.state, ei.expires_at,
                  COALESCE(bool_or(ct.tx_role = 'approval' AND ct.receipt_status = true), false) AS approval_confirmed
           FROM execution_intents ei
           JOIN experiments e ON e.id = ei.experiment_id
@@ -6374,6 +6893,10 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       }
       if (["TX_REVERTED", "FAILED", "CANCELLED", "EXPIRED"].includes(intent.state)) {
         return await v2Error(reply, 409, "EXECUTION_INTENT_TERMINAL", "Execution intent is already terminal", false, request.id);
+      }
+      if (intent.expires_at.getTime() <= Date.now()) {
+        await pool.query("UPDATE execution_intents SET state = 'EXPIRED' WHERE id = $1", [params.data.intentId]);
+        return await v2Error(reply, 409, "EXECUTION_INTENT_EXPIRED", "The market expired before signing review", false, request.id);
       }
       if (persistedCandidate.data.unsignedTransactions.approval !== null && !intent.approval_confirmed) {
         return await v2Error(
@@ -6393,6 +6916,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         maxEscrowRaw: persistedCandidate.data.risk.maxEscrowRaw,
         minExpiryHeadroomSec: String(persistedCandidate.data.risk.minExpiryHeadroomSec)
       });
+      query.set("requestedQuantityRaw", persistedCandidate.data.quotePlan.requestedQuantityRaw);
+      query.set("worstPriceRaw", persistedCandidate.data.risk.reviewedWorstPriceRaw as string);
       const freshResponse = await app.inject({
         method: "GET",
         url: `/api/v2/shannon/execution-candidate?${query.toString()}`,
@@ -6433,6 +6958,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         original.sizing.side === fresh.sizing.side &&
         original.sizing.priceRaw === fresh.sizing.priceRaw &&
         original.sizing.quantityRaw === fresh.sizing.quantityRaw &&
+        original.quotePolicy.policyHash === fresh.quotePolicy.policyHash &&
+        stableJson(original.quotePlan) === stableJson(fresh.quotePlan) &&
         stableJson(original.unsignedTransactions.order) === stableJson(fresh.unsignedTransactions.order);
       if (!immutableBindingMatches) {
         await pool.query("UPDATE execution_intents SET state = 'EXPIRED' WHERE id = $1", [params.data.intentId]);
@@ -6446,8 +6973,12 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         );
       }
       await pool.query(
-        "UPDATE execution_intents SET order_revalidated_at = $1, last_validated_at = $1 WHERE id = $2",
-        [fresh.validatedAt, params.data.intentId]
+        `WITH updated_intent AS (
+           UPDATE execution_intents SET order_revalidated_at = $1, last_validated_at = $1 WHERE id = $2 RETURNING id
+         )
+         UPDATE execution_quote_details SET review_expires_at = $3
+          WHERE execution_intent_id = (SELECT id FROM updated_intent)`,
+        [fresh.validatedAt, params.data.intentId, new Date(new Date(fresh.validatedAt).getTime() + SigningAuthorizationTtlMs).toISOString()]
       );
       await writeAudit(pool, {
         sessionId: session.id,
@@ -6470,7 +7001,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
             status: "READY",
             validatedAt: fresh.validatedAt,
             observedBlockNumber: fresh.risk.observedBlockNumber,
-            exactOrderCallUnchanged: true
+            exactOrderCallUnchanged: true,
+            authorizationExpiresAt: new Date(new Date(fresh.validatedAt).getTime() + SigningAuthorizationTtlMs).toISOString()
           }
         },
         {
@@ -6652,11 +7184,14 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
         state: string;
         candidate_payload: unknown;
         order_revalidated_at: Date | null;
+        expires_at: Date;
+        review_expires_at: Date | null;
       }>(
         `
-          SELECT ei.id, ei.state, ei.candidate_payload, ei.order_revalidated_at
+          SELECT ei.id, ei.state, ei.candidate_payload, ei.order_revalidated_at, ei.expires_at, eqd.review_expires_at
           FROM execution_intents ei
           JOIN experiments e ON e.id = ei.experiment_id
+          LEFT JOIN execution_quote_details eqd ON eqd.execution_intent_id = ei.id
           WHERE ei.intent_hash = $1
             AND e.created_by_session_id = $2
           LIMIT 1
@@ -6684,6 +7219,9 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
           false,
           request.id
         );
+      }
+      if (intent.expires_at.getTime() <= Date.now()) {
+        return await v2Error(reply, 409, "EXECUTION_INTENT_EXPIRED", "The market expired before this signature stage", false, request.id);
       }
       const [transaction, receipt] = await Promise.all([
         shannonRpc<RpcTransaction | null>(config, "eth_getTransactionByHash", [parsed.data.txHash]),
@@ -6755,7 +7293,8 @@ export function buildApp(config: RuntimeConfig, deps: AppDependencies = {}) {
       }
       if (
         parsed.data.txRole === "order" &&
-        (intent.order_revalidated_at === null || Date.now() - intent.order_revalidated_at.getTime() > 120_000)
+        (intent.order_revalidated_at === null || intent.review_expires_at === null ||
+          Date.now() - intent.order_revalidated_at.getTime() > SigningAuthorizationTtlMs || Date.now() > intent.review_expires_at.getTime())
       ) {
         return await v2Error(
           reply,

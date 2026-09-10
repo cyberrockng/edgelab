@@ -28,7 +28,8 @@ const ExperimentResponseSchema = z.object({
     experiment: z.object({
       experimentId: z.string().uuid(),
       configuration: z.object({
-        mode: z.literal("LIVE_SHADOW")
+        mode: z.literal("LIVE_SHADOW"),
+        windowTo: z.iso.datetime().nullable()
       }),
       policies: z.array(
         z.object({
@@ -79,8 +80,10 @@ const EvaluationResponseSchema = z.object({
   data: z.object({
     assessment: z.object({
       assessmentId: z.string().uuid(),
-      verdict: z.enum(["STRATEGY_QUALIFIED", "REJECT", "HOLD", "INSUFFICIENT_EVIDENCE"]),
-      sampleSize: z.number().int().nonnegative(),
+      forecastStatus: z.string(),
+      economicsStatus: z.string(),
+      executionEligibility: z.enum(["BLOCKED", "ELIGIBLE_FOR_FRESH_REVIEW"]),
+      sampleCounts: z.object({ paired: z.number().int().nonnegative(), eligibleScheduled: z.number().int().nonnegative() }),
       reasonCodes: z.array(z.string())
     })
   })
@@ -94,6 +97,7 @@ type CampaignTarget = {
 };
 type CampaignExperiment = CampaignTarget & {
   readonly experimentId: string;
+  readonly windowTo?: string;
 };
 const CampaignStateSchema = z.object({
   version: z.literal(1),
@@ -105,7 +109,8 @@ const CampaignStateSchema = z.object({
   experiments: z.array(z.object({
     asset: z.enum(["BTC", "ETH"]),
     intervalSec: z.union([z.literal(900), z.literal(3600)]),
-    experimentId: z.string().uuid()
+    experimentId: z.string().uuid(),
+    windowTo: z.iso.datetime().optional()
   })),
   retiredExperiments: z.array(z.object({
     asset: z.enum(["BTC", "ETH"]),
@@ -121,7 +126,7 @@ function argValue(name: string): string | undefined {
 }
 
 function parseAssets(value: string | undefined): CampaignConfig["assets"] {
-  const raw = value ?? argValue("asset") ?? "BTC,ETH";
+  const raw = value ?? argValue("asset") ?? "BTC";
   return z
     .array(z.enum(["BTC", "ETH"]))
     .min(1)
@@ -134,7 +139,7 @@ function parseAssets(value: string | undefined): CampaignConfig["assets"] {
 }
 
 function parseIntervals(value: string | undefined): CampaignConfig["intervals"] {
-  const raw = value ?? argValue("interval-sec") ?? "900,3600";
+  const raw = value ?? argValue("interval-sec") ?? "900";
   return z
     .array(z.coerce.number().pipe(z.union([z.literal(900), z.literal(3600)])))
     .min(1)
@@ -149,9 +154,9 @@ function parseIntervals(value: string | undefined): CampaignConfig["intervals"] 
 function parseConfig(): CampaignConfig {
   return CampaignConfigSchema.parse({
     baseUrl: argValue("base-url") ?? "http://127.0.0.1:3000",
-    targetDecisions: argValue("target-decisions") ?? "30",
-    intervalMs: argValue("interval-ms") ?? "30000",
-    maxCycles: argValue("max-cycles") ?? "12000",
+    targetDecisions: argValue("target-decisions") ?? "200",
+    intervalMs: argValue("interval-ms") ?? "3000",
+    maxCycles: argValue("max-cycles") ?? "900000",
     durationMinutes: argValue("duration-minutes"),
     assets: parseAssets(argValue("assets")),
     intervals: parseIntervals(argValue("intervals")),
@@ -337,7 +342,8 @@ async function createCampaignExperiment(
   return {
     asset: target.asset,
     intervalSec: target.intervalSec,
-    experimentId: created.data.experiment.experimentId
+    experimentId: created.data.experiment.experimentId,
+    ...(created.data.experiment.configuration.windowTo === null ? {} : { windowTo: created.data.experiment.configuration.windowTo })
   };
 }
 
@@ -401,6 +407,11 @@ async function main(): Promise<void> {
     config.durationMinutes === undefined
       ? null
       : startedAtMs + Math.round(config.durationMinutes * 60_000);
+  const protocolWindowEndsAtMs = experiments.reduce<number | null>((latest, experiment) => {
+    if (experiment.windowTo === undefined) return latest;
+    const value = Date.parse(experiment.windowTo);
+    return Number.isFinite(value) ? Math.max(latest ?? value, value) : latest;
+  }, null);
   console.log(JSON.stringify({
     event: "campaign_started",
     experiments,
@@ -421,7 +432,9 @@ async function main(): Promise<void> {
   }));
 
   while (
-    experiments.some((experiment) => (decisionsByExperiment.get(experiment.experimentId) ?? 0) < config.targetDecisions) &&
+    (protocolWindowEndsAtMs === null
+      ? experiments.some((experiment) => (decisionsByExperiment.get(experiment.experimentId) ?? 0) < config.targetDecisions)
+      : Date.now() < protocolWindowEndsAtMs) &&
     cycle < config.maxCycles &&
     (deadlineMs === null || Date.now() < deadlineMs)
   ) {
@@ -435,24 +448,29 @@ async function main(): Promise<void> {
             method: "POST",
             headers: {
               "x-csrf-token": csrfToken,
-              "idempotency-key": `forward-observe-${experiment.asset}-${String(experiment.intervalSec)}-${crypto.randomUUID()}`
+              "idempotency-key": `forward-observe-${experiment.experimentId}`
             }
           })
         );
         let reconciliationError: string | null = null;
         let reconciledLiveShadow: z.infer<typeof ObserveResponseSchema>["data"]["liveShadow"] | null = null;
         try {
+          if (cycle !== 1 && cycle % 10 !== 0) throw new Error("RECONCILIATION_NOT_DUE");
           reconciledLiveShadow = ReconcileResponseSchema.parse(
             await client.authenticatedRequest(`/api/v2/experiments/${experiment.experimentId}/live-shadow/reconcile`, csrfToken, {
               method: "POST",
               headers: {
                 "x-csrf-token": csrfToken,
-                "idempotency-key": `forward-reconcile-${experiment.asset}-${String(experiment.intervalSec)}-${crypto.randomUUID()}`
+                "idempotency-key": `forward-reconcile-${experiment.experimentId}`
               }
             })
           ).data.liveShadow;
         } catch (error) {
+          if (error instanceof Error && error.message === "RECONCILIATION_NOT_DUE") {
+            reconciliationError = null;
+          } else {
           reconciliationError = error instanceof Error ? error.message : "Settlement reconciliation failed";
+          }
         }
         const summary = summarize({
           ...observed,
@@ -497,13 +515,14 @@ async function main(): Promise<void> {
       const eligibleDecisions = decisionsByExperiment.get(experiment.experimentId) ?? 0;
       if (
         eligibleDecisions < config.targetDecisions ||
+        (experiment.windowTo !== undefined && Date.now() < Date.parse(experiment.windowTo)) ||
         evaluatedCountByExperiment.get(experiment.experimentId) === eligibleDecisions
       ) {
         continue;
       }
       try {
         const evaluated = EvaluationResponseSchema.parse(
-          await client.authenticatedRequest(`/api/v2/experiments/${experiment.experimentId}/evaluate`, csrfToken, {
+          await client.authenticatedRequest(`/api/v2/experiments/${experiment.experimentId}/evaluate-v4`, csrfToken, {
             method: "POST",
             headers: {
               "x-csrf-token": csrfToken,
@@ -551,16 +570,18 @@ async function main(): Promise<void> {
     await sleep(config.intervalMs);
   }
 
-  const complete = experiments.every(
+  const sampleFloorMet = experiments.every(
     (experiment) => (decisionsByExperiment.get(experiment.experimentId) ?? 0) >= config.targetDecisions
   );
+  const fixedWindowEnded = protocolWindowEndsAtMs !== null && Date.now() >= protocolWindowEndsAtMs;
+  const complete = sampleFloorMet && fixedWindowEnded;
   const evaluations = complete
     ? await Promise.all(
         experiments.map(async (experiment) => ({
           experimentId: experiment.experimentId,
           asset: experiment.asset,
           intervalSec: experiment.intervalSec,
-          response: await client.authenticatedRequest(`/api/v2/experiments/${experiment.experimentId}/evaluate`, csrfToken, {
+          response: await client.authenticatedRequest(`/api/v2/experiments/${experiment.experimentId}/evaluate-v4`, csrfToken, {
             method: "POST",
             headers: {
               "x-csrf-token": csrfToken,
@@ -589,7 +610,7 @@ async function main(): Promise<void> {
             ? "durationMinutes"
             : "unknown",
     nextStep: complete
-      ? "review each deterministic forward assessment, then request a fresh bounded execution candidate only for STRATEGY_QUALIFIED tracks"
+      ? "at the fixed protocol end, rerun evaluation and request a fresh bounded execution candidate only for ELIGIBLE_FOR_FRESH_REVIEW tracks"
       : "keep the campaign running over real DreamDEX market rotations; increasing cycle count is valid, duplicating one market is not"
   }));
 }

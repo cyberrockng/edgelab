@@ -35,9 +35,9 @@ function parseArgs(argv: readonly string[]) {
     args.set(key, value);
   }
   return ArgsSchema.parse({
-    statePath: resolve(repoRoot, args.get("state-path") ?? "forward-observation-campaign-v1.1.local"),
+    statePath: resolve(repoRoot, args.get("state-path") ?? "forward-observation-campaign-v4-v1.1.local"),
     asset: (args.get("asset") ?? "BTC").toUpperCase(),
-    intervalSec: Number(args.get("interval-sec") ?? "3600"),
+    intervalSec: Number(args.get("interval-sec") ?? "900"),
     smoke: args.get("smoke") === "true"
   });
 }

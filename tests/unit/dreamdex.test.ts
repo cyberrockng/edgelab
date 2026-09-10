@@ -20,6 +20,7 @@ import {
   listHistoricalOrdersByMarket,
   normalizeHistoricalPagination,
   normalizeBinaryMarket,
+  planExecutableQuote,
   readBinaryBookParams,
   resolveHistoricalCutoffBlockAfter,
   resolveHistoricalCutoffBlock,
@@ -608,6 +609,78 @@ describe("DEX-001 DreamDEX read adapter", () => {
       throw new Error("expected malformed market to fail");
     }
     expect(result.reasonCode).toBe("DREAMDEX_MALFORMED_MARKET");
+  });
+});
+
+describe("DREAMDEX-QUOTE-004 executable depth planning", () => {
+  const base = {
+    requestedQuantityRaw: "1000000",
+    lotSizeRaw: "100000",
+    tickSizeRaw: "10000",
+    payoutScaleRaw: "1000000",
+    maxCollateralRaw: "1000000",
+    worstPriceRaw: "650000",
+    sideProbabilityPpm: 600000
+  } as const;
+
+  it("walks sorted levels, respects lots and reports partial depth", () => {
+    const result = planExecutableQuote({ ...base, levels: [
+      { priceRaw: "520000", quantityRaw: "250000" },
+      { priceRaw: "500000", quantityRaw: "400000" }
+    ] });
+    expect(result.levelsConsumed).toEqual([
+      { priceRaw: "500000", quantityRaw: "400000" },
+      { priceRaw: "520000", quantityRaw: "200000" }
+    ]);
+    expect(result.fillableQuantityRaw).toBe("600000");
+    expect(result.reasonCodes).toContain("PARTIAL_DEPTH_REQUIRES_REVIEW");
+  });
+
+  it("rejects p=.60 at .64 and allows the simplified .50 boundary case", () => {
+    const expensive = planExecutableQuote({ ...base, levels: [{ priceRaw: "640000", quantityRaw: "1000000" }] });
+    expect(expensive.passesConservativeEdge).toBe(false);
+    expect(expensive.reasonCodes).toContain("CONSERVATIVE_EDGE_NOT_POSITIVE");
+    const viable = planExecutableQuote({ ...base, worstPriceRaw: "500000", levels: [{ priceRaw: "500000", quantityRaw: "1000000" }] });
+    expect(viable.passesConservativeEdge).toBe(true);
+  });
+
+  it("works with 18-decimal raw units without floating point token math", () => {
+    const result = planExecutableQuote({
+      ...base,
+      levels: [{ priceRaw: "500000000000000000", quantityRaw: "2000000000000000000" }],
+      requestedQuantityRaw: "2000000000000000000",
+      lotSizeRaw: "100000000000000000",
+      tickSizeRaw: "10000000000000000",
+      payoutScaleRaw: "1000000000000000000",
+      maxCollateralRaw: "1000000000000000000",
+      worstPriceRaw: "500000000000000000"
+    });
+    expect(result.totalCollateralRaw).toBe("1000000000000000000");
+    expect(result.fillableQuantityRaw).toBe("2000000000000000000");
+  });
+
+  it("stops at the reviewed price and collateral caps while preserving the lot grid", () => {
+    const result = planExecutableQuote({
+      ...base,
+      maxCollateralRaw: "260000",
+      worstPriceRaw: "520000",
+      levels: [
+        { priceRaw: "500000", quantityRaw: "300000" },
+        { priceRaw: "520000", quantityRaw: "500000" },
+        { priceRaw: "530000", quantityRaw: "500000" }
+      ]
+    });
+    expect(result.levelsConsumed).toEqual([{ priceRaw: "500000", quantityRaw: "300000" }, { priceRaw: "520000", quantityRaw: "200000" }]);
+    expect(result.fillableQuantityRaw).toBe("500000");
+    expect(BigInt(result.totalCollateralRaw)).toBeLessThanOrEqual(260000n);
+    expect(BigInt(result.fillableQuantityRaw) % 100000n).toBe(0n);
+  });
+
+  it("fails closed for off-tick source levels", () => {
+    expect(() => planExecutableQuote({
+      ...base,
+      levels: [{ priceRaw: "500001", quantityRaw: "1000000" }]
+    })).toThrow(/tick grid/);
   });
 });
 

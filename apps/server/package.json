@@ -18,6 +18,7 @@
     "@edgelab/domain": "workspace:*",
     "@edgelab/dreamdex": "workspace:*",
     "@edgelab/evaluate": "workspace:*",
+    "@edgelab/metrics": "workspace:*",
     "@edgelab/observe": "workspace:*",
     "@edgelab/policy-runtime": "workspace:*",
     "@edgelab/replay": "workspace:*",

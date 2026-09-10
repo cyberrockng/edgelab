@@ -20,6 +20,7 @@ It compares immutable reference policies using pre-outcome decisions, separated 
 - Local Docker deployment smoke: passed.
 - Public HTTPS deployment: https://api-production-bd986.up.railway.app. Treat the release as Git-traceable only when `/healthz` reports the same revision as public `main`; deployment smoke evidence does not substitute for that check.
 - Final submission video and form receipt: pending owner-controlled SHIP-001 actions.
+- The 9 September 2026 implementation review is delivered through Phase C: canonical study routes, a server-backed public overview, list-first Lab, route splitting, additive v4 persistence, paired Brier/ECE/reliability evaluation, captured-book economic scenarios, and a fresh integer multi-level Shannon execution gate. Insufficient live studies remain blocked. External signed adapters, independent on-chain commitments, and the accrued matched case study remain later-phase work.
 
 ## Product Boundaries
 
@@ -143,13 +144,13 @@ pnpm secret:scan
 pnpm evidence:manifest
 pnpm demo:open -- --smoke
 pnpm demo:open
-pnpm campaign:forward-observe -- --interval-ms=30000 --max-cycles=12000
-pnpm campaign:forward-observe -- --policy-version=1.1.0 --state-path=forward-observation-campaign-v1.1.local --interval-ms=30000 --max-cycles=12000
+pnpm campaign:forward-observe -- --assets=BTC --intervals=900 --target-decisions=200 --interval-ms=3000 --max-cycles=900000
+pnpm campaign:forward-observe -- --policy-version=1.1.0 --state-path=forward-observation-campaign-v1.1.local --assets=BTC --intervals=900 --target-decisions=200 --interval-ms=3000 --max-cycles=900000
 pnpm execution:watch
 DATABASE_URL=postgres://... SOMNIA_RPC_URL=https://api.infra.testnet.somnia.network/ NODE_ENV=local pnpm evidence:import-exg003
 ```
 
-`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` starts the local app on `http://localhost:3011` unless `E2E_BASE_URL` points at an already running deployment. Each forward campaign stores an ignored, mode-`0600` local resume file, preserves abstentions, timing exclusions, and source errors, deduplicates market generations, reconciles matured outcomes, and resumes after an application restart. Campaign and execution-watcher defaults cover 12,000 30-second cycles (100 hours), leaving recovery margin beyond the theoretical 30-generation 1h minimum; explicit CLI values may extend that horizon. It polls every 30 seconds so a configured 60-second pre-expiry decision window can be reached. Use a distinct state path for each immutable policy version; never pool observations across policies, assets, intervals, or decision boundaries.
+`pnpm check` runs lint, typecheck, and Vitest unit/integration suites. `pnpm test:e2e` starts the local app on `http://localhost:3011` unless `E2E_BASE_URL` points at an already running deployment. Each forward campaign stores an ignored, mode-`0600` local resume file, preserves abstentions, timing exclusions, and source errors, deduplicates market generations, reconciles matured outcomes, and resumes after an application restart. The v4 runner defaults to one BTC 15-minute cohort, 200 eligible decisions, a three-second observation cadence, and 900,000 cycles (31.25 days), covering the fixed 28-day protocol window with recovery margin. Settlement reconciliation runs every tenth cycle. The stable worker identity renews its lease so the five-second pre-deadline capture window can be reached. Evaluation runs after the fixed end even if the sample floor was reached earlier. Use one exact policy/asset/interval cohort per assessment; never pool observations across policies, assets, intervals, or decision boundaries.
 
 ## Evidence
 

@@ -59,7 +59,7 @@ export default function ProofPage() {
             filled trade.
           </p>
           <div className="actionRow">
-            <Link className="secondaryAction" to="/evidence/proven-experiment">
+            <Link className="secondaryAction" to="/lab/proven-experiment/evidence">
               See Evidence Gate Relationship
             </Link>
             <a className="secondaryAction" href="/api/v2/proven-experiments/proven-experiment/report" target="_blank" rel="noreferrer">

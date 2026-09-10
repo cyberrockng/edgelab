@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import { acquireLease, appendAuditEvent } from "@edgelab/db";
-import { MarketSnapshotSchema, SOMNIA_SHANNON_CHAIN_ID, type MarketSnapshot } from "@edgelab/domain";
+import { MarketSnapshotSchema, SOMNIA_SHANNON_CHAIN_ID, type MarketSnapshot, type PolicyDecision } from "@edgelab/domain";
 import {
   captureMarketSnapshot,
   discoverSuccessorMarkets,
+  planExecutableQuote,
+  readBinaryBookParams,
   type DreamDexMarketEvidence,
   type DreamDexReadConfig,
   type DreamDexReadResult,
@@ -63,6 +65,13 @@ interface ExperimentRecord {
   readonly id: string;
   readonly decision_offset_sec: number;
   readonly risk_hash: string;
+  readonly rule_version: string | null;
+  readonly protocol: {
+    readonly id: string;
+    readonly manifestHash: string;
+    readonly windowFrom: Date;
+    readonly windowTo: Date;
+  } | null;
   readonly policies: readonly {
     readonly id: string;
     readonly policyId: string;
@@ -191,6 +200,11 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
     id: string;
     decision_offset_sec: number;
     risk_hash: string;
+    rule_version: string | null;
+    protocol_id: string | null;
+    manifest_hash: string | null;
+    window_from: Date | null;
+    window_to: Date | null;
     policies: unknown;
   }>(
     `
@@ -204,7 +218,8 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
             encode(digest(COALESCE(ecv.config->>'riskEnvelopeId', 'WATCH_ONLY_BOUNDED'), 'sha256'), 'hex')
           ) AS risk_hash,
           e.policy_a_id,
-          e.policy_b_id
+          e.policy_b_id,
+          ecv.rule_version
         FROM experiments e
         LEFT JOIN risk_envelopes r ON r.id = e.risk_envelope_id
         LEFT JOIN experiment_configuration_versions ecv ON ecv.id = e.active_configuration_id
@@ -247,10 +262,16 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
         base.id,
         base.decision_offset_sec,
         base.risk_hash,
+        base.rule_version,
+        op.id AS protocol_id,
+        op.manifest_hash,
+        op.window_from,
+        op.window_to,
         COALESCE(interactive_policies.policies, legacy_policies.policies, '[]'::jsonb) AS policies
       FROM base
       LEFT JOIN interactive_policies ON interactive_policies.id = base.id
       LEFT JOIN legacy_policies ON legacy_policies.id = base.id
+      LEFT JOIN observation_protocols op ON op.configuration_id = base.active_configuration_id
     `,
     [experimentId]
   );
@@ -279,6 +300,13 @@ async function loadExperiment(pool: pg.Pool, experimentId: string): Promise<Expe
     id: row.id,
     decision_offset_sec: row.decision_offset_sec,
     risk_hash: row.risk_hash,
+    rule_version: row.rule_version,
+    protocol: row.protocol_id === null || row.manifest_hash === null || row.window_from === null || row.window_to === null ? null : {
+      id: row.protocol_id,
+      manifestHash: row.manifest_hash,
+      windowFrom: row.window_from,
+      windowTo: row.window_to
+    },
     policies
   };
 }
@@ -399,11 +427,12 @@ async function insertDecision(input: {
   readonly snapshot: SnapshotRecord;
   readonly adapter: PolicyAdapter;
   readonly policyVersionId: string;
-}): Promise<boolean> {
+  readonly decidedAt?: string;
+}): Promise<{ readonly inserted: boolean; readonly decision: PolicyDecision }> {
   const domainSnapshot = snapshotFromPayload(input.snapshot);
   const decision = evaluatePolicy(input.adapter, {
     snapshot: domainSnapshot,
-    decidedAt: domainSnapshot.capturedAt,
+    decidedAt: input.decidedAt ?? domainSnapshot.capturedAt,
     snapshotHash: input.snapshot.snapshot_hash
   });
   const result = await input.pool.query<{ id: string }>(
@@ -426,12 +455,154 @@ async function insertDecision(input: {
       decision.action,
       JSON.stringify({ evidenceClass: "CAPTURED", executionEvidence: "NOT_EVALUATED" }),
       decision.reasonCodes,
-      domainSnapshot.capturedAt,
+      decision.decidedAt,
       decision.policyHash,
       input.experiment.risk_hash
     ]
   );
-  return (result.rowCount ?? 0) > 0;
+  return { inserted: (result.rowCount ?? 0) > 0, decision };
+}
+
+function primaryBookBaseline(snapshot: MarketSnapshot): { readonly probability: number; readonly bidRaw: string; readonly askRaw: string } | null {
+  const positiveBids = snapshot.book.bids.filter((level) => /^\d+$/.test(level.priceRaw) && /^\d+$/.test(level.quantityRaw) && BigInt(level.quantityRaw) > 0n);
+  const positiveAsks = snapshot.book.asks.filter((level) => /^\d+$/.test(level.priceRaw) && /^\d+$/.test(level.quantityRaw) && BigInt(level.quantityRaw) > 0n);
+  if (positiveBids.length === 0 || positiveAsks.length === 0) return null;
+  const bidRaw = positiveBids.reduce((best, level) => BigInt(level.priceRaw) > BigInt(best.priceRaw) ? level : best).priceRaw;
+  const askRaw = positiveAsks.reduce((best, level) => BigInt(level.priceRaw) < BigInt(best.priceRaw) ? level : best).priceRaw;
+  if (BigInt(bidRaw) > BigInt(askRaw)) return null;
+  const scale = 10n ** BigInt(snapshot.quoteDecimals);
+  const midpointNumerator = BigInt(bidRaw) + BigInt(askRaw);
+  const probability = Number(midpointNumerator) / Number(2n * scale);
+  return Number.isFinite(probability) && probability >= 0 && probability <= 1 ? { probability, bidRaw, askRaw } : null;
+}
+
+async function persistPairedRecord(input: {
+  readonly pool: pg.Pool;
+  readonly experiment: ExperimentRecord;
+  readonly market: DreamDexMarketEvidence;
+  readonly snapshot: SnapshotRecord;
+  readonly policyVersionId: string;
+  readonly decision: PolicyDecision;
+  readonly candidateReceivedAt: string;
+  readonly deadline: Date;
+  readonly dreamDexClient: DreamDexSdkClient;
+  readonly dreamDexConfig: DreamDexReadConfig;
+}): Promise<void> {
+  if (input.experiment.protocol === null) return;
+  const domainSnapshot = snapshotFromPayload(input.snapshot);
+  const baseline = primaryBookBaseline(domainSnapshot);
+  const run = await input.pool.query<{ id: string }>(
+    `SELECT id FROM campaign_runs WHERE protocol_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [input.experiment.protocol.id]
+  );
+  const campaignRunId = run.rows[0]?.id;
+  if (campaignRunId === undefined) throw new Error("V4 campaign run is missing");
+  const paired = await input.pool.query<{ id: string }>(
+    `
+      INSERT INTO paired_forecast_records(
+        protocol_id, campaign_run_id, candidate_policy_version_id, chain_id, venue_id,
+        market_generation_id, asset, interval_sec, decision_offset_sec, snapshot_hash,
+        snapshot_source, candidate_probability, baseline_probability, baseline_bid_raw,
+        baseline_ask_raw, quote_decimals, captured_at, decision_deadline,
+        candidate_received_at, action, inclusion_reason, integrity_status
+      ) VALUES ($1,$2,$3,50312,'dreamdex-event-contracts',$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)
+      ON CONFLICT (chain_id, venue_id, market_generation_id, decision_offset_sec, candidate_policy_version_id, protocol_id)
+      DO NOTHING
+      RETURNING id
+    `,
+    [
+      input.experiment.protocol.id, campaignRunId, input.policyVersionId, input.market.stableMarketId,
+      input.market.asset, input.market.intervalSeconds ?? 0, input.experiment.decision_offset_sec,
+      input.snapshot.snapshot_hash, JSON.stringify(domainSnapshot.source), input.decision.forecastPUp,
+      baseline?.probability ?? null, baseline?.bidRaw ?? null, baseline?.askRaw ?? null,
+      domainSnapshot.quoteDecimals, domainSnapshot.capturedAt, input.deadline, input.candidateReceivedAt,
+      input.decision.action, baseline === null ? "MISSING_PRIMARY_TWO_SIDED_BASELINE" : "PAIRED_PRIMARY_BASELINE",
+      JSON.stringify({ internallyReproducible: true, externallyTimeAnchored: false, completenessChecked: false })
+    ]
+  );
+  const pairedRecordId = paired.rows[0]?.id ?? (await input.pool.query<{ id: string }>(
+    `SELECT id FROM paired_forecast_records
+      WHERE chain_id=50312 AND venue_id='dreamdex-event-contracts' AND market_generation_id=$1
+        AND decision_offset_sec=$2 AND candidate_policy_version_id=$3 AND protocol_id=$4`,
+    [input.market.stableMarketId, input.experiment.decision_offset_sec, input.policyVersionId, input.experiment.protocol.id]
+  )).rows[0]?.id;
+  if (pairedRecordId === undefined) throw new Error("Paired forecast persistence failed");
+  const captured = (input.snapshot.payload as { readonly dreamDexSnapshot?: DreamDexSnapshotEvidence }).dreamDexSnapshot;
+  if (captured === undefined) throw new Error("Captured executable book is missing from the paired snapshot");
+  const scale = 10n ** BigInt(domainSnapshot.quoteDecimals);
+  const side = input.decision.forecastPUp >= .5 ? "BUY_YES" : "BUY_NO";
+  const rawLevels = (side === "BUY_YES" ? captured.book.yesAsks : captured.book.noAsks).flatMap((level) => {
+    const venuePrice = BigInt(level.priceRaw);
+    const economicPrice = side === "BUY_YES" ? venuePrice : scale - venuePrice;
+    return economicPrice > 0n && economicPrice <= scale && BigInt(level.quantityRaw) > 0n
+      ? [{ priceRaw: economicPrice.toString(), quantityRaw: level.quantityRaw, venuePriceRaw: level.priceRaw }]
+      : [];
+  });
+  const params = await readBinaryBookParams(input.dreamDexClient, input.dreamDexConfig, input.market.poolAddress);
+  const fixedBankrollRaw = (100n * scale).toString();
+  const perWindowBudgetRaw = scale.toString();
+  const stressAddend = scale / 100n;
+  let scenarioAction: "TRADE" | "NO_TRADE" | "SOURCE_UNAVAILABLE" = "SOURCE_UNAVAILABLE";
+  let primaryPlan: ReturnType<typeof planExecutableQuote> | null = null;
+  let stressPlan: ReturnType<typeof planExecutableQuote> | null = null;
+  let sourceReason: string | null = null;
+  if (!params.ok) {
+    sourceReason = params.reasonCode;
+  } else if (rawLevels.length === 0) {
+    sourceReason = "NO_EXECUTABLE_CAPTURE_DEPTH";
+  } else {
+    const sideProbabilityPpm = Math.max(0, Math.min(1_000_000, Math.round((side === "BUY_YES" ? input.decision.forecastPUp : 1 - input.decision.forecastPUp) * 1_000_000)));
+    const maximumPassingPricePpm = Math.max(0, sideProbabilityPpm - 50_000 - 10_000 - 10_000);
+    const maximumPassingPriceRaw = (((scale * BigInt(maximumPassingPricePpm)) / 1_000_000n) / params.value.tickSize) * params.value.tickSize;
+    const common = {
+      requestedQuantityRaw: scale.toString(),
+      lotSizeRaw: params.value.lotSize.toString(),
+      tickSizeRaw: params.value.tickSize.toString(),
+      payoutScaleRaw: scale.toString(),
+      maxCollateralRaw: perWindowBudgetRaw,
+      worstPriceRaw: maximumPassingPriceRaw.toString(),
+      sideProbabilityPpm
+    };
+    try {
+      const roundUpToTick = (value: bigint) => ((value + params.value.tickSize - 1n) / params.value.tickSize) * params.value.tickSize;
+      const stressedLevels = rawLevels.map((level) => ({
+          priceRaw: (roundUpToTick(BigInt(level.priceRaw) + stressAddend) > scale ? scale : roundUpToTick(BigInt(level.priceRaw) + stressAddend)).toString(),
+          quantityRaw: level.quantityRaw
+      }));
+      const stressedCap = roundUpToTick(maximumPassingPriceRaw + stressAddend) > scale
+        ? scale
+        : roundUpToTick(maximumPassingPriceRaw + stressAddend);
+      const provisionalStress = planExecutableQuote({
+        ...common, worstPriceRaw: stressedCap.toString(), levels: stressedLevels
+      });
+      const fixedScenarioQuantityRaw = provisionalStress.fillableQuantityRaw;
+      primaryPlan = planExecutableQuote({ ...common, requestedQuantityRaw: fixedScenarioQuantityRaw, levels: rawLevels });
+      stressPlan = planExecutableQuote({
+        ...common, requestedQuantityRaw: fixedScenarioQuantityRaw,
+        worstPriceRaw: stressedCap.toString(), levels: stressedLevels
+      });
+      scenarioAction = primaryPlan.passesConservativeEdge && BigInt(fixedScenarioQuantityRaw) >= params.value.minQuantity &&
+        stressPlan.fillableQuantityRaw === fixedScenarioQuantityRaw
+        ? "TRADE"
+        : "NO_TRADE";
+      sourceReason = scenarioAction === "NO_TRADE" ? primaryPlan.reasonCodes.join(",") : null;
+    } catch (error) {
+      scenarioAction = "SOURCE_UNAVAILABLE";
+      sourceReason = error instanceof Error ? `QUOTE_PLANNER_INVALID_SOURCE:${error.message}` : "QUOTE_PLANNER_INVALID_SOURCE";
+    }
+  }
+  await input.pool.query(
+    `INSERT INTO economic_scenario_records(
+       paired_record_id,protocol_id,classification,side,scenario_action,raw_levels,book_parameters,
+       primary_plan,stress_plan,fixed_bankroll_raw,per_window_budget_raw,stress_price_addend_raw,
+       source_reason,captured_at)
+     VALUES ($1,$2,'SIMULATED_FROM_CAPTURED_BOOK',$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13)
+     ON CONFLICT (paired_record_id) DO NOTHING`,
+    [pairedRecordId, input.experiment.protocol.id, side, scenarioAction, JSON.stringify(rawLevels),
+      params.ok ? JSON.stringify({ lotSizeRaw: params.value.lotSize.toString(), tickSizeRaw: params.value.tickSize.toString(), minQuantityRaw: params.value.minQuantity.toString() }) : null,
+      primaryPlan === null ? null : JSON.stringify(primaryPlan), stressPlan === null ? null : JSON.stringify(stressPlan),
+      fixedBankrollRaw, perWindowBudgetRaw, stressAddend.toString(), sourceReason, domainSnapshot.capturedAt]
+  );
 }
 
 async function observeMarket(input: {
@@ -446,10 +617,19 @@ async function observeMarket(input: {
   readonly depth: number;
 }): Promise<ObservedEpisodeResult> {
   const episode = await ensureEpisode(input.pool, input.experiment.id, input.market);
-  const decisionWindowOpensAt = forwardDecisionWindowOpensAt(
-    input.market,
-    input.experiment.decision_offset_sec
-  );
+  const decisionDeadline = dateFromSeconds(input.market.expirySeconds - input.experiment.decision_offset_sec);
+  const isV4 = input.experiment.rule_version === "edgelab-evaluation-v4" && input.experiment.protocol !== null;
+  const decisionWindowOpensAt = isV4
+    ? new Date(decisionDeadline.getTime() - 5_000)
+    : forwardDecisionWindowOpensAt(input.market, input.experiment.decision_offset_sec);
+  const decisionWindowClosesAt = isV4 ? decisionDeadline : episode.expires_at;
+  const protocol = input.experiment.protocol;
+  if (isV4 && protocol !== null && (input.now < protocol.windowFrom || input.now >= protocol.windowTo)) {
+    return {
+      marketId: input.market.stableMarketId, episodeId: episode.id, snapshotId: null,
+      insertedDecisionCount: 0, reusedDecisionCount: 0, skipped: true, reasonCode: "DECISION_WINDOW_NOT_OPEN"
+    };
+  }
   if (input.now < decisionWindowOpensAt) {
     return {
       marketId: input.market.stableMarketId,
@@ -461,10 +641,10 @@ async function observeMarket(input: {
       reasonCode: "DECISION_WINDOW_NOT_OPEN"
     };
   }
-  if (input.now >= episode.expires_at) {
+  if (input.now >= decisionWindowClosesAt) {
     await input.pool.query(
-      "UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = 'MARKET_ALREADY_EXPIRED' WHERE id = $1 AND state <> 'DECISION_RECORDED'",
-      [episode.id]
+      "UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = $2 WHERE id = $1 AND state <> 'DECISION_RECORDED'",
+      [episode.id, isV4 ? "DECISION_WINDOW_MISSED" : "MARKET_ALREADY_EXPIRED"]
     );
     return {
       marketId: input.market.stableMarketId,
@@ -473,7 +653,7 @@ async function observeMarket(input: {
       insertedDecisionCount: 0,
       reusedDecisionCount: 0,
       skipped: true,
-      reasonCode: "MARKET_ALREADY_EXPIRED"
+      reasonCode: isV4 ? "DECISION_WINDOW_MISSED" : "MARKET_ALREADY_EXPIRED"
     };
   }
 
@@ -481,7 +661,7 @@ async function observeMarket(input: {
     input.pool,
     episode.id,
     decisionWindowOpensAt,
-    episode.expires_at
+    decisionWindowClosesAt
   );
   if (snapshot === null) {
     const captured = await captureMarketSnapshot(
@@ -514,7 +694,7 @@ async function observeMarket(input: {
         reasonCode: "DECISION_WINDOW_NOT_OPEN"
       };
     }
-    if (capturedAt >= episode.expires_at) {
+    if (capturedAt >= decisionWindowClosesAt) {
       await input.pool.query(
         "UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = 'DECISION_WINDOW_MISSED' WHERE id = $1 AND state <> 'DECISION_RECORDED'",
         [episode.id]
@@ -547,15 +727,26 @@ async function observeMarket(input: {
         reasonCode: "POLICY_ADAPTER_MISSING"
       };
     }
+    const candidateReceivedAt = (input.clockNow?.() ?? new Date()).toISOString();
+    if (isV4 && new Date(candidateReceivedAt) >= decisionDeadline) {
+      await input.pool.query("UPDATE market_episodes SET state = 'EXCLUDED', exclusion_reason = 'CANDIDATE_RECEIVED_LATE' WHERE id = $1", [episode.id]);
+      return { marketId: input.market.stableMarketId, episodeId: episode.id, snapshotId: snapshot.id, insertedDecisionCount, reusedDecisionCount, skipped: true, reasonCode: "DECISION_WINDOW_MISSED" };
+    }
     const inserted = await insertDecision({
       pool: input.pool,
       experiment: input.experiment,
       episodeId: episode.id,
       snapshot,
       adapter,
-      policyVersionId: policy.id
+      policyVersionId: policy.id,
+      decidedAt: candidateReceivedAt
     });
-    if (inserted) {
+    await persistPairedRecord({
+      pool: input.pool, experiment: input.experiment, market: input.market, snapshot,
+      policyVersionId: policy.id, decision: inserted.decision, candidateReceivedAt, deadline: decisionDeadline,
+      dreamDexClient: input.dreamDexClient, dreamDexConfig: input.dreamDexConfig
+    });
+    if (inserted.inserted) {
       insertedDecisionCount += 1;
     } else {
       reusedDecisionCount += 1;

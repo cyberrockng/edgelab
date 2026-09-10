@@ -2342,3 +2342,107 @@ export const dreamDexBoundaries = {
   fabricatedFills: "forbidden",
   bookReconstruction: HISTORICAL_BOOK_RECONSTRUCTION_CAPABILITY
 } as const;
+
+export interface ExecutableAskLevel {
+  readonly priceRaw: string;
+  readonly quantityRaw: string;
+}
+
+export interface QuotePlanInput {
+  readonly levels: readonly ExecutableAskLevel[];
+  readonly requestedQuantityRaw: string;
+  readonly lotSizeRaw: string;
+  readonly tickSizeRaw: string;
+  readonly payoutScaleRaw: string;
+  readonly maxCollateralRaw: string;
+  readonly worstPriceRaw: string;
+  readonly sideProbabilityPpm: number;
+  readonly modelHaircutPpm?: number;
+  readonly slippageReservePpm?: number;
+  readonly minimumEdgePpm?: number;
+  readonly estimatedFeesRaw?: string;
+}
+
+export interface QuotePlan {
+  readonly requestedQuantityRaw: string;
+  readonly fillableQuantityRaw: string;
+  readonly unfilledQuantityRaw: string;
+  readonly averagePriceRaw: string | null;
+  readonly worstPriceRaw: string | null;
+  readonly totalCollateralRaw: string;
+  readonly conservativeExpectedNetRaw: string;
+  readonly conservativeExpectedNetAtPriceCapRaw: string;
+  readonly reviewedPriceCapRaw: string;
+  readonly levelsConsumed: readonly { readonly priceRaw: string; readonly quantityRaw: string }[];
+  readonly passesConservativeEdge: boolean;
+  readonly reasonCodes: readonly string[];
+}
+
+function parseUnsignedRaw(value: string, label: string): bigint {
+  if (!/^\d+$/.test(value)) throw new Error(`${label} must be an unsigned integer string`);
+  return BigInt(value);
+}
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  return numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator;
+}
+
+export function planExecutableQuote(input: QuotePlanInput): QuotePlan {
+  const requested = parseUnsignedRaw(input.requestedQuantityRaw, "requested quantity");
+  const lot = parseUnsignedRaw(input.lotSizeRaw, "lot size");
+  const tick = parseUnsignedRaw(input.tickSizeRaw, "tick size");
+  const scale = parseUnsignedRaw(input.payoutScaleRaw, "payout scale");
+  const maxCollateral = parseUnsignedRaw(input.maxCollateralRaw, "maximum collateral");
+  const priceCap = parseUnsignedRaw(input.worstPriceRaw, "worst price");
+  const fees = parseUnsignedRaw(input.estimatedFeesRaw ?? "0", "estimated fees");
+  if (lot === 0n || tick === 0n || scale === 0n) throw new Error("Lot, tick, and payout scale must be positive");
+  if (!Number.isInteger(input.sideProbabilityPpm) || input.sideProbabilityPpm < 0 || input.sideProbabilityPpm > 1_000_000) throw new Error("Side probability must use integer ppm from zero to one million");
+  const haircut = input.modelHaircutPpm ?? 50_000;
+  const reserve = input.slippageReservePpm ?? 10_000;
+  const minimumEdge = input.minimumEdgePpm ?? 10_000;
+  const target = (requested / lot) * lot;
+  let remaining = target;
+  let collateral = 0n;
+  let filled = 0n;
+  let worst: bigint | null = null;
+  const consumed: { priceRaw: string; quantityRaw: string }[] = [];
+  const levels = input.levels.map((level) => ({ price: parseUnsignedRaw(level.priceRaw, "level price"), quantity: parseUnsignedRaw(level.quantityRaw, "level quantity") })).sort((left, right) => left.price < right.price ? -1 : left.price > right.price ? 1 : 0);
+  for (const level of levels) {
+    if (remaining === 0n || level.price > priceCap) break;
+    if (level.price % tick !== 0n) throw new Error("Level price is off the verified tick grid");
+    let quantity = (level.quantity / lot) * lot;
+    if (quantity > remaining) quantity = remaining;
+    const affordable = ((maxCollateral - collateral) * scale / level.price / lot) * lot;
+    if (quantity > affordable) quantity = affordable;
+    if (quantity <= 0n) continue;
+    const cost = ceilDiv(level.price * quantity, scale);
+    if (collateral + cost > maxCollateral) continue;
+    filled += quantity;
+    remaining -= quantity;
+    collateral += cost;
+    worst = level.price;
+    consumed.push({ priceRaw: level.price.toString(), quantityRaw: quantity.toString() });
+  }
+  const average = filled === 0n ? null : ceilDiv(collateral * scale, filled);
+  const adjustedProbability = BigInt(Math.max(0, input.sideProbabilityPpm - haircut));
+  const expectedPayout = filled * adjustedProbability / 1_000_000n;
+  const slippage = ceilDiv(filled * BigInt(reserve), 1_000_000n);
+  const conservativeNet = expectedPayout - collateral - slippage - fees;
+  const capCollateral = ceilDiv(priceCap * filled, scale);
+  const conservativeNetAtPriceCap = expectedPayout - capCollateral - slippage - fees;
+  const reviewedPriceCapPpm = ceilDiv(priceCap * 1_000_000n, scale);
+  const perSharePass = BigInt(input.sideProbabilityPpm - haircut - reserve - minimumEdge) >= reviewedPriceCapPpm;
+  const reasons: string[] = [];
+  if (filled === 0n) reasons.push("NO_FILLABLE_DEPTH");
+  if (remaining > 0n) reasons.push("PARTIAL_DEPTH_REQUIRES_REVIEW");
+  if (!perSharePass || conservativeNet <= 0n || conservativeNetAtPriceCap <= 0n) reasons.push("CONSERVATIVE_EDGE_NOT_POSITIVE");
+  return {
+    requestedQuantityRaw: requested.toString(), fillableQuantityRaw: filled.toString(),
+    unfilledQuantityRaw: (requested - filled).toString(), averagePriceRaw: average?.toString() ?? null,
+    worstPriceRaw: worst?.toString() ?? null, totalCollateralRaw: collateral.toString(),
+    conservativeExpectedNetRaw: conservativeNet.toString(),
+    conservativeExpectedNetAtPriceCapRaw: conservativeNetAtPriceCap.toString(), reviewedPriceCapRaw: priceCap.toString(),
+    levelsConsumed: consumed,
+    passesConservativeEdge: filled > 0n && perSharePass && conservativeNet > 0n && conservativeNetAtPriceCap > 0n, reasonCodes: reasons
+  };
+}

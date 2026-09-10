@@ -186,7 +186,8 @@ export const migrations = [
   "0016_strategy_execution_lifecycle",
   "0017_execution_reconciliation",
   "0018_order_signing_freshness",
-  "0019_execution_terminal_index"
+  "0019_execution_terminal_index",
+  "0020_evaluation_v4_foundations"
 ] as const;
 
 export async function runMigrations(pool: pg.Pool): Promise<MigrationResult[]> {
