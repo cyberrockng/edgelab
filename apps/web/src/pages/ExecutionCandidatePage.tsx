@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useParams } from "react-router-dom";
 import { ExecutionLifecycleSummary } from "../components/ExecutionLifecycleSummary.js";
 import { QualificationJourney, type QualificationJourneyStage } from "../components/QualificationJourney.js";
 import {
@@ -15,7 +16,6 @@ import {
   type ExecutionCandidateResponse
 } from "../data.js";
 
-const defaultAccount = "0x6b3a87a4bbf7d7d324df227d640fc42ebf987971";
 const shannonChainHex = "0xc488";
 const watchTracks = [
   { asset: "BTC" as const, intervalSec: 900 as const, label: "BTC 15m" },
@@ -303,13 +303,14 @@ async function sendControlledLiquiditySetup(candidate: ControlledLiquidityCandid
 }
 
 export default function ExecutionCandidatePage() {
+  const routeParams = useParams();
   const initialSearchParams = new URLSearchParams(window.location.search);
   const requestedAsset = initialSearchParams.get("asset");
   const requestedInterval = Number(initialSearchParams.get("intervalSec"));
   const [experimentId, setExperimentId] = useState(
-    () => initialSearchParams.get("experimentId") ?? ""
+    () => routeParams.experimentId ?? initialSearchParams.get("experimentId") ?? ""
   );
-  const [account, setAccount] = useState(defaultAccount);
+  const [account, setAccount] = useState("");
   const [asset, setAsset] = useState<"BTC" | "ETH">(
     requestedAsset === "ETH" ? "ETH" : "BTC"
   );
@@ -360,7 +361,8 @@ export default function ExecutionCandidatePage() {
   const candidate = candidateMutation.data?.data.executionCandidate;
   const controlledCandidate = controlledLiquidityMutation.data?.data.controlledLiquidityCandidate;
   const currentWatchSample = watchSamples[0];
-  const strategyQualified = candidate?.strategyLink.qualificationVerdict === "STRATEGY_QUALIFIED";
+  const strategyQualified = candidate?.strategyLink.qualificationVerdict === "STRATEGY_QUALIFIED" ||
+    candidate?.strategyLink.qualificationVerdict === "FORWARD_CRITERIA_MET";
   const executionJourney: readonly QualificationJourneyStage[] = [
     {
       title: "Strategy + exact policy",
@@ -560,7 +562,7 @@ export default function ExecutionCandidatePage() {
           <h2>Human-authorized Shannon execution packet.</h2>
           <p>
             Fixed cap: 1 IOC order, 0.01 tUSDC maximum escrow, Somnia Shannon only.
-            The exact strategy must first have a STRATEGY_QUALIFIED forward assessment,
+            The exact strategy must first have a legacy qualification or pass both v4 forecast and captured-book economic criteria,
             and a wallet must review every approval or order transaction.
           </p>
           <div className={`authorizationNotice ${candidate?.status === "READY" ? "authorizationReady" : "authorizationLocked"}`}>
@@ -602,7 +604,19 @@ export default function ExecutionCandidatePage() {
               </div>
               <div>
                 <dt>Quantity raw</dt>
-                <dd>{candidate.sizing.quantityRaw}</dd>
+                <dd>{`${candidate.quotePlan.fillableQuantityRaw} fillable / ${candidate.quotePlan.requestedQuantityRaw} requested`}</dd>
+              </div>
+              <div>
+                <dt>Average / worst price raw</dt>
+                <dd>{`${candidate.quotePlan.averagePriceRaw ?? "Unavailable"} / ${candidate.quotePlan.worstPriceRaw ?? "Unavailable"}`}</dd>
+              </div>
+              <div>
+                <dt>Conservative edge</dt>
+                <dd>{`${candidate.quotePlan.conservativeExpectedNetRaw} raw at displayed depth; ${candidate.quotePlan.conservativeExpectedNetAtPriceCapRaw} raw at reviewed cap, excluding gas`}</dd>
+              </div>
+              <div>
+                <dt>Depth consumed</dt>
+                <dd>{`${String(candidate.quotePlan.levelsConsumed.length)} level(s)${BigInt(candidate.quotePlan.unfilledQuantityRaw) > 0n ? " · partial proposal" : ""}`}</dd>
               </div>
               <div>
                 <dt>Expiry headroom</dt>

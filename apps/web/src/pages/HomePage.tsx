@@ -1,184 +1,65 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { QualificationJourney, type QualificationJourneyStage } from "../components/QualificationJourney.js";
-import { capturedSummary, capturedSummarySource } from "../data.js";
+import { apiErrorMessage, fetchPublicOverview } from "../data.js";
 
-const publicJourney: readonly QualificationJourneyStage[] = [
-  {
-    title: "Strategy + exact policy",
-    status: "RECORDED",
-    detail: "Versioned strategy and deterministic promotion rules.",
-    state: "complete"
-  },
-  {
-    title: "Forward OOS evidence",
-    status: "REQUIRED NEXT",
-    detail: "Genuine market generations captured before outcomes.",
-    state: "current"
-  },
-  {
-    title: "Strategy qualification",
-    status: "GATED",
-    detail: "Requires 30 eligible settled observations on one exact track.",
-    state: "locked"
-  },
-  {
-    title: "Fresh executable market",
-    status: "LOCKED",
-    detail: "Only checked after deterministic qualification.",
-    state: "locked"
-  },
-  {
-    title: "Wallet receipt + reconciliation",
-    status: "UNPROVEN",
-    detail: "Approval, IOC order, fill and settlement remain evidence-bound.",
-    state: "unproven"
-  }
-] as const;
+function formatInterval(seconds: number): string {
+  return seconds === 3600 ? "1 hour" : `${String(seconds / 60)} minutes`;
+}
 
 export default function HomePage() {
-  const summary = capturedSummary;
+  const overviewQuery = useQuery({ queryKey: ["public-overview"], queryFn: fetchPublicOverview });
+  const overview = overviewQuery.data?.data;
+  const example = overview?.example;
   return (
-    <div className="pageStack">
-      <section className="heroGrid" aria-label="EdgeLab product overview">
+    <div className="pageStack overviewPage">
+      <section className="heroGrid overviewHero" aria-label="EdgeLab product overview">
         <div className="heroCopy">
-          <p className="eyebrow">DreamDEX strategy qualification lab</p>
-          <h1>EdgeLab decides whether a DreamDEX strategy has earned progression.</h1>
-          <p>
-            Before a strategy reaches execution exposure, EdgeLab checks the evidence chain:
-            historical replay, forward observation, and bounded human-authorized Shannon proof.
-            A weak candidate is blocked instead of dressed up as a trading signal.
-          </p>
+          <p className="eyebrow">DreamDEX strategy evidence lab</p>
+          <h1>Does your strategy improve on the market?</h1>
+          <p>Compare forecasts, check executable prices, and inspect the evidence before testnet execution.</p>
           <div className="actionRow">
-            <Link className="primaryAction large" to="/lab/proven-experiment">
-              Open Judge Verdict
-            </Link>
-            <Link className="secondaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
-              Track Forward Qualification
-            </Link>
+            <Link className="primaryAction large" to="/lab">Open Lab</Link>
+            <Link className="secondaryAction" to="/lab/proven-experiment/results">View example study</Link>
           </div>
         </div>
-        <div className="modelPanel" aria-label="EdgeLab evidence model">
-          <div className="verdictCard">
-            <span>Current public verdict</span>
-            <strong>Promote to forward observation</strong>
-            <p>Historical evidence passed the gate. Execution exposure remains closed.</p>
-          </div>
-          <div className="scoreStrip" aria-label="Current evidence scorecard">
-            <div>
-              <span>Processed</span>
-              <strong>97</strong>
-            </div>
-            <div>
-              <span>Scored</span>
-              <strong>36</strong>
-            </div>
-            <div>
-              <span>Brier</span>
-              <strong>0.1775</strong>
-            </div>
-            <div>
-              <span>Bias</span>
-              <strong>0.0333</strong>
-            </div>
-          </div>
-          <div className="modelInput status-verified">
-            <span>1. Historical reality</span>
-            <strong>Mainnet read-only passed</strong>
-          </div>
-          <div className="modelInput status-allowed-next">
-            <span>2. Forward evidence</span>
-            <strong>Next required observation</strong>
-          </div>
-          <div className="modelInput status-unlinked-global-proof-available">
-            <span>3. Execution reality</span>
-            <strong>{`${String(summary.chain.submittedOrderCount)} order / ${String(summary.chain.fillCount)} fills / ${summary.chain.latestTerminalState ?? "no terminal state"}`}</strong>
-          </div>
-          <div className="modelGate">
-            <span>Gate rule</span>
-            <strong>No filled strategy proof, no capital claim.</strong>
-          </div>
-        </div>
-      </section>
-
-      <QualificationJourney stages={publicJourney} />
-
-      <section className="routePanel compactPanel thesisPanel" aria-label="Judge mode">
-        <div className="sectionHeader">
-          <div>
-            <span className="label">Judge mode</span>
-            <h2>One question, one verdict, every missing proof visible.</h2>
-          </div>
-          <span className="statusPill emphasisPill">Qualification before execution</span>
-        </div>
-        <div className="verdictLadder">
-          <div className="ladderStep complete">
-            <span>01</span>
-            <strong>Historical replay passed</strong>
-            <p>Authentic DreamDEX mainnet history, strict anti-lookahead, server-authored metrics.</p>
-          </div>
-          <div className="ladderStep current">
-                <span>02</span>
-                <strong>Forward observation required</strong>
-                <p>Next evidence must be captured before outcomes on Shannon live-shadow mode.</p>
-                <Link className="textLink" to="/observation">
-                  View OBSERVE-001 proof
-                </Link>
+        <article className="featuredStudy" aria-label="Featured study">
+          {overviewQuery.isLoading ? <div className="stateBox">Loading published example…</div> : null}
+          {overviewQuery.isError ? <div className="stateBox errorState" role="alert">{apiErrorMessage(overviewQuery.error)}</div> : null}
+          {example !== undefined ? (
+            <>
+              <div className="sectionHeader">
+                <div><span className="label">Captured on {new Date(example.assessedAt).toLocaleDateString()}</span><h2>{example.title}</h2></div>
+                <span className="statusPill">Mainnet · read-only</span>
               </div>
-          <div className="ladderStep blocked">
-            <span>03</span>
-            <strong>Execution exposure blocked</strong>
-            <p>EXG-003 proves protocol lifecycle only; no strategy-linked fill or PnL is claimed.</p>
-          </div>
-        </div>
-        <div className="actionRow judgeActions">
-          <Link className="secondaryAction" to="/evidence/proven-experiment">
-            Inspect Evidence Gate
-          </Link>
-          <Link className="textLink" to="/observation">
-            Inspect forward observation evidence
-          </Link>
-        </div>
-      </section>
-
-      <section className="threeColumn" aria-label="Core product workflow">
-        <article>
-          <span className="label">Explore</span>
-          <h2>DreamDEX markets become the research source.</h2>
-          <p>Browse verified mainnet markets, filter by asset and interval, then open a real market as the evidence source.</p>
-          <Link className="textLink" to="/markets?plane=mainnet-history">
-            Explore DreamDEX history
-          </Link>
-        </article>
-        <article>
-          <span className="label">Operate</span>
-          <h2>The workspace is where evidence becomes a decision.</h2>
-          <p>Create a strategy experiment, run historical qualification, evaluate the result, then open the Evidence Gate.</p>
-          <Link className="textLink" to="/lab">
-            Start in Strategy Lab
-          </Link>
-        </article>
-        <article>
-          <span className="label">Verify</span>
-          <h2>Shannon proof stays separate from mainnet research.</h2>
-          <p>{`${String(summary.chain.submittedOrderCount)} submitted testnet order, ${String(
-            summary.chain.fillCount
-            )} fills, terminal state ${
-              summary.chain.latestTerminalState ?? "unavailable"
-            }. Source: ${capturedSummarySource}.`}</p>
-          <Link className="textLink" to="/proof">
-            View captured no-fill lifecycle
-          </Link>
+              <p className="studyCohort">{example.asset} · {formatInterval(example.intervalSeconds)} · historical screening</p>
+              <strong className="featuredVerdict">Historical screening passed</strong>
+              <p>
+                {example.sampleSize} forecasts were scored from {example.processedCount} processed markets. A market-relative assessment is unavailable for this artifact. Forward evidence is still required.
+              </p>
+              <p className="smallPrint">{example.selectionDisclosure}</p>
+              <Link className="textLink" to={`/lab/${example.slug}/results`}>Open study</Link>
+            </>
+          ) : null}
         </article>
       </section>
 
-      <section className="routePanel compactPanel" aria-label="Product boundary">
-        <span className="label">Integrity boundary</span>
-        <h2>Promotion means forward observation, not capital execution.</h2>
-        <p>
-          Historical replay can only promote a strategy to forward observation. Tradeability,
-          execution proof, and PnL stay separate, and bounded Shannon execution remains
-          conditional and human-authorized.
-        </p>
+      <section className="progressionStrip" aria-label="Study progression">
+        {[
+          ["01", "Study recorded", "Freeze the candidate and protocol."],
+          ["02", "Collect observations", "Capture decisions before outcomes."],
+          ["03", "Evaluate", "Compare paired forecasts and exclusions."],
+          ["04", "Review testnet execution", "Review a fresh eligible candidate."]
+        ].map(([index, title, detail]) => <div key={index}><span>{index}</span><strong>{title}</strong><p>{detail}</p></div>)}
+      </section>
+
+      <section className="routePanel compactPanel" aria-label="Current public campaign">
+        <div className="sectionHeader"><div><span className="label">Current public campaign</span><h2>{overview?.currentCampaign?.label ?? "No current campaign published"}</h2></div><span className="statusPill">Shannon forward</span></div>
+        {overview?.currentCampaign === null ? (
+          <p>Forward collection remains private until a campaign is explicitly published. The dated example above remains available.</p>
+        ) : overview?.currentCampaign !== undefined ? (
+          <p>{overview.currentCampaign.settledCount}/{overview.currentCampaign.targetCount} settled · {overview.currentCampaign.serviceState} · last capture {overview.currentCampaign.lastCaptureAt ?? "Unavailable"}</p>
+        ) : null}
+        <Link className="textLink" to="/how-it-works">Read the methodology</Link>
       </section>
     </div>
   );

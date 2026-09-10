@@ -128,7 +128,7 @@ export default function EvidencePage() {
               This qualifies the strategy, not the market. A candidate must still pass fresh liquidity,
               price, pool, expiry, collateral, allowance, balance, account, and network checks.
               {" "}
-              <Link to={`/execution-candidate?experimentId=${encodeURIComponent(experimentId)}`}>
+              <Link to={`/lab/${encodeURIComponent(experimentId)}/execution`}>
                 Revalidate a bounded candidate
               </Link>
             </p>
@@ -221,7 +221,7 @@ export default function EvidencePage() {
                 <span>Now</span>
                 <strong>Forward observation</strong>
                 <p>Capture Shannon decisions before outcomes. This is the phase competitors with live proof force EdgeLab to strengthen.</p>
-                <Link className="textLink" to="/observation">
+                <Link className="textLink" to="/evidence/archive/observe-001">
                   View OBSERVE-001 proof
                 </Link>
               </div>
@@ -277,7 +277,7 @@ export default function EvidencePage() {
             >
               Start Forward Observation
             </Link>
-            <Link className="secondaryAction" to="/observation">
+            <Link className="secondaryAction" to="/evidence/archive/observe-001">
               View Observation Proof
             </Link>
             <a
@@ -292,7 +292,7 @@ export default function EvidencePage() {
             >
               Export Report
             </a>
-            <Link className="secondaryAction" to="/compare">
+            <Link className="secondaryAction" to="/lab/compare">
               Compare Evidence
             </Link>
           </div>

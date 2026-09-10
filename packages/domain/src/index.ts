@@ -26,9 +26,48 @@ export const VerdictSchema = z.enum([
   "STRATEGY_QUALIFIED",
   "HOLD",
   "REJECT",
-  "INSUFFICIENT_EVIDENCE"
+  "INSUFFICIENT_EVIDENCE",
+  "INSUFFICIENT",
+  "HISTORICAL_SCREEN_PASSED",
+  "FORWARD_CRITERIA_MET",
+  "NO_DEMONSTRATED_IMPROVEMENT",
+  "UNDERPERFORMS_MARKET"
 ]);
 export type Verdict = z.infer<typeof VerdictSchema>;
+
+export const ForecastStatusSchema = z.enum([
+  "NOT_EVALUATED", "INSUFFICIENT", "HISTORICAL_SCREEN_PASSED", "FORWARD_CRITERIA_MET",
+  "NO_DEMONSTRATED_IMPROVEMENT", "UNDERPERFORMS_MARKET"
+]);
+export type ForecastStatus = z.infer<typeof ForecastStatusSchema>;
+
+export const EconomicsStatusSchema = z.enum([
+  "NOT_EVALUATED", "SOURCE_INCOMPLETE", "INSUFFICIENT", "SCENARIO_CRITERIA_MET", "SCENARIO_REJECTED"
+]);
+export type EconomicsStatus = z.infer<typeof EconomicsStatusSchema>;
+
+export const ExecutionEligibilitySchema = z.enum(["BLOCKED", "ELIGIBLE_FOR_FRESH_REVIEW"]);
+export type ExecutionEligibility = z.infer<typeof ExecutionEligibilitySchema>;
+
+export const AssessmentV4EnvelopeSchema = z.object({
+  schemaVersion: z.literal("edgelab-assessment-v4"),
+  ruleVersion: z.literal("edgelab-evaluation-v4"),
+  forecastStatus: ForecastStatusSchema,
+  economicsStatus: EconomicsStatusSchema,
+  executionEligibility: ExecutionEligibilitySchema,
+  integrityStatus: z.object({
+    internallyReproducible: z.boolean(),
+    externallyTimeAnchored: z.boolean(),
+    completenessChecked: z.boolean()
+  }),
+  reasonCodes: z.array(z.string().min(1)),
+  nextAction: z.string().min(1),
+  assessmentId: z.string().min(1),
+  protocolHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  claimScope: z.enum(["HISTORICAL_SCREENING", "FORWARD_FORECAST", "EXECUTABLE_SCENARIO"])
+});
+export type AssessmentV4Envelope = z.infer<typeof AssessmentV4EnvelopeSchema>;
 
 export const ExecutionStateSchema = z.enum([
   "INTENT_DRAFT",

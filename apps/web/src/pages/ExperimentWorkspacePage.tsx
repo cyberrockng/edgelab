@@ -5,19 +5,65 @@ import {
   apiErrorMessage,
   compactId,
   evaluateExperiment,
+  evaluateExperimentV4,
   fetchExperimentExecution,
   fetchExperimentDetail,
   fetchLatestEvaluation,
+  fetchLatestV4Assessment,
   fetchLiveShadowState,
   fetchProvenExperiment,
   fetchReplayRun,
   minimumSample,
   observeLiveShadow,
-  runHistoricalReplay
+  runHistoricalReplay,
+  type ReliabilityBinRecord
 } from "../data.js";
 
 function validUuid(value: string | undefined): value is string {
   return value !== undefined && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function ReliabilityChart({
+  candidate,
+  market
+}: {
+  readonly candidate: readonly ReliabilityBinRecord[];
+  readonly market: readonly ReliabilityBinRecord[];
+}) {
+  const rows = [
+    ...candidate.map((bin) => ({ ...bin, series: "Candidate" })),
+    ...market.map((bin) => ({ ...bin, series: "Market" }))
+  ];
+  if (rows.length === 0) return <div className="stateBox">Reliability is unavailable until paired outcomes settle.</div>;
+  const point = (value: number) => 24 + value * 252;
+  return (
+    <section className="reliabilityPanel" aria-labelledby="reliability-heading">
+      <h3 id="reliability-heading">Reliability</h3>
+      <p>Both series use the same paired observations. Wilson intervals describe observed sample rates.</p>
+      <svg className="reliabilityChart" viewBox="0 0 300 300" role="img" aria-label="Predicted probability against observed UP frequency">
+        <line x1="24" y1="276" x2="276" y2="24" className="reliabilityReference" />
+        {rows.map((bin) => (
+          <g key={`${bin.series}-${String(bin.lower)}`}>
+            <line x1={point(bin.meanPrediction)} x2={point(bin.meanPrediction)} y1={276 - bin.wilson95[0] * 252} y2={276 - bin.wilson95[1] * 252} className={`reliabilityInterval ${bin.series.toLowerCase()}`} />
+            <circle cx={point(bin.meanPrediction)} cy={276 - bin.outcomeRate * 252} r="4" className={`reliabilityPoint ${bin.series.toLowerCase()}`} />
+          </g>
+        ))}
+        <text x="150" y="298" textAnchor="middle">Mean forecast</text>
+        <text x="8" y="150" textAnchor="middle" transform="rotate(-90 8 150)">Observed UP rate</text>
+      </svg>
+      <div className="tableScroll">
+        <table className="reliabilityTable">
+          <caption>Reliability-bin values and 95% Wilson intervals</caption>
+          <thead><tr><th>Series</th><th>Bin</th><th>Count</th><th>Mean forecast</th><th>Observed UP</th><th>95% interval</th></tr></thead>
+          <tbody>{rows.map((bin) => <tr key={`table-${bin.series}-${String(bin.lower)}`}>
+            <th scope="row">{bin.series}</th><td>{bin.lower.toFixed(1)}–{bin.upper.toFixed(1)}</td><td>{bin.count}</td>
+            <td>{(bin.meanPrediction * 100).toFixed(1)}%</td><td>{(bin.outcomeRate * 100).toFixed(1)}%</td>
+            <td>{(bin.wilson95[0] * 100).toFixed(1)}%–{(bin.wilson95[1] * 100).toFixed(1)}%</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 export default function ExperimentWorkspacePage() {
@@ -45,6 +91,11 @@ export default function ExperimentWorkspacePage() {
     queryKey: ["experiment", experimentId, "evaluation"],
     queryFn: () => fetchLatestEvaluation(experimentId ?? "")
   });
+  const v4AssessmentQuery = useQuery({
+    enabled: canLoad,
+    queryKey: ["experiment", experimentId, "v4-assessment"],
+    queryFn: () => fetchLatestV4Assessment(experimentId ?? "")
+  });
   const liveShadowQuery = useQuery({
     enabled: canLoad,
     queryKey: ["experiment", experimentId, "live-shadow"],
@@ -70,6 +121,12 @@ export default function ExperimentWorkspacePage() {
       await queryClient.invalidateQueries({ queryKey: ["experiment", experimentId, "evaluation"] });
     }
   });
+  const v4EvaluationMutation = useMutation({
+    mutationFn: () => evaluateExperimentV4(experimentId ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["experiment", experimentId, "v4-assessment"] });
+    }
+  });
   const liveShadowMutation = useMutation({
     mutationFn: () => observeLiveShadow(experimentId ?? ""),
     onSuccess: async () => {
@@ -84,9 +141,11 @@ export default function ExperimentWorkspacePage() {
   const liveObservation = liveShadowMutation.data?.data.observation ?? null;
   const assessment =
     evaluationMutation.data?.data.assessment ?? evaluationQuery.data?.data.assessment ?? null;
+  const v4Assessment = v4EvaluationMutation.data?.data.assessment ?? v4AssessmentQuery.data?.data.assessment ?? null;
   const replayReady = replay?.status === "COMPLETED" || replay?.status === "SUCCEEDED";
   const isHistoricalReplay = experiment?.configuration.mode === "HISTORICAL_REPLAY";
   const isLiveShadow = experiment?.configuration.mode === "LIVE_SHADOW";
+  const isV4 = experiment?.configuration.ruleVersion === "edgelab-evaluation-v4";
 
   if (isProvenExperiment) {
     const proven = provenQuery.data?.data.provenExperiment ?? null;
@@ -148,7 +207,7 @@ export default function ExperimentWorkspacePage() {
                   <span>02</span>
                   <strong>{proven.evidenceGate.decision.nextPermittedAction.replaceAll("_", " ")}</strong>
                   <p>Next phase must be collected forward before outcomes on Shannon live-shadow mode.</p>
-                  <Link className="textLink" to="/observation">
+                  <Link className="textLink" to="/evidence/archive/observe-001">
                     View OBSERVE-001 proof
                   </Link>
                 </div>
@@ -260,22 +319,22 @@ export default function ExperimentWorkspacePage() {
                 <Link className="primaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
                   Start Forward Observation
                 </Link>
-                <Link className="secondaryAction" to="/observation">
+                <Link className="secondaryAction" to="/evidence/archive/observe-001">
                   View Observation Proof
                 </Link>
-                <Link className="primaryAction" to="/evidence/proven-experiment">
+                <Link className="primaryAction" to="/lab/proven-experiment/evidence">
                   View Evidence Gate
                 </Link>
                 <a className="secondaryAction" href="/api/v2/proven-experiments/proven-experiment/report" target="_blank" rel="noreferrer">
                   Export Report
                 </a>
-                <Link className="secondaryAction" to="/compare">
+                <Link className="secondaryAction" to="/lab/compare">
                   Compare Evidence
                 </Link>
                 <Link className="secondaryAction" to="/markets">
                   Explore Markets
                 </Link>
-                <Link className="secondaryAction" to="/proof">
+                <Link className="secondaryAction" to="/evidence/archive/exg-003">
                   View Shannon Proof
                 </Link>
               </div>
@@ -411,18 +470,20 @@ export default function ExperimentWorkspacePage() {
                   </p>
                   <button
                     type="button"
-                    disabled={(!replayReady && !(isLiveShadow && (liveShadow?.decisionCount ?? 0) > 0)) || evaluationMutation.isPending}
+                    disabled={(!replayReady && !(isLiveShadow && (liveShadow?.decisionCount ?? 0) > 0)) || evaluationMutation.isPending || v4EvaluationMutation.isPending}
                     onClick={() => {
-                      evaluationMutation.mutate();
+                      if (isV4) v4EvaluationMutation.mutate();
+                      else evaluationMutation.mutate();
                     }}
                   >
-                    {evaluationMutation.isPending ? "Evaluating evidence..." : "Evaluate Evidence"}
+                    {evaluationMutation.isPending || v4EvaluationMutation.isPending ? "Evaluating evidence..." : isV4 ? "Evaluate paired evidence v4" : "Evaluate Evidence"}
                   </button>
                   {evaluationMutation.isError ? (
                     <p className="inlineError" role="alert">
                       {apiErrorMessage(evaluationMutation.error)}
                     </p>
                   ) : null}
+                  {v4EvaluationMutation.isError ? <p className="inlineError" role="alert">{apiErrorMessage(v4EvaluationMutation.error)}</p> : null}
                 </div>
               </div>
               <div className="flowStep">
@@ -430,15 +491,15 @@ export default function ExperimentWorkspacePage() {
                 <div>
                   <h3>Decision Gate</h3>
                   <p>The verdict is server-authored from persisted evidence, not computed by the browser.</p>
-                  {assessment !== null ? (
+                  {assessment !== null || v4Assessment !== null ? (
                     <div className="actionRow">
-                      <Link className="primaryAction" to={`/evidence/${encodeURIComponent(experiment.experimentId)}`}>
+                      <Link className="primaryAction" to={`/lab/${encodeURIComponent(experiment.experimentId)}/evidence`}>
                         View Evidence Gate
                       </Link>
-                      {assessment.verdict === "STRATEGY_QUALIFIED" ? (
+                      {assessment?.verdict === "STRATEGY_QUALIFIED" ? (
                         <Link
                           className="primaryAction"
-                          to={`/execution-candidate?experimentId=${encodeURIComponent(experiment.experimentId)}`}
+                          to={`/lab/${encodeURIComponent(experiment.experimentId)}/execution`}
                         >
                           Revalidate Execution Candidate
                         </Link>
@@ -622,7 +683,35 @@ export default function ExperimentWorkspacePage() {
                 <div className="stateBox">No replay has been run for this experiment yet.</div>
               )}
             </section>
-            <section className="resultPanel" aria-label="Evaluation result">
+            {isV4 ? <section className="resultPanel" aria-label="V4 paired evaluation result">
+              <div className="sectionHeader"><div><p className="eyebrow">Paired evaluation · v4</p><h2>{v4Assessment?.forecastStatus.replaceAll("_", " ") ?? "NOT EVALUATED"}</h2></div><span className="statusPill">Execution: {v4Assessment?.executionEligibility ?? "BLOCKED"}</span></div>
+              {v4AssessmentQuery.isLoading ? <div className="stateBox">Loading paired assessment…</div> : null}
+              {v4AssessmentQuery.isError ? <div className="stateBox errorState" role="alert">{apiErrorMessage(v4AssessmentQuery.error)}</div> : null}
+              {v4Assessment !== null ? <>
+                <p>{v4Assessment.forecastStatus === "FORWARD_CRITERIA_MET" ? "Forward forecast criteria met under the frozen rule. Testnet execution still requires separate economic and fresh-review gates." : "The frozen study has not met the formal forward criteria."}</p>
+                <p>Captured-book economics: <strong>{v4Assessment.economicsStatus.replaceAll("_", " ")}</strong>. Returns include scheduled no-trade windows and exclude unavailable sources; gas remains disclosed in native units.</p>
+                <dl className="factGrid">
+                  <div><dt>Candidate Brier</dt><dd>{v4Assessment.pairedMetrics.candidateBrier?.toFixed(4) ?? "Unavailable"}</dd></div>
+                  <div><dt>Market Brier</dt><dd>{v4Assessment.pairedMetrics.marketBrier?.toFixed(4) ?? "Unavailable"}</dd></div>
+                  <div><dt>Brier skill</dt><dd>{v4Assessment.pairedMetrics.brierSkill === null ? "Unavailable" : `${(v4Assessment.pairedMetrics.brierSkill * 100).toFixed(1)}%`}</dd></div>
+                  <div><dt>Paired interval</dt><dd>{v4Assessment.intervals.deltaBrier === null ? "Unavailable" : `${v4Assessment.intervals.deltaBrier.lower.toFixed(4)} to ${v4Assessment.intervals.deltaBrier.upper.toFixed(4)}`}</dd></div>
+                  <div><dt>Paired coverage</dt><dd>{(v4Assessment.coverage.paired * 100).toFixed(1)}%</dd></div>
+                  <div><dt>Paired observations</dt><dd>{v4Assessment.sampleCounts.paired}/{v4Assessment.sampleCounts.eligibleScheduled}</dd></div>
+                  <div><dt>Candidate ECE</dt><dd>{v4Assessment.pairedMetrics.candidateEce?.toFixed(4) ?? "Unavailable"}</dd></div>
+                  <div><dt>Market ECE</dt><dd>{v4Assessment.pairedMetrics.marketEce?.toFixed(4) ?? "Unavailable"}</dd></div>
+                  <div><dt>Scenario coverage</dt><dd>{v4Assessment.coverage.scenario === undefined ? "Unavailable" : `${(v4Assessment.coverage.scenario * 100).toFixed(1)}%`}</dd></div>
+                  <div><dt>Stress return interval</dt><dd>{v4Assessment.intervals.stressMeanPerWindowReturn == null ? "Unavailable" : `${(v4Assessment.intervals.stressMeanPerWindowReturn.lower * 100).toFixed(3)}% to ${(v4Assessment.intervals.stressMeanPerWindowReturn.upper * 100).toFixed(3)}%`}</dd></div>
+                  <div><dt>After best week removal</dt><dd>{v4Assessment.economicsMetrics?.meanAfterBestWeekRemoval == null ? "Unavailable" : `${(v4Assessment.economicsMetrics.meanAfterBestWeekRemoval * 100).toFixed(3)}%`}</dd></div>
+                  <div><dt>Scenario windows</dt><dd>{v4Assessment.economicsMetrics === undefined ? "Unavailable" : `${String(v4Assessment.economicsMetrics.tradeCount)} trades · ${String(v4Assessment.economicsMetrics.noTradeCount)} no-trades`}</dd></div>
+                  <div><dt>Rule version</dt><dd>{v4Assessment.ruleVersion}</dd></div>
+                </dl>
+                <ReliabilityChart
+                  candidate={v4Assessment.pairedMetrics.candidateReliability}
+                  market={v4Assessment.pairedMetrics.marketReliability}
+                />
+              </> : <div className="stateBox">Collect paired settled observations, then run the v4 evaluation.</div>}
+            </section> : null}
+            {!isV4 ? <section className="resultPanel" aria-label="Evaluation result">
               <div className="sectionHeader">
                 <div>
                   <p className="eyebrow">Evaluation</p>
@@ -688,7 +777,7 @@ export default function ExperimentWorkspacePage() {
                     >
                       Export Report
                     </a>
-                    <Link className="secondaryAction" to="/proof">
+                    <Link className="secondaryAction" to="/evidence/archive/exg-003">
                       Review Execution Proof Boundary
                     </Link>
                   </div>
@@ -696,7 +785,7 @@ export default function ExperimentWorkspacePage() {
               ) : (
                 <div className="stateBox">Run replay, then evaluate evidence to produce a verdict.</div>
               )}
-            </section>
+            </section> : null}
             {executionQuery.isError ? (
               <div className="stateBox errorState" role="alert">
                 {apiErrorMessage(executionQuery.error)}
@@ -709,10 +798,10 @@ export default function ExperimentWorkspacePage() {
           </>
         ) : null}
         <div className="actionRow">
-          <Link className="secondaryAction" to={`/evidence/${encodeURIComponent(experimentId ?? "proven-experiment")}`}>
+          <Link className="secondaryAction" to={`/lab/${encodeURIComponent(experimentId ?? "proven-experiment")}/evidence`}>
             Open Evidence Gate
           </Link>
-          <Link className="secondaryAction" to="/compare">
+          <Link className="secondaryAction" to="/lab/compare">
             Compare
           </Link>
           <Link className="secondaryAction" to="/lab">

@@ -9,6 +9,9 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_ADMIN_URL: postgres://edgelab:edgelab@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://edgelab:edgelab@localhost:5432/edgelab_test
     services:
       postgres:
         image: postgres:17-alpine
@@ -25,11 +28,15 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm secret:scan
       - run: pnpm check

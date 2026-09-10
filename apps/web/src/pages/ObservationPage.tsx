@@ -76,7 +76,7 @@ export default function ObservationPage() {
               <Link className="primaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">
                 Start New Observation
               </Link>
-              <Link className="secondaryAction" to="/evidence/proven-experiment">
+              <Link className="secondaryAction" to="/lab/proven-experiment/evidence">
                 Inspect Evidence Gate
               </Link>
               <a className="secondaryAction" href="/api/v2/observation-proof" target="_blank" rel="noreferrer">

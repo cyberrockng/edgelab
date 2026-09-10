@@ -23,18 +23,24 @@ function signedMetric(value: number | null | undefined): string {
   return value > 0 ? `+${value.toFixed(4)}` : value.toFixed(4);
 }
 
-function AssessmentRow({ item }: { readonly item: AssessmentSummaryRecord & { readonly displayOrder?: number } }) {
+type MatchedMetrics = NonNullable<ComparisonRecord["scope"]>["matchedMetricsByAssessment"][string];
+
+function AssessmentRow({ item, excluded, matched }: { readonly item: AssessmentSummaryRecord & { readonly displayOrder?: number }; readonly excluded: number | undefined; readonly matched: MatchedMetrics | undefined }) {
   return (
     <div role="row">
       <span role="cell" data-label="Experiment">{item.experimentName}</span>
       <span role="cell" data-label="Verdict" className="mutedCell">{item.verdict.replaceAll("_", " ")}</span>
-      <span role="cell" data-label="Observations">{item.sampleSize}</span>
-      <span role="cell" data-label="Calibration">{metric(item.calibrationBias)}</span>
-      <span role="cell" data-label="Brier">{metric(item.brierScore)}</span>
+      <span role="cell" data-label="Observations">{matched?.pairedSampleSize ?? item.sampleSize}</span>
+      <span role="cell" data-label="Candidate ECE">{metric(matched === undefined ? item.calibrationBias : matched.candidateEce)}</span>
+      <span role="cell" data-label="Candidate Brier">{metric(matched === undefined ? item.brierScore : matched.candidateBrier)}</span>
+      <span role="cell" data-label="Market Brier">{metric(matched?.marketBrier ?? null)}</span>
+      <span role="cell" data-label="Brier skill">{matched?.brierSkill === null || matched?.brierSkill === undefined ? "NOT AVAILABLE" : `${(matched.brierSkill * 100).toFixed(1)}%`}</span>
+      <span role="cell" data-label="Paired interval">{matched?.deltaInterval === null || matched?.deltaInterval === undefined ? "NOT AVAILABLE" : `${matched.deltaInterval.lower.toFixed(4)} to ${matched.deltaInterval.upper.toFixed(4)}`}</span>
       <span role="cell" data-label="Evidence plane">{item.evidencePlane}</span>
       <span role="cell" data-label="Linked execution">{item.tradeabilityStatus}</span>
       <span role="cell" data-label="PnL">{item.pnlStatus}</span>
       <span role="cell" data-label="Scope">{item.promotionScope}</span>
+      <span role="cell" data-label="Intersection exclusions">{excluded ?? "N/A"}</span>
     </div>
   );
 }
@@ -69,7 +75,7 @@ export default function ComparePage() {
     onSuccess: async (response) => {
       const id = response.data.comparison?.comparisonId;
       if (id !== undefined) {
-        await navigate(`/compare/${id}`);
+        await navigate(`/lab/compare/${id}`);
       }
     }
   });
@@ -112,7 +118,7 @@ export default function ComparePage() {
         {comparisonsQuery.data?.data.comparisons.length ? (
           <div className="selectionList" aria-label="Saved comparison list">
             {comparisonsQuery.data.data.comparisons.map((comparison) => (
-              <Link className="checkRow savedComparisonRow" to={`/compare/${comparison.comparisonId}`} key={comparison.comparisonId}>
+              <Link className="checkRow savedComparisonRow" to={`/lab/compare/${comparison.comparisonId}`} key={comparison.comparisonId}>
                 <span>{comparison.name}</span>
                 <span className="statusPill">{comparison.itemCount} assessments</span>
               </Link>
@@ -174,27 +180,45 @@ export default function ComparePage() {
             <p className="eyebrow">Immutable Comparison</p>
             <h2>{savedComparison?.name ?? "Latest selected evidence"}</h2>
           </div>
-          <span className="statusPill">{comparisonDetailQuery.isFetching ? "Reloading" : "No composite score"}</span>
+          <span className="statusPill">{comparisonDetailQuery.isFetching ? "Reloading" : savedComparison?.scope?.mode === "MATCHED_INTERSECTION" ? "Matched intersection" : "Descriptive only"}</span>
         </div>
         {comparisonDetailQuery.isError ? (
           <div className="stateBox errorState" role="alert">
             {apiErrorMessage(comparisonDetailQuery.error)}
           </div>
         ) : null}
+        {savedComparison?.scope !== null && savedComparison?.scope !== undefined ? (
+          <div className="stateBox">
+            <strong>{savedComparison.scope.reason}</strong>{" "}
+            {savedComparison.scope.mode === "MATCHED_INTERSECTION"
+              ? `${String(savedComparison.scope.intersectionSize)} shared observation keys are frozen in manifest ${savedComparison.scope.manifestHash.slice(0, 12)}…`
+              : `Scope manifest ${savedComparison.scope.manifestHash.slice(0, 12)}… prevents a matched ranking claim.`}
+          </div>
+        ) : null}
+        {savedComparison !== null ? <div className="actionRow"><a className="secondaryAction" href={`/api/v2/comparisons/${encodeURIComponent(savedComparison.comparisonId)}/report`}>Export comparison JSON</a></div> : null}
         <div className="policyMatrix" role="table" aria-label="Policy evidence comparison">
           <div role="row">
             <span role="columnheader">Experiment</span>
             <span role="columnheader">Verdict</span>
             <span role="columnheader">Observations</span>
-            <span role="columnheader">Calibration</span>
-            <span role="columnheader">Brier</span>
+            <span role="columnheader">Candidate ECE</span>
+            <span role="columnheader">Candidate Brier</span>
+            <span role="columnheader">Market Brier</span>
+            <span role="columnheader">Brier skill</span>
+            <span role="columnheader">Paired interval</span>
             <span role="columnheader">Evidence plane</span>
             <span role="columnheader">Linked execution</span>
             <span role="columnheader">PnL</span>
             <span role="columnheader">Scope</span>
+            <span role="columnheader">Intersection exclusions</span>
           </div>
           {(savedComparison?.items ?? assessments.filter((item) => selectedSet.has(item.assessmentId))).map((item) => (
-            <AssessmentRow item={item} key={item.assessmentId} />
+            <AssessmentRow
+              item={item}
+              excluded={savedComparison?.scope?.exclusionsByAssessment[item.assessmentId]}
+              matched={savedComparison?.scope?.matchedMetricsByAssessment[item.assessmentId]}
+              key={item.assessmentId}
+            />
           ))}
         </div>
       </section>
@@ -276,7 +300,7 @@ export default function ComparePage() {
             <Link className="primaryAction" to="/lab/proven-experiment">
               Inspect Proven Experiment
             </Link>
-            <Link className="secondaryAction" to="/evidence/proven-experiment">
+            <Link className="secondaryAction" to="/lab/proven-experiment/evidence">
               Open Evidence Gate
             </Link>
             <Link className="secondaryAction" to="/lab?mode=live-shadow&asset=BTC&interval=900&name=BTC%20forward%20observation">

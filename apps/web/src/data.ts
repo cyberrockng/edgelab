@@ -139,7 +139,7 @@ export interface ExecutionCandidateResponse {
       readonly configurationId: string;
       readonly assessmentId: string;
       readonly assessmentHash: string;
-      readonly qualificationVerdict: "STRATEGY_QUALIFIED";
+      readonly qualificationVerdict: "STRATEGY_QUALIFIED" | "FORWARD_CRITERIA_MET";
       readonly qualificationRuleVersion: string;
       readonly eligibleForwardObservationCount: number;
       readonly qualifiedAt: string;
@@ -186,10 +186,35 @@ export interface ExecutionCandidateResponse {
       readonly priceRaw: string | null;
       readonly availableQuantityRaw: string | null;
       readonly quantityRaw: string;
+      readonly requestedQuantityRaw: string;
+      readonly unfilledQuantityRaw: string;
       readonly minQuantityRaw: string;
       readonly lotSizeRaw: string;
       readonly tickSizeRaw: string;
       readonly expireTimestampNs: string;
+    };
+    readonly quotePlan: {
+      readonly requestedQuantityRaw: string;
+      readonly fillableQuantityRaw: string;
+      readonly unfilledQuantityRaw: string;
+      readonly averagePriceRaw: string | null;
+      readonly worstPriceRaw: string | null;
+      readonly totalCollateralRaw: string;
+      readonly conservativeExpectedNetRaw: string;
+      readonly conservativeExpectedNetAtPriceCapRaw: string;
+      readonly reviewedPriceCapRaw: string;
+      readonly levelsConsumed: readonly { readonly priceRaw: string; readonly quantityRaw: string }[];
+      readonly passesConservativeEdge: boolean;
+      readonly reasonCodes: readonly string[];
+    };
+    readonly quotePolicy: {
+      readonly modelHaircutPpm: 50000;
+      readonly slippageReservePpm: 10000;
+      readonly minimumEdgePpm: 10000;
+      readonly estimatedFeesRaw: string;
+      readonly gasTreatment: "EXCLUDED_NATIVE_UNIT_DISCLOSURE";
+      readonly policyHash: string;
+      readonly reviewExpiresAt: string;
     };
     readonly unsignedTransactions: {
       readonly order: {
@@ -624,7 +649,7 @@ export interface ReplayResponse {
 export interface EvaluationAssessmentRecord {
   readonly assessmentId: string;
   readonly metricRunId: string;
-  readonly verdict: "PROMOTE_TO_FORWARD_OBSERVATION" | "STRATEGY_QUALIFIED" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE";
+  readonly verdict: "PROMOTE_TO_FORWARD_OBSERVATION" | "STRATEGY_QUALIFIED" | "HOLD" | "REJECT" | "INSUFFICIENT_EVIDENCE" | "INSUFFICIENT" | "HISTORICAL_SCREEN_PASSED" | "FORWARD_CRITERIA_MET" | "NO_DEMONSTRATED_IMPROVEMENT" | "UNDERPERFORMS_MARKET";
   readonly reasonCodes: readonly string[];
   readonly sampleSize: number;
   readonly exclusionCount: number;
@@ -642,6 +667,62 @@ export interface EvaluationAssessmentRecord {
 export interface EvaluationResponse {
   readonly assessment: EvaluationAssessmentRecord | null;
   readonly csrfToken?: string;
+}
+
+export interface V4AssessmentRecord {
+  readonly assessmentId: string;
+  readonly protocolId: string;
+  readonly ruleVersion: "edgelab-evaluation-v4";
+  readonly forecastStatus: string;
+  readonly economicsStatus: string;
+  readonly executionEligibility: "BLOCKED" | "ELIGIBLE_FOR_FRESH_REVIEW";
+  readonly pairedMetrics: {
+    readonly pairedSampleSize: number;
+    readonly candidateBrier: number | null;
+    readonly marketBrier: number | null;
+    readonly deltaBrier: number | null;
+    readonly brierSkill: number | null;
+    readonly candidateEce: number | null;
+    readonly marketEce: number | null;
+    readonly excessEce: number | null;
+    readonly missingBaselineCount: number;
+    readonly candidateReliability: readonly ReliabilityBinRecord[];
+    readonly marketReliability: readonly ReliabilityBinRecord[];
+  };
+  readonly intervals: {
+    readonly deltaBrier: { readonly lower: number; readonly upper: number; readonly distinctDayBlocks: number } | null;
+    readonly stressMeanPerWindowReturn?: { readonly lower: number; readonly upper: number; readonly distinctDayBlocks: number } | null;
+  };
+  readonly sampleCounts: { readonly paired: number; readonly eligibleScheduled: number };
+  readonly coverage: { readonly paired: number; readonly scenario?: number };
+  readonly economicsMetrics?: {
+    readonly status: string;
+    readonly reasonCodes: readonly string[];
+    readonly sampleSize: number;
+    readonly tradeCount: number;
+    readonly noTradeCount: number;
+    readonly primaryMeanPerWindowReturn: number | null;
+    readonly stressMeanPerWindowReturn: number | null;
+    readonly coveredWeekCount: number;
+    readonly meanAfterBestWeekRemoval: number | null;
+    readonly gasTreatment: string;
+    readonly allCostValidation: false;
+  };
+  readonly integrityStatus: { readonly internallyReproducible: boolean; readonly externallyTimeAnchored: boolean; readonly completenessChecked: boolean };
+  readonly sourceDigest: string;
+  readonly algorithm?: string;
+  readonly seed?: string;
+  readonly reasonCodes?: readonly string[];
+  readonly createdAt: string;
+}
+
+export interface ReliabilityBinRecord {
+  readonly lower: number;
+  readonly upper: number;
+  readonly count: number;
+  readonly meanPrediction: number;
+  readonly outcomeRate: number;
+  readonly wilson95: readonly [number, number];
 }
 
 export interface EvidenceGateRow {
@@ -767,6 +848,32 @@ export interface ProvenExperimentResponse {
   readonly provenExperiment: ProvenExperimentRecord;
 }
 
+export interface PublicOverviewResponse {
+  readonly schemaVersion: "edgelab-public-overview-v1";
+  readonly example: {
+    readonly slug: "proven-experiment";
+    readonly title: string;
+    readonly asset: string;
+    readonly intervalSeconds: number;
+    readonly evidencePlane: "MAINNET_HISTORICAL";
+    readonly assessedAt: string;
+    readonly sampleSize: number;
+    readonly processedCount: number;
+    readonly exclusionCount: number;
+    readonly verdict: EvaluationAssessmentRecord["verdict"];
+    readonly brierScore: number | null;
+    readonly marketComparisonAvailable: false;
+    readonly selectionDisclosure: string;
+  };
+  readonly currentCampaign: null | {
+    readonly label: string;
+    readonly lastCaptureAt: string | null;
+    readonly settledCount: number;
+    readonly targetCount: number;
+    readonly serviceState: string;
+  };
+}
+
 export interface LiveShadowState {
   readonly episodeCount: number;
   readonly snapshotCount: number;
@@ -824,6 +931,23 @@ export interface ComparisonRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly items: readonly (AssessmentSummaryRecord & { readonly displayOrder: number })[];
+  readonly scope: {
+    readonly mode: "MATCHED_INTERSECTION" | "DESCRIPTIVE_ONLY";
+    readonly manifestHash: string;
+    readonly reason: string;
+    readonly intersectionSize: number;
+    readonly assessmentIds: readonly string[];
+    readonly exclusionsByAssessment: Readonly<Record<string, number>>;
+    readonly matchedMetricsByAssessment: Readonly<Record<string, {
+      readonly pairedSampleSize: number;
+      readonly candidateBrier: number | null;
+      readonly marketBrier: number | null;
+      readonly brierSkill: number | null;
+      readonly candidateEce: number | null;
+      readonly marketEce: number | null;
+      readonly deltaInterval: { readonly lower: number; readonly upper: number; readonly distinctDayBlocks: number; readonly familySize: number } | null;
+    }>>;
+  } | null;
 }
 
 export interface ComparisonSummaryRecord {
@@ -856,6 +980,16 @@ export interface ExperimentCreateInput {
   readonly windowTo?: string;
   readonly decisionOffsetSec?: number;
   readonly riskEnvelopeId: "WATCH_ONLY_BOUNDED";
+}
+
+export interface PolicyCatalogResponse {
+  readonly policies: readonly {
+    readonly policyId: string;
+    readonly version: string;
+    readonly label: string;
+    readonly description: string;
+    readonly supportedPlanes: readonly ("MAINNET_HISTORICAL" | "SHANNON_FORWARD")[];
+  }[];
 }
 
 const csrfStorageKey = "edgelab.research.csrf";
@@ -934,6 +1068,10 @@ export async function listExperiments(): Promise<V2Envelope<ExperimentsResponse>
   return response;
 }
 
+export async function fetchPolicyCatalog(): Promise<V2Envelope<PolicyCatalogResponse>> {
+  return await fetchV2Request<PolicyCatalogResponse>("/api/v2/policies");
+}
+
 export async function fetchExperimentDetail(experimentId: string): Promise<V2Envelope<ExperimentDetailResponse>> {
   const response = await fetchV2Request<ExperimentDetailResponse>(`/api/v2/experiments/${experimentId}`);
   if (response.data.csrfToken !== undefined) {
@@ -976,6 +1114,20 @@ export async function fetchLatestEvaluation(experimentId: string): Promise<V2Env
   return response;
 }
 
+export async function fetchLatestV4Assessment(experimentId: string): Promise<V2Envelope<{ readonly assessment: V4AssessmentRecord | null; readonly csrfToken?: string }>> {
+  const response = await fetchV2Request<{ readonly assessment: V4AssessmentRecord | null; readonly csrfToken?: string }>(`/api/v2/experiments/${experimentId}/v4-assessment/latest`);
+  if (response.data.csrfToken !== undefined) storeCsrfToken(response.data.csrfToken);
+  return response;
+}
+
+export async function evaluateExperimentV4(experimentId: string): Promise<V2Envelope<{ readonly assessment: V4AssessmentRecord }>> {
+  let csrfToken = getStoredCsrfToken();
+  if (csrfToken === null) csrfToken = (await ensureResearchSession()).data.csrfToken;
+  return await fetchV2Request<{ readonly assessment: V4AssessmentRecord }>(`/api/v2/experiments/${experimentId}/evaluate-v4`, {
+    method: "POST", headers: { "x-csrf-token": csrfToken, "idempotency-key": `evaluate-v4-${globalThis.crypto.randomUUID()}` }
+  });
+}
+
 export async function fetchEvidenceGate(experimentId: string): Promise<V2Envelope<EvidenceGateResponse>> {
   const response = await fetchV2Request<EvidenceGateResponse>(`/api/v2/experiments/${experimentId}/evidence`);
   if (response.data.csrfToken !== undefined) {
@@ -986,6 +1138,10 @@ export async function fetchEvidenceGate(experimentId: string): Promise<V2Envelop
 
 export async function fetchProvenExperiments(): Promise<V2Envelope<ProvenExperimentsResponse>> {
   return await fetchV2Request<ProvenExperimentsResponse>("/api/v2/proven-experiments");
+}
+
+export async function fetchPublicOverview(): Promise<V2Envelope<PublicOverviewResponse>> {
+  return await fetchV2Request<PublicOverviewResponse>("/api/v2/public/overview");
 }
 
 export async function fetchProvenExperiment(slug = "proven-experiment"): Promise<V2Envelope<ProvenExperimentResponse>> {
@@ -1095,6 +1251,7 @@ export async function revalidateExecutionOrder(
     readonly validatedAt: string;
     readonly observedBlockNumber: string;
     readonly exactOrderCallUnchanged: true;
+    readonly authorizationExpiresAt: string;
   };
 }>> {
   let csrfToken = getStoredCsrfToken();

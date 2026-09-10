@@ -126,6 +126,26 @@ async function seedExperiment(): Promise<string> {
   return experiment.rows[0]?.id ?? "";
 }
 
+async function seedV4Experiment(): Promise<string> {
+  const experimentId = await seedExperiment();
+  const base = await pool.query<{ policy_a_id: string }>("SELECT policy_a_id FROM experiments WHERE id=$1", [experimentId]);
+  const configuration = await pool.query<{ id: string }>(
+    `INSERT INTO experiment_configuration_versions(experiment_id, version, mode, assets, intervals, window_from, window_to, decision_offset_sec, rule_version, config, config_hash)
+     VALUES ($1,2,'LIVE_SHADOW',ARRAY['BTC'],ARRAY[900],'2026-08-24T15:00:00Z','2026-08-24T17:00:00Z',60,'edgelab-evaluation-v4','{}'::jsonb,$2) RETURNING id`,
+    [experimentId, "8".repeat(64)]
+  );
+  const configurationId = configuration.rows[0]?.id ?? "";
+  await pool.query("UPDATE experiments SET active_configuration_id=$1 WHERE id=$2", [configurationId, experimentId]);
+  await pool.query("INSERT INTO experiment_policy_versions(experiment_id,configuration_id,policy_version_id,role) VALUES ($1,$2,$3,'CANDIDATE')", [experimentId, configurationId, base.rows[0]?.policy_a_id]);
+  const protocol = await pool.query<{ id: string }>(
+    `INSERT INTO observation_protocols(experiment_id,configuration_id,family,rule_version,window_from,window_to,manifest,manifest_hash)
+     VALUES ($1,$2,'BTC:900:60','edgelab-evaluation-v4','2026-08-24T15:00:00Z','2026-08-24T17:00:00Z','{}'::jsonb,$3) RETURNING id`,
+    [experimentId, configurationId, "9".repeat(64)]
+  );
+  await pool.query("INSERT INTO campaign_runs(experiment_id,configuration_id,protocol_id,lifecycle) VALUES ($1,$2,$3,'COLLECTING')", [experimentId, configurationId, protocol.rows[0]?.id]);
+  return experimentId;
+}
+
 async function counts(): Promise<{ episodes: number; snapshots: number; decisions: number }> {
   const result = await pool.query<{ episodes: string; snapshots: string; decisions: string }>(
     `
@@ -255,5 +275,34 @@ describe("OBSERVE-001 live-shadow observation pipeline", () => {
       reasonCode: "DECISION_WINDOW_NOT_OPEN"
     });
     await expect(counts()).resolves.toEqual({ episodes: 1, snapshots: 0, decisions: 0 });
+  });
+
+  it("captures v4 only in the five-second lead window and persists the paired midpoint", async () => {
+    await resetPublicSchema();
+    await runMigrations(pool);
+    const experimentId = await seedV4Experiment();
+    const early = await observe(experimentId, market("1787587200"), randomUUID(), new Date("2026-08-24T15:58:54.000Z"));
+    expect(early.observed[0]?.reasonCode).toBe("DECISION_WINDOW_NOT_OPEN");
+    const captured = await observe(experimentId, market("1787587200"), randomUUID(), new Date("2026-08-24T15:58:57.000Z"));
+    expect(captured.observed[0]).toMatchObject({ skipped: false, insertedDecisionCount: 1 });
+    const paired = await pool.query<{ baseline_probability: number; baseline_bid_raw: string; baseline_ask_raw: string; captured_at: Date; decision_deadline: Date; candidate_received_at: Date }>("SELECT baseline_probability,baseline_bid_raw,baseline_ask_raw,captured_at,decision_deadline,candidate_received_at FROM paired_forecast_records");
+    expect(paired.rows[0]?.baseline_probability).toBeCloseTo(.0015, 12);
+    expect(paired.rows[0]?.baseline_bid_raw).toBe("1000");
+    expect(paired.rows[0]?.baseline_ask_raw).toBe("2000");
+    expect(paired.rows[0]?.captured_at.toISOString()).toBe("2026-08-24T15:58:57.000Z");
+    expect(paired.rows[0]?.decision_deadline.toISOString()).toBe("2026-08-24T15:59:00.000Z");
+    const pairedRow = paired.rows[0];
+    expect(pairedRow).toBeDefined();
+    if (pairedRow === undefined) throw new Error("paired record missing");
+    expect(pairedRow.candidate_received_at < pairedRow.decision_deadline).toBe(true);
+    const scenario = await pool.query<{ classification: string; scenario_action: string; raw_levels: unknown[]; fixed_bankroll_raw: string; per_window_budget_raw: string }>(
+      "SELECT classification,scenario_action,raw_levels,fixed_bankroll_raw,per_window_budget_raw FROM economic_scenario_records"
+    );
+    expect(scenario.rows[0]).toMatchObject({
+      classification: "SIMULATED_FROM_CAPTURED_BOOK",
+      fixed_bankroll_raw: "100000000",
+      per_window_budget_raw: "1000000"
+    });
+    expect(scenario.rows[0]?.raw_levels.length).toBeGreaterThan(0);
   });
 });

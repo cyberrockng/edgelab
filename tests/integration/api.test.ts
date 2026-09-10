@@ -794,7 +794,9 @@ function decisionWindowLiveClient(): DreamDexSdkClient {
     finalized: false,
     winningOutcome: null,
     tradingStart: String(nowSeconds - 3_570),
-    expiry: String(nowSeconds + 30),
+    // v4 captures during [deadline - 5s, deadline), where the deadline is
+    // expiry - 60s. Leave roughly two seconds before that deadline.
+    expiry: String(nowSeconds + 62),
     intervalSec: "3600",
     interval: "1h"
   };
@@ -806,7 +808,12 @@ function decisionWindowLiveClient(): DreamDexSdkClient {
       return Promise.resolve({ tickSize: 1000n, lotSize: 1000n, minQuantity: 1000n });
     },
     getLiveBinaryOrderBookByMarket() {
-      return { yesBids: [{ price: 1000n, quantity: 2000n }], yesAsks: [], noBids: [], noAsks: [] };
+      return {
+        yesBids: [{ price: 400000n, quantity: 2000n }],
+        yesAsks: [{ price: 600000n, quantity: 2000n }],
+        noBids: [],
+        noAsks: []
+      };
     },
     getBinaryMarket() {
       return Promise.resolve(current);
@@ -880,9 +887,9 @@ function noAskExecutionReadyLiveClient(): DreamDexSdkClient {
 
 function capTooLowExecutionClient(): DreamDexSdkClient {
   return {
-    ...executionReadyLiveClient(),
+    ...noAskExecutionReadyLiveClient(),
     getBinaryBookParams() {
-      return Promise.resolve({ tickSize: 1000n, lotSize: 1000n, minQuantity: 20_000n });
+      return Promise.resolve({ tickSize: 1000n, lotSize: 1000n, minQuantity: 30_000n });
     }
   };
 }
@@ -1023,6 +1030,27 @@ async function createQualifiedForwardStrategy(
     }
   });
   const experiment = V2ExperimentSchema.parse(created.json()).data.experiment;
+  // This helper exercises the archived v3 execution gate. New public forward
+  // studies register as v4, so pin this fixture to the legacy rule explicitly.
+  const legacyHash = crypto.randomUUID().replaceAll("-", "").repeat(2);
+  const legacyConfig = await pool.query<{ id: string }>(
+    `INSERT INTO experiment_configuration_versions(
+       experiment_id,version,mode,assets,intervals,window_from,window_to,decision_offset_sec,
+       risk_envelope_id,rule_version,config,config_hash)
+     SELECT experiment_id,version+1,mode,assets,intervals,window_from,window_to,decision_offset_sec,
+       risk_envelope_id,'interactive-2.0.1-deep-audit',config,$2
+     FROM experiment_configuration_versions
+     WHERE id=(SELECT active_configuration_id FROM experiments WHERE id=$1)
+     RETURNING id`,
+    [experiment.experimentId, legacyHash]
+  );
+  await pool.query(
+    `INSERT INTO experiment_policy_versions(experiment_id,configuration_id,policy_version_id,role)
+     SELECT experiment_id,$2,policy_version_id,role FROM experiment_policy_versions
+     WHERE configuration_id=(SELECT active_configuration_id FROM experiments WHERE id=$1)`,
+    [experiment.experimentId, legacyConfig.rows[0]?.id]
+  );
+  await pool.query("UPDATE experiments SET active_configuration_id=$2 WHERE id=$1", [experiment.experimentId, legacyConfig.rows[0]?.id]);
   const policyVersionId = experiment.policies[0]?.policyVersionId;
   if (policyVersionId === undefined) {
     throw new Error("Forward strategy policy version was not recorded");
@@ -1541,7 +1569,7 @@ describe("API-001 server contracts", () => {
     const app = buildApp(config, {
       ...v2Deps(),
       pool,
-      dreamDexClient: executionReadyLiveClient(),
+      dreamDexClient: noAskExecutionReadyLiveClient(),
       executionReadinessReader: () => Promise.resolve(executionReadiness)
     });
     const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
@@ -1587,7 +1615,7 @@ describe("API-001 server contracts", () => {
     const app = buildApp(config, {
       ...v2Deps(),
       pool,
-      dreamDexClient: executionReadyLiveClient(),
+      dreamDexClient: noAskExecutionReadyLiveClient(),
       executionReadinessReader: () => Promise.resolve(executionReadiness)
     });
     const strategy = await createQualifiedForwardStrategy(app);
@@ -1680,7 +1708,7 @@ describe("API-001 server contracts", () => {
     const app = buildApp(config, {
       ...v2Deps(),
       pool,
-      dreamDexClient: executionReadyLiveClient(),
+      dreamDexClient: noAskExecutionReadyLiveClient(),
       executionReadinessReader: () => Promise.resolve(executionReadiness)
     });
     const strategy = await createQualifiedForwardStrategy(app);
@@ -1702,12 +1730,12 @@ describe("API-001 server contracts", () => {
     expect(body.data.executionCandidate.blockedReasons).toEqual([]);
     expect(body.data.executionCandidate.risk.serverSigner).toBe(false);
     expect(body.data.executionCandidate.risk.mainnetWrite).toBe(false);
-    expect(body.data.executionCandidate.risk.minimumPoolEscrowRaw).toBe("600");
+    expect(body.data.executionCandidate.risk.minimumPoolEscrowRaw).toBe("400");
     expect(body.data.executionCandidate.risk.capAdequateForPoolMinimum).toBe(true);
     expect(body.data.executionCandidate.sizing).toMatchObject({
-      side: "BUY_YES",
+      side: "BUY_NO",
       priceRaw: "600000",
-      quantityRaw: "16000"
+      quantityRaw: "25000"
     });
     expect(body.data.executionCandidate.unsignedTransactions?.order).toMatchObject({
       to: binaryMarket.poolAddress,
@@ -1829,13 +1857,13 @@ describe("API-001 server contracts", () => {
       }),
       data: encodeAbiParameters(
         [{ type: "uint8" }, { type: "uint256" }, { type: "uint256" }],
-        [0, 16000n, 15900n]
+        [1, 25000n, 24900n]
       ),
       logIndex: "0x0"
     };
     const placedLog = {
       data:
-        ["0x", "00000000000000000000000000000000", "0000000000000000000000000000007b", "00000000000000000000000000000000", "00000000000000000000000000000001", "00000000000000000000000077777777", "77777777777777777777777777777777", "00000000000000000000000000000000", "00000000000000000000000000000000", "00000000000000000000000000000000", "000000000000000000000000000927c0", "00000000000000000000000000000000", "00000000000000000000000000003e80", "00000000000000000000000000000000", "00000000000000000000000000003e80", "00000000000000000000000000000000", "000000000000000038eecfcf56a60000"].join(""),
+        ["0x", "00000000000000000000000000000000", "0000000000000000000000000000007b", "00000000000000000000000000000000", "00000000000000000000000000000001", "00000000000000000000000077777777", "77777777777777777777777777777777", "00000000000000000000000000000000", "00000000000000000000000000000000", "00000000000000000000000000000000", "000000000000000000000000000927c0", "00000000000000000000000000000000", "000000000000000000000000000061a8", "00000000000000000000000000000000", "000000000000000000000000000061a8", "00000000000000000000000000000000", "000000000000000038eecfcf56a60000"].join(""),
       topics: [
         ["0x", "d90f62f61ee2f606b132cfdfd883ddd0", "79228b6fd6bffd9d7cf848daf824639d"].join(""),
         ["0x", "00000000000000000000000000000000", "0000000000000000000000000000007b"].join("")
@@ -1853,15 +1881,15 @@ describe("API-001 server contracts", () => {
       ...v2Deps(),
       pool,
       dreamDexClient: {
-        ...executionReadyLiveClient(),
+        ...noAskExecutionReadyLiveClient(),
         getRouterActions() {
           return Promise.resolve(redemptionAvailable ? [{
             id: "101_0",
             kind: "Redeem" as const,
             account,
             market: binaryMarket.marketId,
-            amount: "16000",
-            payout: "15900",
+            amount: "25000",
+            payout: "24900",
             routedVia: null,
             timestamp: String(Math.ceil(Date.now() / 1000) + 5),
             txHash: redemptionTxHash
@@ -1871,18 +1899,37 @@ describe("API-001 server contracts", () => {
       executionReadinessReader: () => Promise.resolve(executionReadiness)
     });
     const strategy = await createQualifiedForwardStrategy(app);
+    const candidateIdempotencyKey = `candidate-revalidate-${crypto.randomUUID()}`;
     const revalidated = await app.inject({
       method: "POST",
       url: "/api/v2/shannon/execution-candidates/revalidate",
       headers: {
         cookie: strategy.cookie,
         "x-csrf-token": strategy.csrfToken,
-        "idempotency-key": `candidate-revalidate-${crypto.randomUUID()}`
+        "idempotency-key": candidateIdempotencyKey
       },
       payload: { experimentId: strategy.experimentId, account, asset: "BTC", intervalSec: 3600 }
     });
     expect(revalidated.statusCode).toBe(201);
     const candidate = V2ExecutionCandidateSchema.parse(revalidated.json()).data.executionCandidate;
+    const storedQuote = await pool.query<{ requested_quantity_raw: string; fillable_quantity_raw: string; raw_levels: unknown[]; conservative_net_raw: string; review_expires_at: Date }>(
+      `SELECT requested_quantity_raw,fillable_quantity_raw,raw_levels,conservative_net_raw,review_expires_at
+         FROM execution_quote_details eqd JOIN execution_intents ei ON ei.id=eqd.execution_intent_id
+        WHERE ei.intent_hash=$1`,
+      [candidate.intentHash]
+    );
+    expect(storedQuote.rows[0]).toMatchObject({ requested_quantity_raw: "1000000", fillable_quantity_raw: "25000" });
+    expect(storedQuote.rows[0]?.raw_levels).toEqual([{ priceRaw: "600000", quantityRaw: "50000" }]);
+    const retriedCandidate = await app.inject({
+      method: "POST",
+      url: "/api/v2/shannon/execution-candidates/revalidate",
+      headers: { cookie: strategy.cookie, "x-csrf-token": strategy.csrfToken, "idempotency-key": candidateIdempotencyKey },
+      payload: { experimentId: strategy.experimentId, account, asset: "BTC", intervalSec: 3600 }
+    });
+    expect(retriedCandidate.statusCode).toBe(200);
+    expect(retriedCandidate.json()).toMatchObject({ data: { executionCandidate: { intentHash: candidate.intentHash } }, meta: { idempotentReplay: true } });
+    const intentCount = await pool.query<{ count: string }>("SELECT count(*)::text AS count FROM execution_intents WHERE intent_hash=$1", [candidate.intentHash]);
+    expect(intentCount.rows[0]?.count).toBe("1");
     const rpcFetch = vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
       const rawBody = typeof init?.body === "string" ? init.body : "{}";
       const body = JSON.parse(rawBody) as { readonly method: string; readonly params: readonly string[] };
@@ -1955,6 +2002,31 @@ describe("API-001 server contracts", () => {
       },
       payload: {}
     });
+    await pool.query(
+      `UPDATE execution_quote_details SET review_expires_at=now()-interval '1 second'
+        WHERE execution_intent_id=$1`,
+      [pendingApproval.intentId]
+    );
+    const expiredQuoteResponse = await app.inject({
+      method: "POST",
+      url: "/api/v2/shannon/execution-receipts",
+      headers: {
+        cookie: strategy.cookie,
+        "x-csrf-token": strategy.csrfToken,
+        "idempotency-key": "strategy-expired-quote-import-test"
+      },
+      payload: { intentHash: candidate.intentHash, txHash, txRole: "order" }
+    });
+    const renewedOrderRevalidationResponse = await app.inject({
+      method: "POST",
+      url: `/api/v2/execution-intents/${pendingApproval.intentId}/revalidate-order`,
+      headers: {
+        cookie: strategy.cookie,
+        "x-csrf-token": strategy.csrfToken,
+        "idempotency-key": "strategy-order-signing-revalidation-renew-test"
+      },
+      payload: {}
+    });
     const response = await app.inject({
       method: "POST",
       url: "/api/v2/shannon/execution-receipts",
@@ -1987,7 +2059,7 @@ describe("API-001 server contracts", () => {
           tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
           evidence_source, observed_at, payload
         )
-        VALUES ($1, '123', 'ORDER_VERIFIED', 16000, 16000,
+        VALUES ($1, '123', 'ORDER_VERIFIED', 25000, 25000,
           'DREAMDEX_INDEXER', now() + interval '1 second', '{"delayedIndexerStatus":"Open"}'::jsonb)
       `,
       [txHash]
@@ -2036,7 +2108,7 @@ describe("API-001 server contracts", () => {
           tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
           evidence_source, observed_at, payload
         )
-        VALUES ($1, '456', 'ORDER_VERIFIED', 16000, 16000, 'SHANNON_RPC', now(), '{}'::jsonb)
+        VALUES ($1, '456', 'ORDER_VERIFIED', 25000, 25000, 'SHANNON_RPC', now(), '{}'::jsonb)
       `,
       [activeTxHash]
     );
@@ -2051,12 +2123,12 @@ describe("API-001 server contracts", () => {
           tx_hash, order_id, state, quantity_raw, remaining_quantity_raw,
           evidence_source, observed_at, payload
         )
-        VALUES ($1, '456', 'FILLED', 16000, 0, 'DREAMDEX_INDEXER', now(), '{}'::jsonb)
+        VALUES ($1, '456', 'FILLED', 25000, 0, 'DREAMDEX_INDEXER', now(), '{}'::jsonb)
       `,
       [activeTxHash]
     );
     await pool.query(
-      "UPDATE execution_intents SET reconciliation_payload = '{\"claimableAmountRaw\":\"16000\"}'::jsonb WHERE id = $1",
+      "UPDATE execution_intents SET reconciliation_payload = '{\"claimableAmountRaw\":\"25000\"}'::jsonb WHERE id = $1",
       [activeIntent.rows[0]?.id]
     );
     redemptionAvailable = true;
@@ -2092,6 +2164,9 @@ describe("API-001 server contracts", () => {
     expect(pendingApproval.receiptStatus).toBeNull();
     expect(approvalReconcileResponse.statusCode).toBe(200);
     expect(orderRevalidationResponse.statusCode).toBe(200);
+    expect(expiredQuoteResponse.statusCode).toBe(409);
+    expect(expiredQuoteResponse.json()).toMatchObject({ error: { code: "FRESH_ORDER_REVALIDATION_REQUIRED" } });
+    expect(renewedOrderRevalidationResponse.statusCode).toBe(200);
     expect(V2ExecutionLifecycleSchema.parse(approvalReconcileResponse.json()).data.executionLifecycle?.transactions.approval?.state).toBe("CONFIRMED");
     expect(response.statusCode).toBe(201);
     const body = receiptBody;
@@ -2106,9 +2181,9 @@ describe("API-001 server contracts", () => {
       order: {
         orderId: "123",
         state: "UNFILLED",
-        requestedQuantityRaw: "16000",
+        requestedQuantityRaw: "25000",
         filledQuantityRaw: "0",
-        remainingQuantityRaw: "16000",
+        remainingQuantityRaw: "25000",
         fillState: "NO_FILL",
         terminal: true,
         fillCount: 0
@@ -2150,8 +2225,8 @@ describe("API-001 server contracts", () => {
       order: { state: "FILLED", fillState: "FULL_FILL" },
       redemption: {
         state: "REDEEMED",
-        redeemedQuantityRaw: "16000",
-        actualPayoutRaw: "15900",
+        redeemedQuantityRaw: "25000",
+        actualPayoutRaw: "24900",
         evidenceSource: "DREAMDEX_REDEEMED_EVENT_AND_SHANNON_RPC"
       },
       publicClaim: "CONFIRMED_FULL_FILL"
@@ -2159,7 +2234,7 @@ describe("API-001 server contracts", () => {
     expect(retriedRedeemedResponse.statusCode).toBe(200);
     expect(V2ExecutionLifecycleSchema.parse(retriedRedeemedResponse.json()).data.executionLifecycle?.redemption.state).toBe("REDEEMED");
     expect(redemptionRows.rows[0]?.count).toBe("1");
-    expect(rpcFetch).toHaveBeenCalledTimes(8);
+    expect(rpcFetch).toHaveBeenCalledTimes(10);
   });
 
   it("creates and reloads session-owned experiments without wallet access", async () => {
@@ -2876,6 +2951,117 @@ describe("API-001 server contracts", () => {
       pendingOutcomeCount: 1
     });
     expect(V2LiveShadowSchema.parse(reloaded.json()).data.liveShadow.decisionCount).toBe(1);
+  });
+
+  it("registers v4 protocols, keeps legacy qualification blocked, and freezes matched comparison scopes", async () => {
+    const app = buildApp(config, {
+      ...v2Deps(), pool, dreamDexClient: noAskExecutionReadyLiveClient(),
+      executionReadinessReader: () => Promise.resolve(executionReadiness)
+    });
+    const session = await app.inject({ method: "POST", url: "/api/v2/research-session" });
+    const sessionBody = V2SessionSchema.parse(session.json());
+    const cookie = cookieHeader(session);
+    const createV4 = async (asset: "BTC" | "ETH", suffix: string) => {
+      const created = await app.inject({
+        method: "POST", url: "/api/v2/experiments",
+        headers: { cookie, "x-csrf-token": sessionBody.data.csrfToken, "idempotency-key": `v4-create-${suffix}` },
+        payload: {
+          name: `V4 ${asset} ${suffix}`, mode: "LIVE_SHADOW", asset, intervalSec: 3600,
+          policyId: "last-trade-forward-proxy", policyVersion: "1.0.0", decisionOffsetSec: 60,
+          windowFrom: "2099-01-01T00:00:00.000Z", windowTo: "2099-02-01T00:00:00.000Z",
+          riskEnvelopeId: "WATCH_ONLY_BOUNDED"
+        }
+      });
+      expect(created.statusCode, JSON.stringify(created.json())).toBe(201);
+      const experimentId = V2ExperimentSchema.parse(created.json()).data.experiment.experimentId;
+      const legacy = await app.inject({
+        method: "POST", url: `/api/v2/experiments/${experimentId}/evaluate`,
+        headers: { cookie, "x-csrf-token": sessionBody.data.csrfToken, "idempotency-key": `legacy-v4-${suffix}` }
+      });
+      expect(legacy.statusCode).toBe(409);
+      expect(legacy.json()).toMatchObject({ error: { code: "V4_EVALUATION_ENDPOINT_REQUIRED" } });
+      const evaluated = await app.inject({
+        method: "POST", url: `/api/v2/experiments/${experimentId}/evaluate-v4`,
+        headers: { cookie, "x-csrf-token": sessionBody.data.csrfToken, "idempotency-key": `evaluate-v4-${suffix}` }
+      });
+      expect(evaluated.statusCode).toBe(200);
+      expect(evaluated.json()).toMatchObject({ data: { assessment: {
+        forecastStatus: "INSUFFICIENT", executionEligibility: "BLOCKED", ruleVersion: "edgelab-evaluation-v4"
+      } } });
+      const evaluatedBody = z.object({ data: z.object({ assessment: z.object({ assessmentId: z.string().uuid() }) }) }).parse(evaluated.json());
+      return { experimentId, assessmentId: evaluatedBody.data.assessment.assessmentId };
+    };
+
+    const btcA = await createV4("BTC", "btc-a");
+    const btcB = await createV4("BTC", "btc-b");
+    const eth = await createV4("ETH", "eth");
+    await pool.query(
+      `UPDATE assessment_v4_details SET forecast_status='FORWARD_CRITERIA_MET',
+        economics_status='SCENARIO_CRITERIA_MET',execution_eligibility='ELIGIBLE_FOR_FRESH_REVIEW'
+       WHERE assessment_id=$1`,
+      [btcA.assessmentId]
+    );
+    const v4Candidate = await app.inject({
+      method: "GET",
+      url: `/api/v2/shannon/execution-candidate?experimentId=${btcA.experimentId}&account=${account}&asset=BTC&intervalSec=3600`,
+      headers: { cookie }
+    });
+    expect(v4Candidate.statusCode, JSON.stringify(v4Candidate.json())).toBe(200);
+    expect(v4Candidate.json()).toMatchObject({ data: { executionCandidate: {
+      status: "READY", strategyLink: { assessmentId: btcA.assessmentId, qualificationVerdict: "FORWARD_CRITERIA_MET" }
+    } } });
+    const save = async (assessmentIds: readonly string[], key: string) => app.inject({
+      method: "POST", url: "/api/v2/comparisons",
+      headers: { cookie, "x-csrf-token": sessionBody.data.csrfToken, "idempotency-key": key },
+      payload: { name: key, assessmentIds }
+    });
+    const matched = await save([btcA.assessmentId, btcB.assessmentId], "v4-matched-comparison");
+    const descriptive = await save([btcA.assessmentId, eth.assessmentId], "v4-descriptive-comparison");
+    expect(matched.statusCode).toBe(200);
+    expect(matched.json()).toMatchObject({ data: { comparison: { scope: {
+      mode: "MATCHED_INTERSECTION", intersectionSize: 0,
+      assessmentIds: [btcA.assessmentId, btcB.assessmentId]
+    } } } });
+    expect(descriptive.statusCode).toBe(200);
+    expect(descriptive.json()).toMatchObject({ data: { comparison: { scope: {
+      mode: "DESCRIPTIVE_ONLY", reason: "Different evidence scopes — descriptive comparison only."
+    } } } });
+    const matchedBody = z.object({ data: z.object({ comparison: z.object({ comparisonId: z.string().uuid() }) }) }).parse(matched.json());
+    const comparisonId = matchedBody.data.comparison.comparisonId;
+    const comparisonReport = await app.inject({
+      method: "GET", url: `/api/v2/comparisons/${comparisonId}/report`, headers: { cookie }
+    });
+    expect(comparisonReport.statusCode).toBe(200);
+    const comparisonReportJson: unknown = comparisonReport.json();
+    expect(comparisonReportJson).toMatchObject({ data: { report: {
+      schemaVersion: "edgelab-comparison-report-v1",
+      comparison: { comparisonId, scope: { mode: "MATCHED_INTERSECTION" } },
+      exportPolicy: { sanitized: true, privateSecretsIncluded: false }
+    } } });
+    expect(z.object({ data: z.object({ report: z.object({ markdownReport: z.string() }) }) }).parse(comparisonReportJson).data.report.markdownReport).toContain("Scope: MATCHED_INTERSECTION");
+    await expect(pool.query(
+      "UPDATE comparison_scope_manifests SET comparison_mode='DESCRIPTIVE_ONLY' WHERE comparison_set_id=$1",
+      [comparisonId]
+    )).rejects.toThrow(/append-only/);
+    const protocolCounts = await pool.query<{ protocols: string; campaigns: string }>(
+      `SELECT count(DISTINCT op.id)::text AS protocols, count(DISTINCT cr.id)::text AS campaigns
+         FROM observation_protocols op JOIN campaign_runs cr ON cr.protocol_id=op.id
+        WHERE op.experiment_id=ANY($1::uuid[])`,
+      [[btcA.experimentId, btcB.experimentId, eth.experimentId]]
+    );
+    expect(protocolCounts.rows[0]).toEqual({ protocols: "3", campaigns: "3" });
+    const report = await app.inject({
+      method: "GET", url: `/api/v2/experiments/${btcA.experimentId}/report`, headers: { cookie }
+    });
+    expect(report.statusCode).toBe(200);
+    const reportJson: unknown = report.json();
+    expect(reportJson).toMatchObject({ data: { report: { v4Evaluation: {
+      assessmentId: btcA.assessmentId,
+      protocolManifest: { schemaVersion: "edgelab-observation-protocol-v4" },
+      selectedRows: [], excludedRows: []
+    }, exportPolicy: { sanitized: true, privateSecretsIncluded: false } } } });
+    expect(z.object({ data: z.object({ report: z.object({ v4Evaluation: z.object({ markdownReport: z.string() }) }) }) }).parse(reportJson).data.report.v4Evaluation.markdownReport).toContain("# EdgeLab v4 assessment");
+    await app.close();
   });
 
   it("exports a sanitized experiment report for session-owned experiments", async () => {
